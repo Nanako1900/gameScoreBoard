@@ -4,7 +4,8 @@
 
 CREATE TABLE IF NOT EXISTS users (
   id             TEXT PRIMARY KEY,               -- OAuth subject id (stable per user)
-  username       TEXT NOT NULL,
+  username       TEXT NOT NULL,                  -- raw OAuth (Nanako) username, refreshed on login
+  display_name   TEXT,                           -- user's chosen display name; NULL = use username
   avatar_url     TEXT,
   email          TEXT,
   is_participant INTEGER NOT NULL DEFAULT 0,      -- 上榜选手 (has a credit score)

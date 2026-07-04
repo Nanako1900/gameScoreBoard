@@ -7,7 +7,8 @@ export type { ViolationType };
 /** Full user — only returned for the authenticated caller via /api/me. */
 export interface User {
   id: string;
-  username: string;
+  username: string; // effective display name (custom, else the OAuth/Nanako name)
+  oauth_username: string; // raw OAuth (Nanako) username
   avatar_url: string | null;
   is_participant: boolean;
   is_judge: boolean;

@@ -23,6 +23,7 @@ import {
   listRecords,
   revokeRecord,
   toUser,
+  updateDisplayName,
   updateRoles,
   upsertUser,
   weeklyHeal,
@@ -245,6 +246,22 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       is_participant: optBool(body.is_participant),
       is_judge: optBool(body.is_judge),
     });
+    return c.json({ user });
+  });
+
+  app.post('/api/me/display-name', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    // display_name: a string sets a custom name; null clears it (use the OAuth name).
+    let displayName: string | null;
+    if (body.display_name === null) {
+      displayName = null;
+    } else if (typeof body.display_name === 'string') {
+      displayName = body.display_name;
+    } else {
+      throw new ApiError(400, '缺少 display_name');
+    }
+    const user = await updateDisplayName(c.env.DB, caller.id, displayName);
     return c.json({ user });
   });
 

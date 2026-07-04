@@ -34,6 +34,7 @@ export interface Env {
 export interface UserRow {
   id: string;
   username: string;
+  display_name: string | null;
   avatar_url: string | null;
   email: string | null;
   is_participant: number;
@@ -85,7 +86,8 @@ export interface RecordJoinRow {
 /** Full user — only returned for the authenticated caller via /api/me. */
 export interface User {
   id: string;
-  username: string;
+  username: string; // effective display name (custom display_name, else OAuth username)
+  oauth_username: string; // raw OAuth (Nanako) username
   avatar_url: string | null;
   is_participant: boolean;
   is_judge: boolean;

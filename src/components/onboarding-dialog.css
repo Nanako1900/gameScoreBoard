@@ -14,7 +14,7 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.7rem;
-  margin-top: 1.35rem;
+  margin-top: 0;
 }
 
 .ob-card {
@@ -74,8 +74,83 @@
   margin-top: 1.4rem;
 }
 
+/* --- Display-name section --- */
+.ob__section {
+  margin-top: 1.35rem;
+}
+
+.ob__label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.ob__name-opts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.ob__name-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-align: left;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transition: border-color var(--dur-fast), background var(--dur-fast),
+    box-shadow var(--dur-fast);
+}
+
+.ob__name-opt:hover {
+  border-color: var(--border-strong);
+}
+
+.ob__name-opt--active {
+  border-color: var(--gold);
+  background: color-mix(in oklab, var(--gold) 10%, var(--bg-elevated));
+  box-shadow: var(--glow-gold);
+}
+
+.ob__name-opt-title {
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.ob__name-opt-hint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob__name-input {
+  width: 100%;
+  margin-top: 0.7rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.ob__name-input:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: var(--glow-gold);
+}
+
 @media (max-width: 560px) {
   .ob__cards {
+    grid-template-columns: 1fr;
+  }
+  .ob__name-opts {
     grid-template-columns: 1fr;
   }
 }

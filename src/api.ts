@@ -137,6 +137,14 @@ export function updateRoles(roles: RoleUpdate): Promise<{ user: User }> {
   });
 }
 
+/** Set the caller's display name; pass null to use the OAuth (Nanako) name. */
+export function updateDisplayName(display_name: string | null): Promise<{ user: User }> {
+  return request<{ user: User }>('/api/me/display-name', {
+    method: 'POST',
+    body: JSON.stringify({ display_name }),
+  });
+}
+
 export function createRecord(input: NewRecordInput): Promise<{ record: RecordItem }> {
   return request<{ record: RecordItem }>('/api/records', {
     method: 'POST',

@@ -40,7 +40,8 @@ export class ApiError extends Error {
 export function toUser(row: UserRow): User {
   return {
     id: row.id,
-    username: row.username,
+    username: row.display_name ?? row.username,
+    oauth_username: row.username,
     avatar_url: row.avatar_url,
     is_participant: row.is_participant === 1,
     is_judge: row.is_judge === 1,
@@ -53,7 +54,7 @@ export function toUser(row: UserRow): User {
 export function toPublicUser(row: UserRow): PublicUser {
   return {
     id: row.id,
-    username: row.username,
+    username: row.display_name ?? row.username,
     avatar_url: row.avatar_url,
     is_participant: row.is_participant === 1,
     is_judge: row.is_judge === 1,
@@ -78,8 +79,8 @@ function toRecordItem(row: RecordJoinRow): RecordItem {
 const RECORD_SELECT = `
 SELECT r.id AS id, r.type AS type, r.delta AS delta, r.note AS note,
        r.status AS status, r.created_at AS created_at,
-       s.id AS s_id, s.username AS s_username, s.avatar_url AS s_avatar,
-       p.id AS p_id, p.username AS p_username, p.avatar_url AS p_avatar
+       s.id AS s_id, COALESCE(s.display_name, s.username) AS s_username, s.avatar_url AS s_avatar,
+       p.id AS p_id, COALESCE(p.display_name, p.username) AS p_username, p.avatar_url AS p_avatar
 FROM records r
 JOIN users s ON s.id = r.subject_id
 JOIN users p ON p.id = r.reporter_id`;
@@ -104,7 +105,9 @@ export async function getUserById(db: D1Database, id: string): Promise<UserRow |
 
 export async function getLeaderboard(db: D1Database): Promise<PublicUser[]> {
   const rows = await db
-    .prepare('SELECT * FROM users WHERE is_participant = 1 ORDER BY score DESC, username ASC')
+    .prepare(
+      'SELECT * FROM users WHERE is_participant = 1 ORDER BY score DESC, COALESCE(display_name, username) ASC',
+    )
     .all<UserRow>();
   return rows.results.map(toPublicUser);
 }
@@ -192,6 +195,29 @@ export async function updateRoles(
       .bind(...binds)
       .run();
   }
+  const row = await getUserById(db, userId);
+  if (!row) throw new ApiError(404, '用户不存在');
+  return toUser(row);
+}
+
+function normalizeDisplayName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) throw new ApiError(400, '显示名字不能为空');
+  if (trimmed.length > 24) throw new ApiError(400, '显示名字最多 24 个字符');
+  return trimmed;
+}
+
+/** Set the caller's display name; null clears it (falls back to the OAuth name). */
+export async function updateDisplayName(
+  db: D1Database,
+  userId: string,
+  displayName: string | null,
+): Promise<User> {
+  const value = displayName === null ? null : normalizeDisplayName(displayName);
+  await db
+    .prepare("UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(value, userId)
+    .run();
   const row = await getUserById(db, userId);
   if (!row) throw new ApiError(404, '用户不存在');
   return toUser(row);
