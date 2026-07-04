@@ -131,3 +131,8 @@ npm run dev:web
 | `ADMIN_USERNAMES` | 可选 | 逗号分隔的用户名列表，登录时命中则自动授予管理员权限 |
 
 > 本地开发把以上变量写进 `.dev.vars`（从 `.dev.vars.example` 复制）；生产环境的密钥类变量务必使用 `wrangler secret put`，详见 [DEPLOY.md](./DEPLOY.md)。
+
+## 部署
+
+- **一体化部署**（前后端都在 Cloudflare Worker）：见 [DEPLOY.md](./DEPLOY.md)。
+- **拆分部署**（前端 → 腾讯 EdgeOne Pages，后端 → Cloudflare Worker）：见 [DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md)，内含跨域会话 Cookie 的处理与三种架构方案（推荐 EdgeOne 边缘函数反代，保持单源、Safari 安全、无需自定义域名）。
