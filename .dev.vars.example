@@ -20,3 +20,11 @@ RESET_TZ_OFFSET="8"
 
 # Comma-separated usernames auto-granted admin on login.
 ADMIN_USERNAMES="Nanako1900"
+
+# --- Split deployment only (frontend on a different origin, e.g. EdgeOne) -----
+# Leave ALL of these unset for the single-origin setup (unified Worker, or the
+# EdgeOne edge-function reverse-proxy = Option A). See DEPLOY-EDGEONE.md.
+# FRONTEND_ORIGIN="https://your-app.edgeone.app"   # enables credentialed CORS (Option B/C)
+# FRONTEND_URL="https://your-app.edgeone.app"      # where /auth/callback returns the browser
+# COOKIE_SAMESITE="Lax"                            # 'None' for cross-site (Option C)
+# COOKIE_DOMAIN=".example.com"                     # share cookie across subdomains (Option B)

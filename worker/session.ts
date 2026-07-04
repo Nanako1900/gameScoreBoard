@@ -137,22 +137,38 @@ export async function readSignedState(
 
 // --- Cookie helpers ----------------------------------------------------------
 
-const BASE_ATTRS = 'HttpOnly; Secure; SameSite=Lax; Path=/';
-
-export function buildSessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${token}; ${BASE_ATTRS}; Max-Age=${SESSION_MAX_AGE_SEC}`;
+export interface CookieConfig {
+  /** SameSite policy: 'Lax' (default) | 'None' | 'Strict'. */
+  sameSite?: string;
+  /** Optional cookie Domain, e.g. '.example.com' to span sibling subdomains. */
+  domain?: string;
 }
 
-export function buildClearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; ${BASE_ATTRS}; Max-Age=0`;
+/**
+ * Shared cookie attributes. Defaults reproduce the single-origin first-party
+ * cookie (HttpOnly; Secure; SameSite=Lax; Path=/). SameSite=None (cross-site)
+ * still gets Secure, which the browser requires.
+ */
+function baseAttrs(cfg?: CookieConfig): string {
+  const sameSite = cfg?.sameSite && cfg.sameSite.length > 0 ? cfg.sameSite : 'Lax';
+  const domain = cfg?.domain && cfg.domain.length > 0 ? `; Domain=${cfg.domain}` : '';
+  return `HttpOnly; Secure; SameSite=${sameSite}; Path=/${domain}`;
 }
 
-export function buildStateCookie(value: string): string {
-  return `${STATE_COOKIE}=${value}; ${BASE_ATTRS}; Max-Age=${STATE_MAX_AGE_SEC}`;
+export function buildSessionCookie(token: string, cfg?: CookieConfig): string {
+  return `${SESSION_COOKIE}=${token}; ${baseAttrs(cfg)}; Max-Age=${SESSION_MAX_AGE_SEC}`;
 }
 
-export function buildClearStateCookie(): string {
-  return `${STATE_COOKIE}=; ${BASE_ATTRS}; Max-Age=0`;
+export function buildClearSessionCookie(cfg?: CookieConfig): string {
+  return `${SESSION_COOKIE}=; ${baseAttrs(cfg)}; Max-Age=0`;
+}
+
+export function buildStateCookie(value: string, cfg?: CookieConfig): string {
+  return `${STATE_COOKIE}=${value}; ${baseAttrs(cfg)}; Max-Age=${STATE_MAX_AGE_SEC}`;
+}
+
+export function buildClearStateCookie(cfg?: CookieConfig): string {
+  return `${STATE_COOKIE}=; ${baseAttrs(cfg)}; Max-Age=0`;
 }
 
 /** Read a single cookie value from the request's Cookie header. */

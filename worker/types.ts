@@ -14,6 +14,15 @@ export interface Env {
   APP_URL?: string; // optional; else derive from request origin
   RESET_TZ_OFFSET?: string; // hours, default "8"
   ADMIN_USERNAMES?: string; // comma-separated usernames -> is_admin on login
+
+  // --- Split-deployment (frontend on a different origin, e.g. EdgeOne) ---------
+  // All optional; unset = single-origin behavior (unified Worker, or EdgeOne
+  // edge-function reverse-proxy where the browser sees one origin). See
+  // DEPLOY-EDGEONE.md for how these combine.
+  FRONTEND_ORIGIN?: string; // comma-separated allowed CORS origins (enables credentialed CORS)
+  FRONTEND_URL?: string; // absolute SPA URL that /auth/callback redirects to after login
+  COOKIE_SAMESITE?: string; // 'Lax' (default) | 'None' | 'Strict'
+  COOKIE_DOMAIN?: string; // e.g. '.example.com' to share the cookie across sibling subdomains
 }
 
 // --- D1 row types (raw shapes as stored; booleans are 0/1 integers) ----------

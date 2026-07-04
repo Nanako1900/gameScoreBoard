@@ -21,6 +21,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * API base URL. Empty = same-origin — used when the Worker serves the SPA, or
+ * when EdgeOne edge-functions reverse-proxy /api and /auth (Option A). Set
+ * VITE_API_BASE to the Worker origin for a direct cross-origin split (Option B/C).
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
+
+/** URL that starts OAuth login. A top-level navigation (not a fetch). */
+export const AUTH_LOGIN_URL = `${API_BASE}/auth/login`;
+
 interface ErrorBody {
   error: string;
 }
@@ -47,8 +57,10 @@ async function parseJson(res: Response): Promise<unknown> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
+  const res = await fetch(`${API_BASE}${path}`, {
+    // 'include' is required for cross-origin cookies and is a harmless superset
+    // of 'same-origin' when the API is same-origin (unified Worker / EdgeOne proxy).
+    credentials: 'include',
     headers:
       init?.body !== undefined
         ? { 'Content-Type': 'application/json', Accept: 'application/json' }

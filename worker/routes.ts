@@ -3,6 +3,7 @@
 // All external input arrives as `unknown` and is narrowed before use.
 
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import {
   VIOLATIONS,
   TIERS,
@@ -26,6 +27,7 @@ import {
 } from './db';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
+  type CookieConfig,
   SESSION_COOKIE,
   STATE_COOKIE,
   buildClearSessionCookie,
@@ -68,12 +70,16 @@ function optNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
-function parseAdminUsernames(csv: string | undefined): string[] {
+function parseCsvList(csv: string | undefined): string[] {
   if (!csv) return [];
   return csv
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+function cookieConfig(env: Env): CookieConfig {
+  return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN };
 }
 
 function requireUser(caller: User | null): User {
@@ -90,6 +96,21 @@ function parseRecordId(raw: string): number {
 const VALID_STATUS = new Set(['active', 'disputed', 'revoked']);
 
 export function registerRoutes(app: Hono<AppEnv>): void {
+  // --- CORS: active only when FRONTEND_ORIGIN is set (split-origin deploys).
+  // For single-origin (unified Worker or EdgeOne edge-function proxy) this is a
+  // no-op, so same-origin behavior is unchanged. -----------------------------
+  app.use('*', async (c, next) => {
+    const allowed = parseCsvList(c.env.FRONTEND_ORIGIN);
+    if (allowed.length === 0) return next();
+    return cors({
+      origin: (origin) => (allowed.includes(origin) ? origin : null),
+      credentials: true,
+      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowHeaders: ['Content-Type', 'Accept'],
+      maxAge: 7200,
+    })(c, next);
+  });
+
   // --- Auth middleware: resolve current user from the session cookie ---------
   app.use('*', async (c, next) => {
     let user: User | null = null;
@@ -218,7 +239,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const env: Env = c.env;
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const { state, cookieValue } = await makeSignedState(env.SESSION_SECRET);
-    c.header('Set-Cookie', buildStateCookie(cookieValue), { append: true });
+    c.header('Set-Cookie', buildStateCookie(cookieValue, cookieConfig(env)), { append: true });
     return c.redirect(buildAuthorizeUrl(env, redirectUri, state), 302);
   });
 
@@ -237,17 +258,21 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const accessToken = await exchangeCode(env, code, redirectUri);
     const profile = await fetchUserInfo(env, accessToken);
-    const admins = parseAdminUsernames(env.ADMIN_USERNAMES);
+    const admins = parseCsvList(env.ADMIN_USERNAMES);
     const { user, isNew } = await upsertUser(env.DB, profile, admins);
 
     const session = await signSession({ sub: user.id }, env.SESSION_SECRET);
-    c.header('Set-Cookie', buildSessionCookie(session), { append: true });
-    c.header('Set-Cookie', buildClearStateCookie(), { append: true });
-    return c.redirect(isNew ? '/?onboarding=1' : '/', 302);
+    const cfg = cookieConfig(env);
+    c.header('Set-Cookie', buildSessionCookie(session, cfg), { append: true });
+    c.header('Set-Cookie', buildClearStateCookie(cfg), { append: true });
+    // For a split deploy, FRONTEND_URL sends the browser back to the SPA origin;
+    // unset → relative path (single-origin: unified Worker or EdgeOne proxy).
+    const frontend = env.FRONTEND_URL ? env.FRONTEND_URL.replace(/\/$/, '') : '';
+    return c.redirect(`${frontend}/${isNew ? '?onboarding=1' : ''}`, 302);
   });
 
   app.post('/auth/logout', (c) => {
-    c.header('Set-Cookie', buildClearSessionCookie(), { append: true });
+    c.header('Set-Cookie', buildClearSessionCookie(cookieConfig(c.env)), { append: true });
     return c.json({ ok: true });
   });
 

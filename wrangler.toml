@@ -35,3 +35,13 @@ RESET_TZ_OFFSET = "8"
 # ADMIN_USERNAMES = "Nanako1900"                  # comma-separated usernames auto-granted admin
 # OAUTH_BASE_URL = "https://auth.example.com"     # Nanako OAuth base URL
 # OAUTH_CLIENT_ID = "your-client-id"
+
+# --- Split deployment: frontend on EdgeOne, backend here. See DEPLOY-EDGEONE.md.
+# Option A (EdgeOne edge-function reverse-proxy, recommended): set APP_URL to the
+# EdgeOne origin so the OAuth redirect_uri points at EdgeOne. Nothing else needed.
+# APP_URL = "https://your-app.edgeone.app"
+# Option B/C (SPA calls the Worker directly, cross-origin) also set:
+# FRONTEND_ORIGIN = "https://your-app.edgeone.app"   # enables credentialed CORS
+# FRONTEND_URL   = "https://your-app.edgeone.app"    # /auth/callback returns here
+# COOKIE_DOMAIN  = ".example.com"                    # Option B: share cookie across subdomains
+# COOKIE_SAMESITE = "None"                           # Option C: cross-site cookie (needs Secure)

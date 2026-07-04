@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Config, User } from '../types';
+import { AUTH_LOGIN_URL } from '../api';
 import { formatCountdown } from '../lib/time';
 import { Avatar } from './Avatar';
 import './header.css';
@@ -131,7 +132,7 @@ export function Header({
               )}
             </div>
           ) : (
-            <a className="btn btn--gold" href="/auth/login">
+            <a className="btn btn--gold" href={AUTH_LOGIN_URL}>
               登录
             </a>
           )}
