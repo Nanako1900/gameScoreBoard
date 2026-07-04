@@ -34,10 +34,15 @@ database_id = "914e6b6a-e965-4bca-ae48-081d23227829"
 # out of git if the repo is public — prefer `wrangler secret put` for production.
 [vars]
 RESET_TZ_OFFSET = "8"
-# APP_URL = "https://your-domain.example"        # optional; else derived from request origin
-# ADMIN_USERNAMES = "Nanako1900"                  # comma-separated usernames auto-granted admin
-# OAUTH_BASE_URL = "https://auth.example.com"     # Nanako OAuth base URL
-# OAUTH_CLIENT_ID = "your-client-id"
+# OAUTH_BASE_URL and OAUTH_CLIENT_ID are NOT secret — client_id is public per the
+# OAuth2 spec (it's sent to the browser in the authorize redirect), and the base URL
+# is public. Keeping them in [vars] means Workers Builds always deploys them, so they
+# can never "go missing" the way dashboard-set variables can. Only OAUTH_CLIENT_SECRET
+# and SESSION_SECRET must be real secrets (set via `wrangler secret put`).
+OAUTH_BASE_URL = "https://nanako.org"
+OAUTH_CLIENT_ID = "4d7e107d75ac6bf7f3c2b7132b036c3f"
+# ADMIN_USERNAMES = "your-oauth-username"         # comma-separated usernames auto-granted admin
+# APP_URL = "https://your-app.edgeone.app"        # set to the EdgeOne origin for the split deploy
 
 # --- Split deployment: frontend on EdgeOne, backend here. See DEPLOY-EDGEONE.md.
 # Option A (EdgeOne edge-function reverse-proxy, recommended): set APP_URL to the
