@@ -82,6 +82,25 @@ function cookieConfig(env: Env): CookieConfig {
   return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN };
 }
 
+/** Naive eTLD+1 (fine for simple domains like `nanako.org`). */
+function registrableSuffix(host: string): string {
+  const parts = host.split('.');
+  return parts.length <= 2 ? host : parts.slice(-2).join('.');
+}
+
+/** Allow the avatar proxy to fetch only from the OAuth provider's domain family
+ *  (or an explicit AVATAR_ALLOWED_HOSTS list) — prevents the proxy being an open
+ *  relay / SSRF vector. */
+function isAllowedAvatarHost(env: Env, host: string): boolean {
+  if (parseCsvList(env.AVATAR_ALLOWED_HOSTS).includes(host)) return true;
+  try {
+    const oauthHost = new URL(env.OAUTH_BASE_URL).hostname;
+    return host === oauthHost || registrableSuffix(host) === registrableSuffix(oauthHost);
+  } catch {
+    return false;
+  }
+}
+
 function requireUser(caller: User | null): User {
   if (!caller) throw new ApiError(401, '未登录');
   return caller;
@@ -162,6 +181,31 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   app.get('/api/users/:id', async (c) => {
     const profile = await getUserProfile(c.env.DB, c.req.param('id'));
     return c.json(profile);
+  });
+
+  // Same-origin avatar proxy: upstream avatars (e.g. nanako.org) may carry
+  // `Cross-Origin-Resource-Policy: same-site`, which blocks embedding them from
+  // another origin. Fetch them server-side and re-serve with permissive CORP.
+  app.get('/api/avatar', async (c) => {
+    const raw = c.req.query('u');
+    if (!raw) throw new ApiError(400, '缺少头像地址');
+    let target: URL;
+    try {
+      target = new URL(raw);
+    } catch {
+      throw new ApiError(400, '无效的头像地址');
+    }
+    if (target.protocol !== 'https:') throw new ApiError(400, '仅支持 https 头像');
+    if (!isAllowedAvatarHost(c.env, target.hostname)) {
+      throw new ApiError(403, '不允许的头像来源');
+    }
+    const upstream = await fetch(target.toString(), { headers: { Accept: 'image/*' } });
+    if (!upstream.ok || !upstream.body) throw new ApiError(502, '头像获取失败');
+    const headers = new Headers();
+    headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'image/jpeg');
+    headers.set('Cache-Control', 'public, max-age=86400');
+    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    return new Response(upstream.body, { status: 200, headers });
   });
 
   // --- Authenticated -------------------------------------------------------

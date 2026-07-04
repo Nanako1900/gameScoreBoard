@@ -23,6 +23,10 @@ export interface Env {
   FRONTEND_URL?: string; // absolute SPA URL that /auth/callback redirects to after login
   COOKIE_SAMESITE?: string; // 'Lax' (default) | 'None' | 'Strict'
   COOKIE_DOMAIN?: string; // e.g. '.example.com' to share the cookie across sibling subdomains
+
+  // Extra hostnames allowed for the /api/avatar image proxy (comma-separated).
+  // The OAuth provider's registrable domain is always allowed automatically.
+  AVATAR_ALLOWED_HOSTS?: string;
 }
 
 // --- D1 row types (raw shapes as stored; booleans are 0/1 integers) ----------

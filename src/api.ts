@@ -31,6 +31,17 @@ const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
 /** URL that starts OAuth login. A top-level navigation (not a fetch). */
 export const AUTH_LOGIN_URL = `${API_BASE}/auth/login`;
 
+/**
+ * Route external (e.g. Nanako) avatar URLs through the same-origin Worker proxy
+ * so they aren't blocked by the upstream's Cross-Origin-Resource-Policy. Relative
+ * paths and data: URLs pass through untouched.
+ */
+export function avatarSrc(url: string | null): string | null {
+  if (!url) return null;
+  if (!/^https?:\/\//i.test(url)) return url;
+  return `${API_BASE}/api/avatar?u=${encodeURIComponent(url)}`;
+}
+
 interface ErrorBody {
   error: string;
 }

@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { avatarSrc } from '../api';
 import './avatar.css';
 
 interface AvatarProps {
@@ -18,7 +20,8 @@ function initials(name: string): string {
   return first.toUpperCase();
 }
 
-/** Circular avatar with graceful fallback to an initial monogram. */
+/** Circular avatar with graceful fallback to an initial monogram. External
+ *  avatar URLs are routed through the same-origin proxy (see avatarSrc). */
 export function Avatar({
   name,
   src,
@@ -26,6 +29,7 @@ export function Avatar({
   ring = false,
   ringColor,
 }: AvatarProps): JSX.Element {
+  const [failed, setFailed] = useState(false);
   const style: React.CSSProperties = {
     width: size,
     height: size,
@@ -33,18 +37,20 @@ export function Avatar({
     ...(ringColor ? { ['--ring' as string]: ringColor } : {}),
   };
   const className = `avatar${ring ? ' avatar--ring' : ''}`;
+  const resolved = failed ? null : avatarSrc(src);
 
-  if (src) {
+  if (resolved) {
     return (
       <img
         className={className}
         style={style}
-        src={src}
+        src={resolved}
         alt=""
         loading="lazy"
         decoding="async"
         width={size}
         height={size}
+        onError={() => setFailed(true)}
       />
     );
   }
