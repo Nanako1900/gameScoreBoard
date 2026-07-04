@@ -1,4 +1,4 @@
-name = "edg-credit"
+name = "gamescoreboard-bn"
 main = "worker/index.ts"
 compatibility_date = "2025-05-01"
 
@@ -17,7 +17,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "edg-credit"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "914e6b6a-e965-4bca-ae48-081d23227829"
 
 # --- Weekly credit recovery (Cron Trigger) ---
 # Cron runs in UTC. "0 16 * * 0" = Sunday 16:00 UTC = Monday 00:00 Beijing (UTC+8).
