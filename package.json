@@ -1,0 +1,33 @@
+{
+  "name": "edg-credit",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "EDG 信誉分 — 仿王者荣耀信誉分的开黑守约计分板 (Cloudflare Workers + D1)",
+  "scripts": {
+    "dev:web": "vite",
+    "dev": "wrangler dev",
+    "build": "vite build",
+    "preview": "vite build && wrangler dev",
+    "deploy": "vite build && wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "db:local": "wrangler d1 execute edg-credit --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute edg-credit --remote --file=./schema.sql",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "wrangler": "^4.107.0"
+  }
+}

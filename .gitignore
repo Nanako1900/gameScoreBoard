@@ -1,0 +1,25 @@
+# deps
+node_modules/
+
+# build output
+dist/
+.wrangler/
+
+# local env / secrets — NEVER commit
+.dev.vars
+.env
+.env.*
+*.local
+
+# cloudflare / wrangler
+wrangler.toml.bak
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# omc / claude local state (keep out of the app repo)
+.omc/
+.claude/

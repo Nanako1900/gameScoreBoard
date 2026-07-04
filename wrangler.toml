@@ -1,0 +1,37 @@
+name = "edg-credit"
+main = "worker/index.ts"
+compatibility_date = "2025-05-01"
+
+# --- Static assets (built React SPA in ./dist) ---
+# run_worker_first = true means the Worker handles every request first; it routes
+# /api and /auth itself and delegates everything else to env.ASSETS.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+# --- D1 database ---
+# Create with:  wrangler d1 create edg-credit
+# then paste the returned database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "edg-credit"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# --- Weekly credit recovery (Cron Trigger) ---
+# Cron runs in UTC. "0 16 * * 0" = Sunday 16:00 UTC = Monday 00:00 Beijing (UTC+8).
+# Adjust together with RESET_TZ_OFFSET if your group is in another timezone.
+[triggers]
+crons = ["0 16 * * 0"]
+
+# --- Non-secret config (safe to commit) ---
+# Secrets (OAUTH_CLIENT_SECRET, SESSION_SECRET) must be set via `wrangler secret put`.
+# OAUTH_BASE_URL / OAUTH_CLIENT_ID may live here or as secrets; keep real values
+# out of git if the repo is public — prefer `wrangler secret put` for production.
+[vars]
+RESET_TZ_OFFSET = "8"
+# APP_URL = "https://your-domain.example"        # optional; else derived from request origin
+# ADMIN_USERNAMES = "Nanako1900"                  # comma-separated usernames auto-granted admin
+# OAUTH_BASE_URL = "https://auth.example.com"     # Nanako OAuth base URL
+# OAUTH_CLIENT_ID = "your-client-id"

@@ -1,0 +1,22 @@
+# Copy to `.dev.vars` for local `wrangler dev`. NEVER commit the real .dev.vars.
+# In production, set the secrets via:  wrangler secret put <NAME>
+
+# --- Nanako OAuth (your own OAuth2 provider) ---
+# Base URL in front of /oauth/authorize, /oauth/token, /oauth/userinfo
+OAUTH_BASE_URL="https://auth.example.com"
+OAUTH_CLIENT_ID="your-client-id"
+OAUTH_CLIENT_SECRET="your-client-secret"
+
+# --- Session signing key (HS256). Generate a long random string, e.g.:
+#     openssl rand -base64 48
+SESSION_SECRET="please-change-me-to-a-long-random-string"
+
+# --- App config ---
+# Optional. If unset, redirect_uri is derived from the incoming request origin.
+# APP_URL="http://localhost:8787"
+
+# Timezone offset (hours) used to compute the weekly reset boundary. 8 = Beijing.
+RESET_TZ_OFFSET="8"
+
+# Comma-separated usernames auto-granted admin on login.
+ADMIN_USERNAMES="Nanako1900"
