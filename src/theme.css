@@ -1,0 +1,285 @@
+/* ===========================================================================
+   EDG 信誉分 — theme tokens + reset + base
+   Direction: dark esports-broadcast leaderboard (电竞记分牌).
+   ======================================================================== */
+
+:root {
+  /* --- Surfaces & structure --- */
+  --bg: #0a0e14;
+  --bg-elevated: #0d131c;
+  --panel: #141a24;
+  --panel-2: #182030;
+  --border: #232b3a;
+  --border-strong: #2f3a4d;
+
+  /* --- Text --- */
+  --text: #e6edf3;
+  --muted: #8b96a5;
+  --faint: #5c6675;
+
+  /* --- Accents --- */
+  --gold: #f5c542;
+  --gold-dim: #b8912a;
+  --red: #e5484d;
+  --red-dim: #a5343a;
+  --blue: #4aa3ff;
+  --green: #3ddc84;
+
+  /* --- Semantic (score deltas) --- */
+  --up: #3ddc84;
+  --down: #e5484d;
+
+  /* --- Glow / shadow --- */
+  --glow-gold: 0 0 0 1px rgba(245, 197, 66, 0.35), 0 0 28px -6px rgba(245, 197, 66, 0.45);
+  --glow-red: 0 0 0 1px rgba(229, 72, 77, 0.3), 0 0 26px -8px rgba(229, 72, 77, 0.4);
+  --inner-glow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 40px -30px rgba(120, 160, 255, 0.35);
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 30px -12px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 20px 60px -18px rgba(0, 0, 0, 0.7);
+
+  /* --- Radius --- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* --- Typography --- */
+  --font-display: 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-num: 'Rajdhani', ui-monospace, 'SF Mono', 'Menlo', monospace;
+
+  --text-hero: clamp(2.6rem, 1.2rem + 5.5vw, 5.5rem);
+  --text-h1: clamp(1.6rem, 1.1rem + 2vw, 2.6rem);
+  --text-h2: clamp(1.15rem, 0.95rem + 0.9vw, 1.5rem);
+  --text-base: clamp(0.95rem, 0.9rem + 0.2vw, 1.05rem);
+  --text-sm: 0.85rem;
+  --text-xs: 0.74rem;
+
+  /* --- Rhythm --- */
+  --space-page: clamp(1rem, 0.5rem + 2.5vw, 3rem);
+  --space-section: clamp(2.5rem, 1.5rem + 4vw, 5rem);
+
+  /* --- Motion --- */
+  --dur-fast: 130ms;
+  --dur: 240ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --maxw: 1180px;
+  color-scheme: dark;
+}
+
+/* --- Reset ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--text);
+  background-color: var(--bg);
+  /* layered atmosphere: two soft radial spotlights + a faint grid tint */
+  background-image:
+    radial-gradient(1200px 620px at 78% -8%, rgba(245, 197, 66, 0.08), transparent 60%),
+    radial-gradient(1000px 560px at 8% 4%, rgba(74, 163, 255, 0.09), transparent 62%),
+    linear-gradient(180deg, #0a0e14 0%, #080b11 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+
+:root {
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+/* --- Reusable primitives -------------------------------------------------- */
+
+.tabular {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: 0.01em;
+}
+
+.panel {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-elevated) 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel), var(--inner-glow);
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Buttons -------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 0.6em 1.15em;
+  border-radius: var(--r-md);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.03em;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  transition: transform var(--dur-fast) var(--ease), background var(--dur-fast),
+    border-color var(--dur-fast), box-shadow var(--dur-fast), color var(--dur-fast);
+}
+
+.btn:hover {
+  border-color: var(--border-strong);
+  background: #1c2536;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn--gold {
+  color: #17130a;
+  background: linear-gradient(180deg, #ffd75e, var(--gold));
+  border-color: var(--gold-dim);
+  box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.2), 0 8px 24px -12px rgba(245, 197, 66, 0.6);
+}
+
+.btn--gold:hover {
+  background: linear-gradient(180deg, #ffe083, #ffce4c);
+  border-color: var(--gold);
+  box-shadow: var(--glow-gold);
+}
+
+.btn--danger {
+  color: #fff;
+  background: linear-gradient(180deg, #ef5a5f, var(--red));
+  border-color: var(--red-dim);
+}
+
+.btn--danger:hover {
+  box-shadow: var(--glow-red);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+}
+
+.btn--ghost:hover {
+  background: var(--panel-2);
+}
+
+.btn--sm {
+  padding: 0.4em 0.75em;
+  font-size: var(--text-xs);
+}
+
+/* Scrollbar flavor */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,47 @@
+.gauge {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+.gauge__svg {
+  position: absolute;
+  inset: 0;
+  filter: drop-shadow(0 0 10px color-mix(in oklab, var(--tier) 45%, transparent));
+}
+
+.gauge__track {
+  stroke: var(--border);
+}
+
+.gauge__arc {
+  stroke: var(--tier, var(--blue));
+  transition: stroke-dashoffset var(--dur) var(--ease);
+}
+
+.gauge__center {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 0.08em;
+  color: var(--text);
+}
+
+.gauge__value {
+  font-weight: 700;
+  line-height: 1;
+  color: var(--tier, var(--text));
+  text-shadow: 0 0 18px color-mix(in oklab, var(--tier) 35%, transparent);
+}
+
+.gauge__unit {
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge__arc {
+    transition: none;
+  }
+}

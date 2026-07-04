@@ -1,0 +1,62 @@
+.chart {
+  margin: 0;
+}
+
+.chart__svg {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 640 / 200;
+  overflow: visible;
+}
+
+.chart__grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart__axis {
+  fill: var(--faint);
+  font-family: var(--font-num);
+  font-size: 11px;
+}
+
+.chart__line {
+  fill: none;
+  stroke: var(--accent, var(--blue));
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent) 45%, transparent));
+}
+
+.chart__dot {
+  fill: var(--bg);
+  stroke: var(--accent, var(--blue));
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart__dot--last {
+  fill: var(--accent, var(--blue));
+}
+
+.chart__caption {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.chart__caption-now {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chart__empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+}

@@ -1,0 +1,33 @@
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.28em 0.7em;
+  border-radius: var(--r-pill);
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--tier, var(--muted));
+  background: color-mix(in oklab, var(--tier, var(--muted)) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--tier, var(--muted)) 42%, transparent);
+  box-shadow: inset 0 0 12px -6px var(--tier, transparent);
+}
+
+.tier-badge--sm {
+  font-size: var(--text-xs);
+  padding: 0.22em 0.55em;
+}
+
+.tier-badge--md {
+  font-size: var(--text-sm);
+}
+
+.tier-badge__emoji {
+  font-size: 1.05em;
+  filter: saturate(1.15);
+}
+
+.tier-badge__name {
+  letter-spacing: 0.02em;
+}

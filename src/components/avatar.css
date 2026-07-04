@@ -1,0 +1,22 @@
+.avatar {
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.avatar--fallback {
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--muted);
+  background: radial-gradient(circle at 30% 25%, var(--panel-2), var(--bg-elevated));
+  user-select: none;
+}
+
+.avatar--ring {
+  border: 2px solid var(--ring, var(--border-strong));
+  box-shadow: 0 0 0 2px var(--bg), 0 0 16px -4px var(--ring, transparent);
+}
