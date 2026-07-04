@@ -84,6 +84,21 @@ function cookieConfig(env: Env): CookieConfig {
   return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN };
 }
 
+/** Fail fast with a clear message when required config (the OAuth secrets) is
+ *  missing, instead of surfacing an opaque 500 from a downstream undefined. */
+function requireEnv(env: Env, keys: readonly (keyof Env)[]): void {
+  const missing = keys.filter((k) => {
+    const v = env[k];
+    return typeof v !== 'string' || v.length === 0;
+  });
+  if (missing.length > 0) {
+    throw new ApiError(
+      500,
+      `服务器缺少配置：${missing.join('、')} —— 请在 Worker 的 Variables and Secrets 里以「机密(Secret)」设置`,
+    );
+  }
+}
+
 /** Naive eTLD+1 (fine for simple domains like `nanako.org`). */
 function registrableSuffix(host: string): string {
   const parts = host.split('.');
@@ -291,6 +306,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   // --- OAuth ---------------------------------------------------------------
   app.get('/auth/login', async (c) => {
     const env: Env = c.env;
+    requireEnv(env, ['OAUTH_BASE_URL', 'OAUTH_CLIENT_ID', 'SESSION_SECRET']);
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const { state, cookieValue } = await makeSignedState(env.SESSION_SECRET);
     c.header('Set-Cookie', buildStateCookie(cookieValue, cookieConfig(env)), { append: true });
@@ -299,6 +315,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
 
   app.get('/auth/callback', async (c) => {
     const env: Env = c.env;
+    requireEnv(env, ['OAUTH_BASE_URL', 'OAUTH_CLIENT_ID', 'OAUTH_CLIENT_SECRET', 'SESSION_SECRET']);
     const code = c.req.query('code');
     const stateParam = c.req.query('state');
     if (!code || !stateParam) throw new ApiError(400, '缺少授权参数');
