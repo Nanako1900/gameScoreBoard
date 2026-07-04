@@ -12,7 +12,7 @@
 //
 // Set the Worker URL below, or provide it as an EdgeOne env var WORKER_UPSTREAM.
 
-const UPSTREAM = 'https://REPLACE-WITH-YOUR-WORKER.workers.dev';
+const UPSTREAM = 'https://gamescoreboard-bn.me-22e.workers.dev';
 
 export async function onRequest(context) {
   const { request, env } = context;
