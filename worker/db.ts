@@ -109,6 +109,16 @@ export async function getLeaderboard(db: D1Database): Promise<PublicUser[]> {
   return rows.results.map(toPublicUser);
 }
 
+/** True if `url` is exactly a stored user avatar — lets the avatar proxy serve
+ *  any avatar the OAuth provider actually issued, without hard-coding its host. */
+export async function avatarUrlExists(db: D1Database, url: string): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT 1 AS ok FROM users WHERE avatar_url = ? LIMIT 1')
+    .bind(url)
+    .first<{ ok: number }>();
+  return row !== null;
+}
+
 // --- Login / roles -----------------------------------------------------------
 
 export interface UpsertResult {

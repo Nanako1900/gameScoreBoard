@@ -14,6 +14,7 @@ import type { AppEnv, Env, User } from './types';
 import {
   ApiError,
   adminUpdateUser,
+  avatarUrlExists,
   createRecord,
   disputeRecord,
   getLeaderboard,
@@ -24,6 +25,7 @@ import {
   toUser,
   updateRoles,
   upsertUser,
+  weeklyHeal,
 } from './db';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
@@ -148,6 +150,12 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   // --- Public --------------------------------------------------------------
   app.get('/api/config', (c) => {
     const offset = resetOffsetHours(c.env.RESET_TZ_OFFSET);
+    // Lazy weekly heal: idempotent (guarded by the weekly_heals primary key), so
+    // credit recovery works WITHOUT a Cron Trigger. Fired non-blocking so it never
+    // delays the response; the first visit each week performs that week's heal.
+    c.executionCtx.waitUntil(
+      weeklyHeal(c.env.DB, offset).catch((err) => console.error('lazy weekly heal failed', err)),
+    );
     return c.json({
       violations: VIOLATIONS,
       tiers: TIERS,
@@ -196,9 +204,11 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       throw new ApiError(400, '无效的头像地址');
     }
     if (target.protocol !== 'https:') throw new ApiError(400, '仅支持 https 头像');
-    if (!isAllowedAvatarHost(c.env, target.hostname)) {
-      throw new ApiError(403, '不允许的头像来源');
-    }
+    // Allow if the host is trusted (OAuth domain family / AVATAR_ALLOWED_HOSTS) OR
+    // if this exact URL is a stored user avatar — zero-config for any avatar host.
+    const allowed =
+      isAllowedAvatarHost(c.env, target.hostname) || (await avatarUrlExists(c.env.DB, raw));
+    if (!allowed) throw new ApiError(403, '不允许的头像来源');
     const upstream = await fetch(target.toString(), { headers: { Accept: 'image/*' } });
     if (!upstream.ok || !upstream.body) throw new ApiError(502, '头像获取失败');
     const headers = new Headers();

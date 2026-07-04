@@ -19,11 +19,14 @@ binding = "DB"
 database_name = "edg-credit"
 database_id = "914e6b6a-e965-4bca-ae48-081d23227829"
 
-# --- Weekly credit recovery (Cron Trigger) ---
-# Cron runs in UTC. "0 16 * * 0" = Sunday 16:00 UTC = Monday 00:00 Beijing (UTC+8).
-# Adjust together with RESET_TZ_OFFSET if your group is in another timezone.
-[triggers]
-crons = ["0 16 * * 0"]
+# --- Weekly credit recovery ---
+# Runs lazily + idempotently on the first app load each week (worker/routes.ts →
+# GET /api/config, guarded by the weekly_heals primary key), so NO Cron Trigger is
+# required and Workers Builds will not fail on the schedules API.
+# If you want recovery to fire at an exact time regardless of traffic, add a Cron
+# Trigger in the dashboard (Worker → Settings → Triggers → Cron Triggers):
+#   "0 16 * * 0"  = Sunday 16:00 UTC = Monday 00:00 Beijing (UTC+8)
+# The scheduled() handler in worker/index.ts already handles it if a cron fires.
 
 # --- Non-secret config (safe to commit) ---
 # Secrets (OAUTH_CLIENT_SECRET, SESSION_SECRET) must be set via `wrangler secret put`.
