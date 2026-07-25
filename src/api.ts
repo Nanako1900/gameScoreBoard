@@ -6,6 +6,7 @@ import type {
   AiTestResponse,
   CaseStatus,
   Config,
+  FileCasesResponse,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
@@ -22,7 +23,10 @@ import type {
   SettleResponse,
   User,
   UserDetailResponse,
+  ViolationType,
+  WeeklyReport,
 } from './types';
+import type { SelfRsvp } from '@shared/attendance';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -162,9 +166,30 @@ export function updateDisplayName(display_name: string | null): Promise<{ user: 
 
 // --- Cases -----------------------------------------------------------------
 
-/** File a case. Penalties open a statement window; bonuses settle immediately. */
-export function createCase(input: NewCaseInput): Promise<{ record: RecordItem }> {
-  return post<{ record: RecordItem }>('/api/records', input);
+/**
+ * File one case per named player from a single narrative. The AI reads the facts
+ * and picks each violation type — there is no type to choose in the UI.
+ * Partial failures come back in `failed` rather than losing the whole batch.
+ */
+export function createCases(input: NewCaseInput): Promise<FileCasesResponse> {
+  return post<FileCasesResponse>('/api/records', input);
+}
+
+/** Judge co-signs the group-wipe charge the AI only hinted at. */
+export function confirmEscalation(id: number): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/escalate`);
+}
+
+export function dismissEscalation(id: number): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/escalate/dismiss`);
+}
+
+/** Judge overrides the AI's category, pre-verdict only. */
+export function reclassifyCase(
+  id: number,
+  type: ViolationType,
+): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/reclassify`, { type });
 }
 
 /** Submit the subject's one statement. Resolves once the verdict is in. */
@@ -219,7 +244,7 @@ export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
 
 export function setRsvp(
   id: number,
-  rsvp: 'going' | 'maybe' | 'out',
+  rsvp: SelfRsvp,
 ): Promise<{ session: SessionDetail }> {
   return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp });
 }
@@ -236,6 +261,21 @@ export function settleSession(
   skipAll = false,
 ): Promise<SettleResponse> {
   return post<SettleResponse>(`/api/sessions/${id}/settle`, { file, skip_all: skipAll });
+}
+
+/** Sessions the caller was invited to and has not answered. Drives the banner. */
+export function getMyInvites(): Promise<SessionsResponse> {
+  return request<SessionsResponse>('/api/me/invites');
+}
+
+// --- Weekly report ---------------------------------------------------------
+
+export function getLatestReport(): Promise<{ report: WeeklyReport | null }> {
+  return request<{ report: WeeklyReport | null }>('/api/report/latest');
+}
+
+export function regenerateReport(week: string): Promise<{ report: WeeklyReport }> {
+  return post<{ report: WeeklyReport }>(`/api/admin/report/${week}/regenerate`);
 }
 
 // --- Admin -----------------------------------------------------------------

@@ -1,0 +1,94 @@
+/* 邀请横幅 — 被动到达的行动项，优先级高于周报 */
+
+.invite {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid rgba(74, 163, 255, 0.42);
+  border-radius: var(--r-lg);
+  background: linear-gradient(
+    100deg,
+    rgba(74, 163, 255, 0.16) 0%,
+    rgba(74, 163, 255, 0.05) 55%,
+    transparent 100%
+  );
+  box-shadow: var(--shadow-panel);
+}
+
+.invite__icon {
+  flex: none;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.invite__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.invite__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.invite__title strong {
+  color: var(--blue);
+}
+
+.invite__when {
+  color: var(--gold);
+}
+
+.invite__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.invite__detail {
+  font-size: var(--text-xs);
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.invite__error {
+  margin-top: 0.2rem;
+  font-size: var(--text-xs);
+  color: var(--red);
+}
+
+.invite__actions {
+  display: inline-flex;
+  flex: none;
+  gap: 0.45rem;
+}
+
+@media (max-width: 560px) {
+  .invite {
+    flex-wrap: wrap;
+  }
+
+  .invite__text {
+    flex-basis: calc(100% - 3rem);
+  }
+
+  .invite__actions {
+    width: 100%;
+  }
+
+  .invite__actions .btn {
+    flex: 1;
+  }
+}

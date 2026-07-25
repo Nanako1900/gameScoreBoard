@@ -11,6 +11,8 @@ const CFG: AiConfig = {
   apiKey: 'sk-test',
   temperature: 0.2,
   prompt: 'system prompt',
+  classifyPrompt: 'classify prompt',
+  reportPrompt: 'report prompt',
   promptVersion: 'deadbeef',
 };
 

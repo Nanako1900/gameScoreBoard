@@ -10,20 +10,42 @@
 
 import type { ViolationType } from './scoring';
 
-/** RSVP state for a scheduled session. */
-export type Rsvp = 'going' | 'maybe' | 'out';
+/**
+ * RSVP state for a scheduled session.
+ *
+ * `invited` is the initial state for someone the organizer added: they have not
+ * answered yet. It deliberately does NOT consume a capacity slot — only `going`
+ * does — so inviting 8 people to a 5-slot game is fine and the first 5 to say
+ * yes get in.
+ */
+export type Rsvp = 'invited' | 'going' | 'maybe' | 'out';
 
-export const RSVPS: Rsvp[] = ['going', 'maybe', 'out'];
+export const RSVPS: Rsvp[] = ['invited', 'going', 'maybe', 'out'];
 
 export function isRsvp(v: string): v is Rsvp {
   return (RSVPS as string[]).includes(v);
 }
 
+/** States a player may set on themselves. `invited` is organizer-assigned only. */
+export type SelfRsvp = Exclude<Rsvp, 'invited'>;
+
+export const SELF_RSVPS: SelfRsvp[] = ['going', 'maybe', 'out'];
+
+export function isSelfRsvp(v: string): v is SelfRsvp {
+  return (SELF_RSVPS as string[]).includes(v);
+}
+
 export const RSVP_LABEL: Record<Rsvp, string> = {
+  invited: '未回应',
   going: '来',
   maybe: '待定',
   out: '不来',
 };
+
+/** Only `going` takes a seat. */
+export function occupiesSlot(rsvp: Rsvp): boolean {
+  return rsvp === 'going';
+}
 
 /** What actually happened, filled in by the organizer at roll call. */
 export type Attendance = 'on_time' | 'late' | 'no_show' | 'left_early' | 'excused';

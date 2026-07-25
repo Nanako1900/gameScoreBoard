@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { affectsScore } from '@shared/scoring';
-import type { Config, PublicUser, RecordItem, User } from './types';
+import type {
+  Config,
+  PublicUser,
+  RecordItem,
+  SessionItem,
+  User,
+  WeeklyReport,
+} from './types';
 import {
   ApiError,
   getConfig,
+  getLatestReport,
   getLeaderboard,
   getMe,
+  getMyInvites,
   getRecords,
   logout as apiLogout,
+  regenerateReport,
 } from './api';
 import { parseTimestamp } from './lib/time';
 import { Header } from './components/Header';
@@ -24,6 +34,8 @@ import { SessionsPanel } from './components/SessionsPanel';
 import { SessionFormDialog } from './components/SessionFormDialog';
 import { SessionDetailDialog } from './components/SessionDetailDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
+import { InviteBanner } from './components/InviteBanner';
+import { WeeklyReportCard } from './components/WeeklyReportCard';
 import './app.css';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -35,6 +47,9 @@ interface CoreData {
   me: User | null;
   /** Cases where the signed-in user still owes a statement. */
   myPending: RecordItem[];
+  /** Sessions the user was invited to and has not answered. */
+  invites: SessionItem[];
+  report: WeeklyReport | null;
 }
 
 type LoadState =
@@ -43,24 +58,34 @@ type LoadState =
   | { status: 'ready'; data: CoreData };
 
 async function loadCore(): Promise<CoreData> {
-  const [config, leaderboard, records, me] = await Promise.all([
+  const [config, leaderboard, records, me, report] = await Promise.all([
     getConfig(),
     getLeaderboard(),
     getRecords({ limit: 50 }),
     getMe(),
+    // A missing report is normal (first week, or nothing happened) — never fatal.
+    getLatestReport().catch(() => ({ report: null })),
   ]);
-  // Only fetch the pending list when there is actually something pending —
-  // /api/me already tells us the count.
-  const myPending =
+  // Only fetch the follow-ups that can possibly be non-empty: /api/me already
+  // tells us whether anything is pending, and invites need a session at all.
+  const [myPending, invites] = await Promise.all([
     me.user && me.pending.statements > 0
-      ? (await getRecords({ mine: 'pending', limit: 20 })).records
-      : [];
+      ? getRecords({ mine: 'pending', limit: 20 }).then((r) => r.records)
+      : Promise.resolve<RecordItem[]>([]),
+    me.user
+      ? getMyInvites()
+          .then((r) => r.sessions)
+          .catch(() => [])
+      : Promise.resolve<SessionItem[]>([]),
+  ]);
   return {
     config,
     participants: leaderboard.participants,
     records: records.records,
     me: me.user,
     myPending,
+    invites,
+    report: report.report,
   };
 }
 
@@ -99,6 +124,7 @@ export function App(): JSX.Element {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
+  const [regenerating, setRegenerating] = useState(false);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -187,7 +213,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const { config, participants, records, me, myPending } = state.data;
+  const { config, participants, records, me, myPending, invites, report } = state.data;
   const top = participants.length > 0 ? participants[0] : null;
   const bottom = participants.length > 1 ? participants[participants.length - 1] : null;
   const canRecord = me?.is_judge === true;
@@ -203,7 +229,28 @@ export function App(): JSX.Element {
       />
 
       <main className="app__main">
+        {/* Order is intentional: an invitation and a pending statement are both
+            actions someone owes, so they sit above the read-only report. */}
+        <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
+
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
+
+        {report && (
+          <WeeklyReportCard
+            report={report}
+            regenerating={regenerating}
+            onRegenerate={
+              me?.is_admin === true
+                ? () => {
+                    setRegenerating(true);
+                    void regenerateReport(report.week_start)
+                      .then(handleChanged)
+                      .finally(() => setRegenerating(false));
+                  }
+                : undefined
+            }
+          />
+        )}
 
         <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
 
@@ -286,6 +333,8 @@ export function App(): JSX.Element {
       {sessionFormOpen && (
         <SessionFormDialog
           open
+          participants={participants}
+          selfId={me?.id ?? null}
           onClose={() => setSessionFormOpen(false)}
           onCreated={(session) => {
             handleChanged();

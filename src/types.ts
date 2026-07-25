@@ -11,6 +11,9 @@ import type { Attendance, Rsvp, SessionStatus } from '@shared/attendance';
 
 export type { ViolationType, CaseStatus, VerdictSource, Attendance, Rsvp, SessionStatus };
 
+/** Where a case's violation type came from. `derived` = roll-call, no AI. */
+export type ClassifiedBy = 'ai' | 'fallback' | 'human' | 'derived';
+
 /** Full user — only returned for the authenticated caller via /api/me. */
 export interface User {
   id: string;
@@ -68,6 +71,11 @@ export interface RecordItem {
   delta: number; // signed, actually applied (0 until decided)
   note: string | null;
   claim: string | null;
+  /** AI's one-line condensation of `claim` — the feed headline. */
+  claim_summary: string | null;
+  classified_by: ClassifiedBy;
+  /** AI pointed at the -25 charge; the filing judge must co-sign it. */
+  escalation_suggested: boolean;
   session_id: number | null;
   statement: string | null;
   statement_at: string | null;
@@ -109,7 +117,7 @@ export interface SessionItem {
   status: SessionStatus;
   settled_at: string | null;
   created_at: string;
-  counts: { going: number; maybe: number; out: number };
+  counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: Rsvp | null;
 }
 
@@ -135,6 +143,7 @@ export interface Config {
   weeklyBonusCap: number;
   statementWindowHours: number;
   aiEnabled: boolean;
+  maxBatchSubjects: number;
   nextResetAt: string;
 }
 
@@ -189,17 +198,31 @@ export interface RoleUpdate {
   is_judge?: boolean;
 }
 
+/** v3 default: the judge names people and writes facts; the AI picks the type. */
 export interface NewCaseInput {
-  subject_id: string;
-  type: ViolationType;
-  claim?: string;
+  subject_ids: string[];
+  claim: string;
+  /** Per-subject addendum, keyed by user id. */
+  extras?: Record<string, string>;
   note?: string;
 }
 
+export interface BatchFailure {
+  subject_id: string;
+  error: string;
+}
+
+export interface FileCasesResponse {
+  records: RecordItem[];
+  failed: BatchFailure[];
+}
+
+/** v3: only `starts_at` is required; the title is synthesised server-side. */
 export interface NewSessionInput {
-  title: string;
-  game?: string;
   starts_at: string;
+  invite?: string[];
+  title?: string;
+  game?: string;
   duration_min?: number;
   capacity?: number;
   note?: string;
@@ -226,6 +249,8 @@ export interface AiConfigResponse {
   model: string;
   temperature: number;
   prompt: string;
+  classify_prompt: string;
+  report_prompt: string;
   prompt_version: string;
   has_api_key: boolean;
   disabled_reason: string | null;
@@ -243,6 +268,35 @@ export interface AiConfigPatch {
   model?: string;
   temperature?: number;
   prompt?: string;
+  classify_prompt?: string;
+  report_prompt?: string;
+}
+
+// --- Weekly report ----------------------------------------------------------
+
+export interface ReportStats {
+  weekStart: string;
+  weekEnd: string;
+  sessionsPlayed: number;
+  sessionsCollapsed: number;
+  casesFiled: number;
+  totalPenalty: number;
+  absentVerdicts: number;
+  attendanceRate: number | null;
+  upcomingNextWeek: number;
+  star: { name: string; delta: number } | null;
+  pigeon: { name: string; delta: number } | null;
+  bestTalker: { name: string; savedBy: number } | null;
+  harshest: { name: string; delta: number } | null;
+  topOrganizer: { name: string; count: number } | null;
+}
+
+export interface WeeklyReport {
+  week_start: string;
+  stats: ReportStats;
+  narrative: string;
+  source: 'ai' | 'fallback';
+  created_at: string;
 }
 
 export interface AiTestResponse {

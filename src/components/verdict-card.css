@@ -232,3 +232,40 @@
   gap: 0.5rem;
   padding-top: 0.2rem;
 }
+
+/* --- v3: 归类来源 + 升级确认 ---------------------------------------------- */
+
+.vc__charge {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.vc__by {
+  margin-left: 0.4em;
+  padding: 0.05em 0.4em;
+  border-radius: var(--r-pill);
+  font-size: 0.64rem;
+  color: var(--blue);
+  background: rgba(74, 163, 255, 0.12);
+}
+
+.vc__escalate {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  border-radius: var(--r-sm);
+  background: rgba(229, 72, 77, 0.07);
+}
+
+.vc__escalate-text {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.vc__escalate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}

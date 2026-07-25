@@ -14,7 +14,8 @@ import {
   draftClaim,
   isAllowedTypeOverride,
   isAttendance,
-  isRsvp,
+  isSelfRsvp,
+  occupiesSlot,
   violationForAttendance,
   type Attendance,
   type Rsvp,
@@ -41,6 +42,7 @@ import { ApiError } from './errors';
 import { getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
 import { parseSqlUtc, weekStartUtcSql } from './time';
+import { synthesizeTitle } from '../shared/quickTime';
 
 const MAX_ROLLCALL_ENTRIES = 50;
 const MAX_LATE_MINUTES = 24 * 60;
@@ -51,6 +53,7 @@ const SESSION_SELECT = `
 SELECT g.*,
        COALESCE(o.display_name, o.username) AS o_username,
        o.avatar_url AS o_avatar,
+       (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'invited') AS c_invited,
        (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'going')  AS c_going,
        (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'maybe')  AS c_maybe,
        (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'out')    AS c_out
@@ -60,6 +63,7 @@ JOIN users o ON o.id = g.organizer_id`;
 interface SessionJoinRow extends SessionRow {
   o_username: string;
   o_avatar: string | null;
+  c_invited: number;
   c_going: number;
   c_maybe: number;
   c_out: number;
@@ -78,7 +82,12 @@ function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
     status: row.status as SessionStatus,
     settled_at: row.settled_at,
     created_at: row.created_at,
-    counts: { going: row.c_going, maybe: row.c_maybe, out: row.c_out },
+    counts: {
+      invited: row.c_invited,
+      going: row.c_going,
+      maybe: row.c_maybe,
+      out: row.c_out,
+    },
     my_rsvp: myRsvp,
   };
 }
@@ -226,25 +235,57 @@ function normalizeInt(raw: unknown, min: number, max: number, label: string): nu
 }
 
 export interface CreateSessionInput {
-  title: unknown;
+  /** Optional in v3 — omitted means the server synthesises it from the time. */
+  title?: unknown;
   game?: unknown;
   starts_at: unknown;
   duration_min?: unknown;
   capacity?: unknown;
   note?: unknown;
+  /** v3: people to invite. They land in `invited` and get a one-tap prompt. */
+  invite?: unknown;
 }
 
+export const MAX_INVITES = 20;
+
+function normalizeInvites(raw: unknown, organizerId: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ApiError(400, 'invite 必须是数组');
+  const ids = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== 'string' || v.length === 0) throw new ApiError(400, 'invite 里有无效的用户 ID');
+    if (v === organizerId) continue; // the organizer is already going
+    ids.add(v);
+  }
+  if (ids.size > MAX_INVITES) throw new ApiError(400, `一次最多邀请 ${MAX_INVITES} 人`);
+  return [...ids];
+}
+
+/**
+ * Create a session.
+ *
+ * v3 reduces the required input to time + people. `title` is synthesised
+ * server-side from `starts_at` rather than typed, which also means a tampered
+ * client cannot inject arbitrary title text and every session reads consistently.
+ * game / duration / capacity / note remain accepted (and PATCHable) but are no
+ * longer part of the default path.
+ */
 export async function createSession(
   db: D1Database,
   organizer: User,
   input: CreateSessionInput,
+  offsetHours: number,
 ): Promise<SessionDetail> {
-  const title = normalizeTitle(input.title);
   const startsAt = normalizeStartsAt(input.starts_at);
+  const title =
+    input.title === undefined || input.title === null || input.title === ''
+      ? synthesizeTitle(startsAt, offsetHours)
+      : normalizeTitle(input.title);
   const game = normalizeOptionalText(input.game, SESSION_GAME_MAX);
   const note = normalizeOptionalText(input.note, SESSION_NOTE_MAX);
   const duration = normalizeInt(input.duration_min, 15, 1440, '时长');
   const capacity = normalizeInt(input.capacity, 2, 50, '人数上限');
+  const invites = normalizeInvites(input.invite, organizer.id);
 
   const res = await db
     .prepare(
@@ -256,12 +297,53 @@ export async function createSession(
   const id = Number(res.meta?.last_row_id);
   if (!id) throw new ApiError(500, '创建约局失败');
 
-  // The organizer is in by default — they proposed it.
-  await db
-    .prepare("INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, ?, 'going')")
-    .bind(id, organizer.id)
-    .run();
+  const statements: D1PreparedStatement[] = [
+    // The organizer is in by default — they proposed it.
+    db
+      .prepare("INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, ?, 'going')")
+      .bind(id, organizer.id),
+  ];
+  for (const userId of invites) {
+    // INSERT OR IGNORE + a subquery guard: an unknown user id must not create a
+    // dangling row, and must not fail the whole creation either.
+    statements.push(
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO session_players (session_id, user_id, rsvp)
+           SELECT ?, id, 'invited' FROM users WHERE id = ?`,
+        )
+        .bind(id, userId),
+    );
+  }
+  await db.batch(statements);
   return getSessionDetail(db, id, organizer.id);
+}
+
+export interface InviteItem {
+  session: SessionItem;
+}
+
+/**
+ * Sessions where the caller has been invited but has not answered. Drives the
+ * one-tap invite banner — the single most important surface for getting people to
+ * open the app at all.
+ */
+export async function listMyInvites(
+  db: D1Database,
+  callerId: string,
+): Promise<SessionItem[]> {
+  const now = new Date().toISOString();
+  const rows = await db
+    .prepare(
+      `${SESSION_SELECT}
+        WHERE g.status = 'open' AND g.starts_at >= ?
+          AND EXISTS (SELECT 1 FROM session_players sp
+                       WHERE sp.session_id = g.id AND sp.user_id = ? AND sp.rsvp = 'invited')
+        ORDER BY g.starts_at ASC LIMIT 20`,
+    )
+    .bind(now, callerId)
+    .all<SessionJoinRow>();
+  return rows.results.map((r) => toSessionItem(r, 'invited'));
 }
 
 export async function updateSession(
@@ -331,7 +413,8 @@ export async function setRsvp(
   id: number,
   rawRsvp: unknown,
 ): Promise<SessionDetail> {
-  if (typeof rawRsvp !== 'string' || !isRsvp(rawRsvp)) {
+  // `invited` is organizer-assigned; a player may only answer going/maybe/out.
+  if (typeof rawRsvp !== 'string' || !isSelfRsvp(rawRsvp)) {
     throw new ApiError(400, '无效的报名状态');
   }
   const row = await getSessionRow(db, id);
@@ -343,12 +426,15 @@ export async function setRsvp(
     throw new ApiError(400, '组织者不能退出自己的局，请直接取消约局');
   }
 
-  if (rawRsvp === 'going' && row.capacity !== null) {
+  if (occupiesSlot(rawRsvp) && row.capacity !== null) {
     const existing = await db
-      .prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = ?")
+      .prepare('SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = ?')
       .bind(id, caller.id)
       .first<{ rsvp: string }>();
-    if (existing?.rsvp !== 'going' && row.c_going >= row.capacity) {
+    // Only `going` counts against capacity, so inviting 8 to a 5-seat game is
+    // fine — the first five to accept get the seats.
+    const alreadyIn = existing !== null && occupiesSlot(existing.rsvp as Rsvp);
+    if (!alreadyIn && row.c_going >= row.capacity) {
       throw new ApiError(400, '人数已满');
     }
   }
@@ -610,7 +696,9 @@ export async function settleSession(
       // The organizer is the only person who witnessed the session, so they may
       // file inside it even without the global judge role — bounded to this
       // session's own signed-up players, and switchable off via env.
-      { offsetHours, skipJudgeCheck: true, skipRateLimit: true },
+      // `derived`: the type came from stored attendance, deterministically —
+      // it never went near the AI classifier.
+      { offsetHours, skipJudgeCheck: true, skipRateLimit: true, classifiedBy: 'derived' },
       env,
     );
     await db

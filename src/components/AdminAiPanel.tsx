@@ -9,6 +9,21 @@ interface AdminAiPanelProps {
   onClose: () => void;
 }
 
+type PromptTab = 'sentence' | 'classify' | 'report';
+
+const PROMPT_TABS: { value: PromptTab; label: string }[] = [
+  { value: 'sentence', label: '量刑' },
+  { value: 'classify', label: '归类' },
+  { value: 'report', label: '周报' },
+];
+
+const PROMPT_HINTS: Record<PromptTab, string> = {
+  sentence: '决定在案由区间内扣多少分。改动记入每条判罚的 prompt_version，便于对比漂移。安全规则段建议保留。',
+  classify:
+    '只读裁判的描述、决定归到哪个案由（被告此时还没开口）。{{CATALOGUE}} 会被替换成案由清单，删掉它模型就看不到可选项了。',
+  report: '每周周报的文风。数字一律由 SQL 算好后喂给它 —— 提示词里的「不许自己算数」那段别删。',
+};
+
 function percent(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
@@ -27,6 +42,9 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState('0.2');
   const [prompt, setPrompt] = useState('');
+  const [classifyPrompt, setClassifyPrompt] = useState('');
+  const [reportPrompt, setReportPrompt] = useState('');
+  const [tab, setTab] = useState<PromptTab>('sentence');
   const [enabled, setEnabled] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +59,8 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
       setModel(res.model);
       setTemperature(String(res.temperature));
       setPrompt(res.prompt);
+      setClassifyPrompt(res.classify_prompt);
+      setReportPrompt(res.report_prompt);
       setEnabled(res.enabled);
       setError(null);
     } catch (err) {
@@ -59,7 +79,12 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
       // Only send fields that carry a value: the API rejects an empty base_url /
       // model outright, so blanket-sending them would make "save" impossible on a
       // instance that has never been configured.
-      const patch: AiConfigPatch = { enabled, prompt };
+      const patch: AiConfigPatch = {
+        enabled,
+        prompt,
+        classify_prompt: classifyPrompt,
+        report_prompt: reportPrompt,
+      };
       if (baseUrl.trim().length > 0) patch.base_url = baseUrl.trim();
       if (model.trim().length > 0) patch.model = model.trim();
       if (Number.isFinite(Number(temperature))) patch.temperature = Number(temperature);
@@ -183,21 +208,40 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
               </label>
             </div>
 
-            <label className="aai__field">
+            <div className="aai__field">
               <span className="aai__label">
-                系统提示词 <span className="aai__version tabular">v{cfg.prompt_version}</span>
+                提示词 <span className="aai__version tabular">v{cfg.prompt_version}</span>
               </span>
+              <div className="aai__tabs" role="tablist" aria-label="提示词">
+                {PROMPT_TABS.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.value}
+                    className={`aai__tab${tab === t.value ? ' aai__tab--active' : ''}`}
+                    onClick={() => setTab(t.value)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
               <textarea
                 className="aai__textarea"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                value={
+                  tab === 'sentence' ? prompt : tab === 'classify' ? classifyPrompt : reportPrompt
+                }
+                onChange={(e) => {
+                  if (tab === 'sentence') setPrompt(e.target.value);
+                  else if (tab === 'classify') setClassifyPrompt(e.target.value);
+                  else setReportPrompt(e.target.value);
+                }}
                 rows={14}
                 maxLength={8000}
+                aria-label={PROMPT_TABS.find((t) => t.value === tab)?.label}
               />
-              <span className="aai__hint">
-                改动会记入每条判罚的 prompt_version，便于对比判罚漂移。安全规则段建议保留。
-              </span>
-            </label>
+              <span className="aai__hint">{PROMPT_HINTS[tab]}</span>
+            </div>
 
             <div className="aai__actions">
               <button

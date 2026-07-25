@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS records (
   delta              INTEGER NOT NULL DEFAULT 0,     -- signed points actually applied (0 until decided)
   note               TEXT,                           -- 裁判备注（注意：随 API 公开返回）
   claim              TEXT,                           -- 裁判陈述的事实（v2 起 penalty 必填）
+  claim_summary      TEXT,                           -- AI 把 claim 压成的一句话，动态流当标题
+  classified_by      TEXT,                           -- ai | fallback | human | derived
+  escalation_suggested INTEGER NOT NULL DEFAULT 0,   -- AI 认为够团灭级，已降级，等裁判确认
   session_id         INTEGER,                        -- 来源预约局；NULL = 手动立案
   statement          TEXT,                           -- 被告陈述原文
   statement_at       TEXT,
@@ -68,6 +71,7 @@ CREATE TABLE IF NOT EXISTS weekly_heals (
 CREATE TABLE IF NOT EXISTS ai_verdicts (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   record_id      INTEGER NOT NULL,
+  kind           TEXT NOT NULL DEFAULT 'sentence',  -- classify | sentence
   provider       TEXT NOT NULL,                    -- hostname of the configured base_url
   model          TEXT NOT NULL,
   prompt_version TEXT NOT NULL,
@@ -80,6 +84,18 @@ CREATE TABLE IF NOT EXISTS ai_verdicts (
   error          TEXT,                             -- non-null => fell back to base
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (record_id) REFERENCES records(id)
+);
+
+-- One row per week. Same idempotency trick as weekly_heals: the primary key IS
+-- the week, so a report is generated exactly once no matter how many people load
+-- the page. `stats_json` holds the numbers SQL computed; the AI only ever writes
+-- `narrative` — it is never allowed to do arithmetic.
+CREATE TABLE IF NOT EXISTS weekly_reports (
+  week_start TEXT PRIMARY KEY,             -- local Monday, same basis as weekly_heals
+  stats_json TEXT NOT NULL,
+  narrative  TEXT NOT NULL,
+  source     TEXT NOT NULL,                -- ai | fallback
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Runtime-editable settings (AI base_url / model / prompt …). The API key is
@@ -112,7 +128,9 @@ CREATE TABLE IF NOT EXISTS game_sessions (
 CREATE TABLE IF NOT EXISTS session_players (
   session_id      INTEGER NOT NULL,
   user_id         TEXT NOT NULL,
-  rsvp            TEXT NOT NULL DEFAULT 'going',   -- going | maybe | out
+  -- invited = the organizer added them and they have not answered yet. It does
+  -- NOT take a capacity slot; only 'going' does.
+  rsvp            TEXT NOT NULL DEFAULT 'going',   -- invited | going | maybe | out
   rsvp_at         TEXT NOT NULL DEFAULT (datetime('now')),
   attendance      TEXT,                            -- NULL 未点名 | on_time | late | no_show | left_early | excused
   late_minutes    INTEGER,
@@ -131,6 +149,8 @@ CREATE INDEX IF NOT EXISTS idx_events_user       ON score_events(user_id, create
 CREATE INDEX IF NOT EXISTS idx_users_participant ON users(is_participant, score DESC);
 CREATE INDEX IF NOT EXISTS idx_verdicts_record   ON ai_verdicts(record_id);
 CREATE INDEX IF NOT EXISTS idx_verdicts_created  ON ai_verdicts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_verdicts_kind     ON ai_verdicts(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_records_escalation ON records(escalation_suggested, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_starts   ON game_sessions(starts_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_status   ON game_sessions(status, starts_at);
 CREATE INDEX IF NOT EXISTS idx_players_user      ON session_players(user_id);

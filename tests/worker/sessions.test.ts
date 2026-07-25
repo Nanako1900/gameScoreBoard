@@ -36,7 +36,7 @@ async function startedSession(
     title: '周五五排',
     starts_at: FUTURE,
     capacity: 10,
-  });
+  }, OFFSET_HOURS);
   for (const p of players) await setRsvp(env.DB, p, session.id, 'going');
   // Move the start into the past so roll call is allowed.
   await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
@@ -53,7 +53,7 @@ describe('createSession', () => {
       game: '王者荣耀',
       starts_at: FUTURE,
       capacity: 5,
-    });
+    }, OFFSET_HOURS);
     expect(session.counts.going).toBe(1);
     expect(session.players[0].user.id).toBe(organizer.id);
     expect(session.status).toBe('open');
@@ -61,33 +61,33 @@ describe('createSession', () => {
 
   it('does not require the judge role — organising is not judging', async () => {
     const plain = await seedUser({ id: 'plain' });
-    const session = await createSession(env.DB, plain, { title: '随便打打', starts_at: FUTURE });
+    const session = await createSession(env.DB, plain, { title: '随便打打', starts_at: FUTURE }, OFFSET_HOURS);
     expect(session.organizer.id).toBe('plain');
   });
 
   it('rejects a blank title, a bad time and an absurd lead time', async () => {
     const { organizer } = await cast();
     await expect(
-      createSession(env.DB, organizer, { title: '   ', starts_at: FUTURE }),
+      createSession(env.DB, organizer, { title: '   ', starts_at: FUTURE }, OFFSET_HOURS),
     ).rejects.toThrow(ApiError);
     await expect(
-      createSession(env.DB, organizer, { title: 'x', starts_at: 'tomorrow-ish' }),
+      createSession(env.DB, organizer, { title: 'x', starts_at: 'tomorrow-ish' }, OFFSET_HOURS),
     ).rejects.toThrow(/时间/);
     await expect(
       createSession(env.DB, organizer, {
         title: 'x',
         starts_at: new Date(Date.now() + 400 * 24 * 3_600_000).toISOString(),
-      }),
+      }, OFFSET_HOURS),
     ).rejects.toThrow(/90 天/);
   });
 
   it('rejects out-of-range capacity and duration', async () => {
     const { organizer } = await cast();
     await expect(
-      createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE, capacity: 1 }),
+      createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE, capacity: 1 }, OFFSET_HOURS),
     ).rejects.toThrow(/人数/);
     await expect(
-      createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE, duration_min: 5 }),
+      createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE, duration_min: 5 }, OFFSET_HOURS),
     ).rejects.toThrow(/时长/);
   });
 });
@@ -95,7 +95,7 @@ describe('createSession', () => {
 describe('rsvp', () => {
   it('records and updates a player’s answer', async () => {
     const { organizer, a } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
 
     let out = await setRsvp(env.DB, a, session.id, 'going');
     expect(out.counts.going).toBe(2);
@@ -111,7 +111,7 @@ describe('rsvp', () => {
       title: 'x',
       starts_at: FUTURE,
       capacity: 2,
-    });
+    }, OFFSET_HOURS);
     await setRsvp(env.DB, a, session.id, 'going'); // 2/2
 
     await expect(setRsvp(env.DB, b, session.id, 'going')).rejects.toThrow(/人数已满/);
@@ -122,26 +122,26 @@ describe('rsvp', () => {
 
   it('refuses changes once the session has started or been cancelled', async () => {
     const { organizer, a } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
       .bind(PAST, session.id)
       .run();
     await expect(setRsvp(env.DB, a, session.id, 'going')).rejects.toThrow(/已开始/);
 
-    const other = await createSession(env.DB, organizer, { title: 'y', starts_at: FUTURE });
+    const other = await createSession(env.DB, organizer, { title: 'y', starts_at: FUTURE }, OFFSET_HOURS);
     await cancelSession(env.DB, organizer, other.id);
     await expect(setRsvp(env.DB, a, other.id, 'going')).rejects.toThrow(/不接受报名/);
   });
 
   it('will not let the organizer quietly bail on their own session', async () => {
     const { organizer } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await expect(setRsvp(env.DB, organizer, session.id, 'out')).rejects.toThrow(/取消约局/);
   });
 
   it('validates the rsvp value', async () => {
     const { organizer, a } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await expect(setRsvp(env.DB, a, session.id, 'MAYBE')).rejects.toThrow(/报名状态/);
   });
 });
@@ -191,7 +191,7 @@ describe('rollCall', () => {
 
   it('refuses before the session has started', async () => {
     const { organizer, a } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await setRsvp(env.DB, a, session.id, 'going');
     await expect(
       rollCall(env.DB, organizer, session.id, [{ user_id: a.id, attendance: 'no_show' }], OFFSET_HOURS),
@@ -404,7 +404,7 @@ describe('settleSession', () => {
 
   it('refuses to settle a cancelled session', async () => {
     const { organizer } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await cancelSession(env.DB, organizer, session.id);
     await expect(
       settleSession(env.DB, organizer, session.id, [], true, noAiEnv(), OFFSET_HOURS),
@@ -478,12 +478,12 @@ describe('organizer bonus', () => {
 describe('listSessions', () => {
   it('separates upcoming from past and hides cancelled ones from upcoming', async () => {
     const { organizer } = await cast();
-    const soon = await createSession(env.DB, organizer, { title: '将来', starts_at: FUTURE });
-    const gone = await createSession(env.DB, organizer, { title: '过去', starts_at: FUTURE });
+    const soon = await createSession(env.DB, organizer, { title: '将来', starts_at: FUTURE }, OFFSET_HOURS);
+    const gone = await createSession(env.DB, organizer, { title: '过去', starts_at: FUTURE }, OFFSET_HOURS);
     await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
       .bind(PAST, gone.id)
       .run();
-    const dead = await createSession(env.DB, organizer, { title: '取消', starts_at: FUTURE });
+    const dead = await createSession(env.DB, organizer, { title: '取消', starts_at: FUTURE }, OFFSET_HOURS);
     await cancelSession(env.DB, organizer, dead.id);
 
     const upcoming = await listSessions(env.DB, 'upcoming', organizer.id);
@@ -495,7 +495,7 @@ describe('listSessions', () => {
 
   it('reports the caller’s own rsvp on each row', async () => {
     const { organizer, a } = await cast();
-    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE });
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
     await setRsvp(env.DB, a, session.id, 'maybe');
 
     const forA = await listSessions(env.DB, 'upcoming', a.id);

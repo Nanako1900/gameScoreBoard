@@ -4,6 +4,8 @@ import type { HistoryPoint, RecordItem, User, UserDetailResponse } from '../type
 import {
   ApiError,
   appealCase,
+  confirmEscalation,
+  dismissEscalation,
   getUserDetail,
   overrideCase,
   revokeRecord,
@@ -174,6 +176,30 @@ export function PlayerDetail({
                   <VerdictCard
                     key={r.id}
                     record={r}
+                    escalation={
+                      // Only the filing judge (or an admin) may co-sign the -25
+                      // charge, so only they get the buttons.
+                      me !== null && (me.is_admin || r.reporter.id === me.id) ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn--danger btn--sm"
+                            disabled={busyId === r.id}
+                            onClick={() => void run(r.id, () => confirmEscalation(r.id))}
+                          >
+                            确认是团灭级
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--ghost btn--sm"
+                            disabled={busyId === r.id}
+                            onClick={() => void run(r.id, () => dismissEscalation(r.id))}
+                          >
+                            维持原案由
+                          </button>
+                        </>
+                      ) : undefined
+                    }
                     actions={
                       <CaseActions
                         record={r}

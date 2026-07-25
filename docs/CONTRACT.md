@@ -5,8 +5,8 @@
 > mapping in `shared/attendance.ts` — import them, never re-hardcode. Do not
 > invent new endpoints or field names.
 >
-> v2 design rationale (why the trial flow exists, threat model, phasing):
-> `docs/DESIGN-v2.md`.
+> Design rationale — why the trial flow exists, the threat model, and why
+> classification is a separate call: `docs/DESIGN-v2.md`, `docs/DESIGN-v3.md`.
 
 ## Stack
 
@@ -16,22 +16,30 @@
 - Static assets served via binding `ASSETS`; `run_worker_first = true`, so the
   Worker sees every request: it handles `/api/*` and `/auth/*`, and delegates
   everything else to `env.ASSETS.fetch(request)` (SPA fallback).
-- Weekly recovery **and** overdue-case judging run lazily from `GET /api/config`
-  via `waitUntil` (both idempotent), so a Cron Trigger is optional. If one fires,
-  `scheduled()` runs the same two jobs.
+- Three idempotent background jobs run lazily from `GET /api/config` via
+  `waitUntil` — weekly recovery, overdue-case judging, and last week's report — so
+  a Cron Trigger is optional. If one fires, `scheduled()` runs the same jobs.
 
 ## Worker modules
 
 | File | Responsibility |
 |---|---|
 | `worker/index.ts` | entrypoint, error mapping, `scheduled()` |
-| `worker/routes.ts` | every HTTP endpoint + input narrowing |
+| `worker/routes.ts` | public + authenticated endpoints |
+| `worker/routes-admin.ts` | admin-only endpoints (every handler starts with `requireAdmin`) |
+| `worker/http.ts` | shared request narrowing / auth guards |
 | `worker/db.ts` | users, roles, profile, `scoreMutation`, weekly heal |
-| `worker/cases.ts` | case lifecycle: file → statement → verdict → appeal/revoke |
+| `worker/cases.ts` | statement → verdict → appeal / revoke / override + the sweep |
+| `worker/case-filing.ts` | filing (single + batch) and the human overrides on the AI's category |
+| `worker/case-reads.ts` | case reads + row→JSON mapping |
+| `worker/case-limits.ts` | write-side validation and the per-day filing caps |
 | `worker/sessions.ts` | 约局: create / RSVP / roll call / settle |
 | `worker/ai/config.ts` | runtime AI config resolution (`app_settings` > env > default) |
 | `worker/ai/prompt.ts` | prompt building, input sanitisation, verdict parsing |
-| `worker/ai/provider.ts` | OpenAI-compatible client, never throws |
+| `worker/ai/provider.ts` | sentencing client (OpenAI-compatible), never throws |
+| `worker/ai/classify.ts` | classification client — reads the judge's text ONLY |
+| `worker/ai/report.ts` | weekly narrative; never does arithmetic |
+| `worker/report.ts` | weekly stats (all SQL) + idempotent generation |
 | `worker/errors.ts` | `ApiError` |
 | `worker/time.ts` | week math + sqlite-datetime helpers |
 
@@ -80,6 +88,16 @@ interface ViolationDef {
 }
 ```
 
+- **Classification then sentencing, in that order and as two calls.** At filing
+  time the AI reads the judge's `claim` alone and picks the type; the accused has
+  written nothing yet, so they cannot influence which range applies — only the
+  value inside it, via their statement. Merging the two calls would hand them the
+  range. Multi-subject filings classify each accusation separately so text aimed
+  at one defendant cannot colour another's category.
+- An invalid, unknown or bonus type from the classifier becomes `other`
+  (-10..0) — the softest band, so a classification failure can only ever help the
+  accused. `no_show_group` is filed as `no_show` with `escalation_suggested = 1`
+  and needs a human tap to promote.
 - **Penalties** run the full trial (statement → AI verdict).
 - **Bonuses** settle instantly at `base`, bounded by `WEEKLY_BONUS_CAP`.
 - `clampVerdictDelta(def, raw)` is applied to **every** verdict server-side. It is
@@ -119,10 +137,13 @@ interface RecordItem {
   id: number;
   subject: { id: string; username: string; avatar_url: string | null };
   reporter: { id: string; username: string; avatar_url: string | null };
-  type: ViolationType;
+  type: ViolationType;           // v3: usually chosen by the AI, always validated
   delta: number;                 // signed, actually applied; 0 before a verdict
   note: string | null;           // judge's short note — PUBLIC, like every field here
   claim: string | null;          // judge's account of the facts (required for penalties)
+  claim_summary: string | null;  // AI's one-line condensation; the feed headline
+  classified_by: 'ai' | 'fallback' | 'human' | 'derived';
+  escalation_suggested: boolean; // AI wants no_show_group; a judge must co-sign
   session_id: number | null;     // originating 约局, if any
   statement: string | null;      // the subject's one statement
   statement_at: string | null;
@@ -146,8 +167,8 @@ interface SessionItem {
   duration_min: number | null; capacity: number | null; note: string | null;
   status: 'open' | 'cancelled' | 'settled';
   settled_at: string | null; created_at: string;
-  counts: { going: number; maybe: number; out: number };
-  my_rsvp: 'going' | 'maybe' | 'out' | null;
+  counts: { invited: number; going: number; maybe: number; out: number };
+  my_rsvp: 'invited' | 'going' | 'maybe' | 'out' | null;
 }
 
 interface SessionDetail extends SessionItem { players: SessionPlayer[] }
@@ -182,8 +203,9 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 
 ### Public (no auth)
 - `GET /api/config`
-  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, nextResetAt }`
-  Also fires (non-blocking) the weekly heal and the overdue-case sweep.
+  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt }`
+  Also fires (non-blocking) three idempotent jobs: the weekly heal, the
+  overdue-case sweep, and last week's report generation.
 - `GET /api/leaderboard` → `{ participants: PublicUser[] }` — `is_participant = 1`, `score DESC, username ASC`.
 - `GET /api/records?limit=&subject=&status=&session=&mine=pending`
   → `{ records: RecordItem[] }`, newest first. Default limit 50, max 200.
@@ -208,12 +230,27 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 - `POST /api/me/display-name` `{ display_name: string | null }` → `{ user }`.
 
 **Cases**
-- `POST /api/records` `{ subject_id, type, claim?, note? }` → `{ record }`. Requires `is_judge`.
-  - reject self-reports, unknown types, non-participants;
-  - penalties require `claim` (≥ `MIN_CLAIM_LEN`) and open `awaiting_statement` with `delta = 0`
-    and `deadline_at = now + STATEMENT_WINDOW_HOURS`;
-  - bonuses settle immediately at `base`, subject to `WEEKLY_BONUS_CAP`;
-  - rate limits: ≤ 20 cases per reporter / 24h, ≤ 5 cases per subject / 24h → 429.
+- `POST /api/records` — two shapes, both requiring `is_judge`:
+  - **v3 default (batch, AI classifies):** `{ subject_ids: string[], claim, extras?, note? }`
+    → `{ records: RecordItem[], failed: { subject_id, error }[] }`.
+    One case per subject, each classified by its own AI call. `extras[subject_id]`
+    is appended to that person's claim as `补充：…`. Max `maxBatchSubjects` (8).
+    **Partial failure is not an error**: an invalid subject lands in `failed` and
+    the rest are still filed, so a judge never loses everything they typed.
+  - **Deterministic (single):** `{ subject_id, type?, claim?, note? }` → `{ record, records, failed }`.
+    Used by roll-call settlement, bonuses, and corrections. Omitting `type` here
+    also triggers AI classification.
+  - Common rules: reject self-reports, unknown types, non-participants; penalties
+    require `claim` (≥ `MIN_CLAIM_LEN`) and open `awaiting_statement` with
+    `delta = 0` and `deadline_at = now + STATEMENT_WINDOW_HOURS`; bonuses settle
+    immediately at `base` under `WEEKLY_BONUS_CAP`; rate limits ≤ 40 cases per
+    reporter / 24h and ≤ 5 per subject / 24h → 429.
+- `POST /api/records/:id/escalate` → `{ record }`. Filing judge or admin; promotes
+  a flagged case to `no_show_group`. `awaiting_statement` only — after a verdict
+  the subject argued against the lesser charge, so re-sentencing is an admin override.
+- `POST /api/records/:id/escalate/dismiss` → `{ record }`. Keep the lesser charge.
+- `POST /api/records/:id/reclassify` `{ type }` → `{ record }`. Filing judge or
+  admin overrides the AI's category, pre-verdict, penalties only.
 - `POST /api/records/:id/statement` `{ statement }` → `{ record }`. Subject only,
   `awaiting_statement` only, **once**. Claims the case atomically and runs the
   verdict synchronously, so the response already carries the judgment.
@@ -224,12 +261,20 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   within 15 min of creation. Reverses the applied delta.
 
 **Sessions**
-- `POST /api/sessions` `{ title, game?, starts_at, duration_min?, capacity?, note? }`
-  → `{ session }`. Any signed-in user; the organizer is auto-RSVP'd `going`.
+- `POST /api/sessions` `{ starts_at, invite?, title?, game?, duration_min?, capacity?, note? }`
+  → `{ session }`. Any signed-in user. Only `starts_at` is required — the title is
+  **synthesised server-side** from the time (a client cannot inject one). Everyone
+  in `invite` (max 20) lands in `rsvp='invited'`; unknown ids are dropped rather
+  than failing creation. The organizer is auto-RSVP'd `going`.
 - `PATCH /api/sessions/:id` → `{ session }`. Organizer/admin, `open` only.
 - `POST /api/sessions/:id/cancel` → `{ session }`.
-- `POST /api/sessions/:id/rsvp` `{ rsvp }` → `{ session }`. Self only; blocked once
-  the session started, is full, or is not `open`. The organizer cannot RSVP out.
+- `POST /api/sessions/:id/rsvp` `{ rsvp }` → `{ session }`. Self only, and only
+  `going | maybe | out` — `invited` is organizer-assigned and rejected here.
+  Blocked once the session started, is full, or is not `open`. The organizer
+  cannot RSVP out. **Only `going` consumes a capacity slot**, so over-inviting is
+  intentional and safe.
+- `GET /api/me/invites` → `{ sessions: SessionItem[] }`. Open, future sessions the
+  caller was invited to and has not answered. Drives the one-tap invite banner.
 - `POST /api/sessions/:id/rollcall` `{ entries: [{ user_id, attendance, late_minutes?, note? }] }`
   → `{ session, drafts: CaseDraft[] }`. Organizer/admin, after `starts_at`, only
   for signed-up players. **Writes attendance only — no score changes.** Repeatable
@@ -244,15 +289,28 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   - `organizer_bonus` is granted automatically when ≥ 2 people actually attended,
     still bounded by `WEEKLY_BONUS_CAP`.
 
+### Weekly report
+- `GET /api/report/latest` → `{ report: WeeklyReport | null }` (public, read-only).
+  `null` is normal — first week, or nothing has happened yet.
+- Every figure in `stats` is computed in SQL (`worker/report.ts`); the AI writes
+  only `narrative`. It is never asked to add, rank or compare a number.
+- Generation is idempotent via the `weekly_reports` primary key, and the row is
+  claimed with the deterministic fallback text BEFORE the AI call, so a
+  Monday-morning rush produces one narrative rather than one per visitor.
+
 ### Admin (is_admin)
+- `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative
+  for `YYYY-MM-DD` (a local Monday); recomputes the stats too.
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
   `decided`/`appealed` only; delta is clamped to the violation range; the score
   moves by the difference so the record ends up worth exactly the new delta.
 - `GET /api/admin/ai-config` → current config + `has_api_key` + 7-day health
   (`total`, `fallbackRate`, `clampRate`, `avgLatencyMs`). Never returns the key.
-- `POST /api/admin/ai-config` `{ enabled?, base_url?, model?, temperature?, prompt? }`
+- `POST /api/admin/ai-config`
+  `{ enabled?, base_url?, model?, temperature?, prompt?, classify_prompt?, report_prompt? }`
   → `{ ok, enabled, prompt_version }`. Sending `api_key` is a 400 by design.
+  Three prompts, all hot-editable: sentencing, classification, weekly narrative.
 - `POST /api/admin/ai-config/test` `{ claim?, statement? }` → dry-run verdict.
   Writes nothing and touches nobody's score.
 
@@ -288,5 +346,9 @@ reaches `decided` rather than stranding a player's score.
   `/api/records?mine=pending` when `pending.statements > 0`.
 - Import display constants from `@shared/scoring` and `@shared/attendance`.
 - A pre-verdict case must never render its `delta` as `0` — show the pending range.
+- Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
+  label when it is null (pre-v3 rows).
+- An invitation is an action the user owes, so the invite banner outranks the
+  weekly report on the page.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.

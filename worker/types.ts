@@ -2,6 +2,7 @@
 // JSON shapes mirror docs/CONTRACT.md exactly. Do not invent new field names.
 
 import type { CaseStatus, VerdictSource, ViolationType } from '../shared/scoring';
+import type { ClassifiedBy } from './ai/classify';
 import type { Attendance, Rsvp, SessionStatus } from '../shared/attendance';
 
 /** Worker runtime bindings (see docs/CONTRACT.md → Env). */
@@ -68,6 +69,9 @@ export interface RecordRow {
   delta: number;
   note: string | null;
   claim: string | null;
+  claim_summary: string | null;
+  classified_by: string | null;
+  escalation_suggested: number;
   session_id: number | null;
   statement: string | null;
   statement_at: string | null;
@@ -98,6 +102,9 @@ export interface RecordJoinRow {
   delta: number;
   note: string | null;
   claim: string | null;
+  claim_summary: string | null;
+  classified_by: string | null;
+  escalation_suggested: number;
   session_id: number | null;
   statement: string | null;
   statement_at: string | null;
@@ -200,6 +207,11 @@ export interface RecordItem {
   /** Judge's short note. Public, like every other field here. */
   note: string | null;
   claim: string | null;
+  /** AI's one-line condensation of `claim`; the feed's headline. */
+  claim_summary: string | null;
+  classified_by: ClassifiedBy;
+  /** AI pointed at the group-wipe charge; a judge must co-sign it. */
+  escalation_suggested: boolean;
   session_id: number | null;
   statement: string | null;
   statement_at: string | null;
@@ -243,7 +255,7 @@ export interface SessionItem {
   status: SessionStatus;
   settled_at: string | null;
   created_at: string;
-  counts: { going: number; maybe: number; out: number };
+  counts: { invited: number; going: number; maybe: number; out: number };
   /** The caller's own RSVP, when authenticated. */
   my_rsvp: Rsvp | null;
 }

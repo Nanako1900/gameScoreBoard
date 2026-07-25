@@ -19,7 +19,9 @@
     "db:remote": "wrangler d1 execute edg-credit --remote --file=./schema.sql",
     "db:migrate:local": "wrangler d1 execute edg-credit --local --file=./migrations/002_v2_cases_and_sessions.sql",
     "db:migrate:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/002_v2_cases_and_sessions.sql",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "db:migrate3:local": "wrangler d1 execute edg-credit --local --file=./migrations/003_v3_quick_flows.sql",
+    "db:migrate3:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/003_v3_quick_flows.sql"
   },
   "dependencies": {
     "hono": "^4.6.14",
