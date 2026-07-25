@@ -40,22 +40,42 @@ export function RulesPanel({ config }: RulesPanelProps): JSX.Element {
             分。
           </p>
 
+          <div className="rules__ai">
+            <h3 className="rules__block-title">AI 怎么量刑</h3>
+            <ol className="rules__steps">
+              <li>裁判只认定「发生了什么」，并写清事实 —— 定性归人。</li>
+              <li>
+                被记录的人有 <strong className="tabular">{config.statementWindowHours}</strong>{' '}
+                小时说明情况，说与不说都会进入裁决。
+              </li>
+              <li>
+                AI 在该案由的量刑区间内定分并写判词，提前告知、不可抗力、事后补偿从轻；
+                失联、甩锅、短期重犯从重。
+              </li>
+              <li>
+                无论 AI 输出什么，服务端都会把分值夹回区间 —— 判罚不可能越界，也不可能变成加分。
+                {!config.aiEnabled && ' 当前 AI 未启用，一律按基准分判罚。'}
+              </li>
+            </ol>
+          </div>
+
           <div className="rules__grid">
             <div className="rules__block">
-              <h3 className="rules__block-title">违约 / 守约</h3>
+              <h3 className="rules__block-title">案由与量刑区间</h3>
               <table className="rules__table">
                 <thead>
                   <tr>
                     <th scope="col">类型</th>
                     <th scope="col">说明</th>
                     <th scope="col" className="rules__num-col">
-                      分数
+                      区间（基准）
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {VIOLATIONS.map((v) => {
-                    const positive = v.delta > 0;
+                    const positive = v.kind === 'bonus';
+                    const fixed = v.min === v.max;
                     return (
                       <tr key={v.type}>
                         <th scope="row" className="rules__type">
@@ -67,7 +87,14 @@ export function RulesPanel({ config }: RulesPanelProps): JSX.Element {
                             positive ? 'rules__delta--up' : 'rules__delta--down'
                           }`}
                         >
-                          {positive ? `+${v.delta}` : v.delta}
+                          {fixed ? (
+                            positive ? `+${v.base}` : v.base
+                          ) : (
+                            <>
+                              {v.min} ~ {v.max}
+                              <span className="rules__base">（{v.base}）</span>
+                            </>
+                          )}
                         </td>
                       </tr>
                     );

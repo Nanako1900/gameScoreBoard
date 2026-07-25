@@ -1,0 +1,119 @@
+/* 情况说明 — the accused's one statement, and the verdict it triggers. */
+
+.sd {
+  display: grid;
+  gap: 1rem;
+}
+
+.sd__title {
+  font-size: var(--text-h1);
+  padding-right: 2rem;
+}
+
+.sd__subtitle {
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.sd__deadline {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--gold);
+  background: rgba(245, 197, 66, 0.1);
+}
+
+.sd__deadline--urgent {
+  color: var(--down);
+  background: rgba(229, 72, 77, 0.12);
+}
+
+.sd__claim {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--r-sm);
+  border-left: 2px solid var(--border-strong);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.sd__claim-who {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.sd__claim p {
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.sd__form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.sd__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sd__label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.sd__textarea {
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--r-md);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  resize: vertical;
+  transition: border-color var(--dur-fast);
+}
+
+.sd__textarea:hover {
+  border-color: var(--border-strong);
+}
+
+.sd__textarea:disabled {
+  opacity: 0.6;
+}
+
+.sd__counter {
+  align-self: flex-end;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+.sd__notice {
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+.sd__error {
+  font-size: var(--text-sm);
+  color: var(--red);
+}
+
+.sd__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}

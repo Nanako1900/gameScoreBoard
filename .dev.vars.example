@@ -21,6 +21,29 @@ RESET_TZ_OFFSET="8"
 # Comma-separated usernames auto-granted admin on login.
 ADMIN_USERNAMES="Nanako1900"
 
+# --- AI 裁决 -----------------------------------------------------------------
+# Any OpenAI-compatible endpoint: OpenAI / DeepSeek / 硅基流动 / OpenRouter /
+# vLLM / Ollama / your own gateway. Base URL, model, temperature and the system
+# prompt can all be changed at runtime from the admin panel (they are stored in
+# the `app_settings` table and override these values).
+#
+# AI_API_KEY is the ONE exception: it is read only from here / from a Worker
+# secret and is never written to the database.
+#   Production:  wrangler secret put AI_API_KEY
+AI_ENABLED="true"
+AI_BASE_URL="https://api.openai.com/v1"   # must end at /v1 — the code appends /chat/completions
+AI_MODEL="gpt-4o-mini"
+AI_API_KEY=""
+# AI_TEMPERATURE="0.2"                    # keep low: verdicts should be reproducible
+# AI_SYSTEM_PROMPT="..."                  # empty = built-in prompt; edit it in the admin panel instead
+
+# Hours the accused gets to explain before a case is judged in absentia.
+# STATEMENT_WINDOW_HOURS="12"
+
+# 'false' = a session organizer who is not a judge can only record attendance,
+# never file cases (a judge then has to file them).
+# SESSION_ORGANIZER_CAN_FILE="true"
+
 # --- Split deployment only (frontend on a different origin, e.g. EdgeOne) -----
 # Leave ALL of these unset for the single-origin setup (unified Worker, or the
 # EdgeOne edge-function reverse-proxy = Option A). See DEPLOY-EDGEONE.md.

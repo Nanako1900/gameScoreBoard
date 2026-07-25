@@ -1,0 +1,73 @@
+/* 待陈述提醒 — the app's only notification surface. */
+
+.pending {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid rgba(245, 197, 66, 0.4);
+  border-radius: var(--r-lg);
+  background: linear-gradient(
+    100deg,
+    rgba(245, 197, 66, 0.14) 0%,
+    rgba(245, 197, 66, 0.05) 55%,
+    transparent 100%
+  );
+  box-shadow: var(--shadow-panel);
+}
+
+.pending--urgent {
+  border-color: rgba(229, 72, 77, 0.45);
+  background: linear-gradient(
+    100deg,
+    rgba(229, 72, 77, 0.16) 0%,
+    rgba(229, 72, 77, 0.05) 55%,
+    transparent 100%
+  );
+}
+
+.pending__icon {
+  flex: none;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.pending__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pending__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.pending--urgent .pending__title strong {
+  color: var(--red);
+}
+
+.pending__title strong {
+  color: var(--gold);
+}
+
+.pending__sub {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+@media (max-width: 560px) {
+  .pending {
+    flex-wrap: wrap;
+  }
+
+  .pending__text {
+    flex-basis: calc(100% - 3rem);
+  }
+
+  .pending .btn {
+    width: 100%;
+  }
+}

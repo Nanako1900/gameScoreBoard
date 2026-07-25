@@ -5,29 +5,61 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
-  VIOLATIONS,
+  STATEMENT_WINDOW_HOURS,
   TIERS,
-  WEEKLY_HEAL,
+  VIOLATIONS,
+  VIOLATION_MAP,
   WEEKLY_BONUS_CAP,
+  WEEKLY_HEAL,
+  isCaseStatus,
 } from '../shared/scoring';
 import type { AppEnv, Env, User } from './types';
 import {
-  ApiError,
   adminUpdateUser,
   avatarUrlExists,
-  createRecord,
-  disputeRecord,
   getLeaderboard,
   getUserById,
   getUserProfile,
-  listRecords,
-  revokeRecord,
   toUser,
   updateDisplayName,
   updateRoles,
   upsertUser,
   weeklyHeal,
 } from './db';
+import { ApiError } from './errors';
+import {
+  appealCase,
+  fileCase,
+  getRecordItemById,
+  listRecords,
+  overrideCase,
+  pendingCounts,
+  revokeCase,
+  submitStatement,
+  sweepDueCases,
+  withdrawCase,
+} from './cases';
+import {
+  cancelSession,
+  createSession,
+  getSessionDetail,
+  listSessions,
+  rollCall,
+  setRsvp,
+  settleSession,
+  updateSession,
+  type SessionScope,
+} from './sessions';
+import {
+  AI_SETTING_KEYS,
+  aiDisabledReason,
+  loadAiConfig,
+  normalizeBaseUrl,
+  readSettings,
+  resolveAiConfig,
+  writeSetting,
+} from './ai/config';
+import { judgeCase } from './ai/provider';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
@@ -71,6 +103,17 @@ function optBool(v: unknown): boolean | undefined {
 
 function optNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+function optString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+function requireString(v: unknown, label: string): string {
+  if (typeof v !== 'string' || v.trim().length === 0) {
+    throw new ApiError(400, `缺少 ${label}`);
+  }
+  return v;
 }
 
 function parseCsvList(csv: string | undefined): string[] {
@@ -124,13 +167,23 @@ function requireUser(caller: User | null): User {
   return caller;
 }
 
-function parseRecordId(raw: string): number {
+function requireAdmin(caller: User | null): User {
+  const user = requireUser(caller);
+  if (!user.is_admin) throw new ApiError(403, '需要管理员权限');
+  return user;
+}
+
+function parseId(raw: string, label: string): number {
   const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, '无效的记录 ID');
+  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, `无效的${label} ID`);
   return id;
 }
 
-const VALID_STATUS = new Set(['active', 'disputed', 'revoked']);
+function statementWindowHours(env: Env): number {
+  const n = Number(env.STATEMENT_WINDOW_HOURS);
+  if (!Number.isFinite(n) || n <= 0 || n > 24 * 14) return STATEMENT_WINDOW_HOURS;
+  return n;
+}
 
 export function registerRoutes(app: Hono<AppEnv>): void {
   // --- CORS: active only when FRONTEND_ORIGIN is set (split-origin deploys).
@@ -164,19 +217,27 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   });
 
   // --- Public --------------------------------------------------------------
-  app.get('/api/config', (c) => {
+  app.get('/api/config', async (c) => {
     const offset = resetOffsetHours(c.env.RESET_TZ_OFFSET);
-    // Lazy weekly heal: idempotent (guarded by the weekly_heals primary key), so
-    // credit recovery works WITHOUT a Cron Trigger. Fired non-blocking so it never
-    // delays the response; the first visit each week performs that week's heal.
+    // Two lazy, idempotent background jobs ride on the first page load: the
+    // weekly credit heal (guarded by the weekly_heals primary key) and judging
+    // of cases whose statement window lapsed (guarded by a conditional status
+    // update). Both are non-blocking, so neither delays this response, and
+    // neither needs a Cron Trigger.
     c.executionCtx.waitUntil(
       weeklyHeal(c.env.DB, offset).catch((err) => console.error('lazy weekly heal failed', err)),
     );
+    c.executionCtx.waitUntil(
+      sweepDueCases(c.env.DB, c.env).catch((err) => console.error('case sweep failed', err)),
+    );
+    const cfg = await loadAiConfig(c.env.DB, c.env);
     return c.json({
       violations: VIOLATIONS,
       tiers: TIERS,
       weeklyHeal: WEEKLY_HEAL,
       weeklyBonusCap: WEEKLY_BONUS_CAP,
+      statementWindowHours: statementWindowHours(c.env),
+      aiEnabled: cfg.enabled,
       nextResetAt: nextResetAt(offset),
     });
   });
@@ -187,24 +248,56 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   });
 
   app.get('/api/records', async (c) => {
+    const caller = c.get('user');
     const limitRaw = c.req.query('limit');
     const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
-    const subject = c.req.query('subject');
     const status = c.req.query('status');
-    if (status !== undefined && !VALID_STATUS.has(status)) {
+    if (status !== undefined && !isCaseStatus(status)) {
       throw new ApiError(400, '无效的状态筛选');
     }
+    const sessionRaw = c.req.query('session');
+    const mine = c.req.query('mine');
+    if (mine === 'pending' && !caller) throw new ApiError(401, '未登录');
     const records = await listRecords(c.env.DB, {
       limit: limit !== undefined && Number.isFinite(limit) ? limit : undefined,
-      subject: subject || undefined,
+      subject: c.req.query('subject') || undefined,
       status: status || undefined,
+      session: sessionRaw ? parseId(sessionRaw, '约局') : undefined,
+      pendingFor: mine === 'pending' && caller ? caller.id : undefined,
     });
     return c.json({ records });
+  });
+
+  app.get('/api/records/:id', async (c) => {
+    const record = await getRecordItemById(c.env.DB, parseId(c.req.param('id'), '记录'));
+    if (!record) throw new ApiError(404, '记录不存在');
+    return c.json({ record });
   });
 
   app.get('/api/users/:id', async (c) => {
     const profile = await getUserProfile(c.env.DB, c.req.param('id'));
     return c.json(profile);
+  });
+
+  app.get('/api/sessions', async (c) => {
+    const caller = c.get('user');
+    const raw = c.req.query('scope');
+    const scope: SessionScope =
+      raw === 'past' || raw === 'mine' || raw === 'upcoming' ? raw : 'upcoming';
+    if (scope === 'mine' && !caller) throw new ApiError(401, '未登录');
+    const sessions = await listSessions(c.env.DB, scope, caller?.id ?? null);
+    return c.json({ sessions });
+  });
+
+  app.get('/api/sessions/:id', async (c) => {
+    const caller = c.get('user');
+    const session = await getSessionDetail(
+      c.env.DB,
+      parseId(c.req.param('id'), '约局'),
+      caller?.id ?? null,
+    );
+    const records = await listRecords(c.env.DB, { session: session.id, limit: 100 });
+    return c.json({ session, records });
   });
 
   // Same-origin avatar proxy: upstream avatars (e.g. nanako.org) may carry
@@ -235,8 +328,11 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   });
 
   // --- Authenticated -------------------------------------------------------
-  app.get('/api/me', (c) => {
-    return c.json({ user: c.get('user') });
+  app.get('/api/me', async (c) => {
+    const user = c.get('user');
+    if (!user) return c.json({ user: null, pending: { statements: 0, appeals: 0 } });
+    const pending = await pendingCounts(c.env.DB, user);
+    return c.json({ user, pending });
   });
 
   app.post('/api/me/roles', async (c) => {
@@ -265,50 +361,150 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     return c.json({ user });
   });
 
+  // --- Cases ---------------------------------------------------------------
   app.post('/api/records', async (c) => {
     const caller = requireUser(c.get('user'));
-    if (!caller.is_judge) throw new ApiError(403, '需要裁判权限');
     const body = await readJsonBody(c.req.raw);
-    const subjectId = body.subject_id;
-    const type = body.type;
-    if (typeof subjectId !== 'string' || subjectId.length === 0) {
-      throw new ApiError(400, '缺少 subject_id');
-    }
-    if (typeof type !== 'string') {
-      throw new ApiError(400, '缺少 type');
-    }
-    const note = typeof body.note === 'string' ? body.note : undefined;
-    if (note !== undefined && note.length > 500) {
-      throw new ApiError(400, '备注过长（最多 500 字）');
-    }
-    const offset = resetOffsetHours(c.env.RESET_TZ_OFFSET);
-    const record = await createRecord(
+    const record = await fileCase(
       c.env.DB,
       caller,
-      { subject_id: subjectId, type, note },
-      offset,
+      {
+        subject_id: requireString(body.subject_id, 'subject_id'),
+        type: requireString(body.type, 'type'),
+        claim: optString(body.claim),
+        note: optString(body.note),
+      },
+      { offsetHours: resetOffsetHours(c.env.RESET_TZ_OFFSET) },
+      c.env,
     );
     return c.json({ record });
   });
 
+  app.post('/api/records/:id/statement', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const record = await submitStatement(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '记录'),
+      requireString(body.statement, 'statement'),
+      c.env,
+    );
+    return c.json({ record });
+  });
+
+  app.post('/api/records/:id/withdraw', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const record = await withdrawCase(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
+    return c.json({ record });
+  });
+
+  app.post('/api/records/:id/appeal', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const record = await appealCase(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '记录'),
+      optString(body.reason),
+    );
+    return c.json({ record });
+  });
+
+  // Legacy alias kept so an older cached SPA bundle keeps working after deploy.
   app.post('/api/records/:id/dispute', async (c) => {
     const caller = requireUser(c.get('user'));
-    const id = parseRecordId(c.req.param('id'));
-    const record = await disputeRecord(c.env.DB, caller, id);
+    const record = await appealCase(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '记录'),
+      undefined,
+    );
     return c.json({ record });
   });
 
   app.post('/api/records/:id/revoke', async (c) => {
     const caller = requireUser(c.get('user'));
-    const id = parseRecordId(c.req.param('id'));
-    const record = await revokeRecord(c.env.DB, caller, id);
+    const record = await revokeCase(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
     return c.json({ record });
+  });
+
+  // --- Sessions ------------------------------------------------------------
+  app.post('/api/sessions', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const session = await createSession(c.env.DB, caller, {
+      title: body.title,
+      game: body.game,
+      starts_at: body.starts_at,
+      duration_min: body.duration_min,
+      capacity: body.capacity,
+      note: body.note,
+    });
+    return c.json({ session });
+  });
+
+  app.patch('/api/sessions/:id', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const session = await updateSession(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '约局'),
+      body,
+    );
+    return c.json({ session });
+  });
+
+  app.post('/api/sessions/:id/cancel', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'));
+    return c.json({ session });
+  });
+
+  app.post('/api/sessions/:id/rsvp', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const session = await setRsvp(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '约局'),
+      body.rsvp,
+    );
+    return c.json({ session });
+  });
+
+  app.post('/api/sessions/:id/rollcall', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const result = await rollCall(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '约局'),
+      body.entries,
+      resetOffsetHours(c.env.RESET_TZ_OFFSET),
+    );
+    return c.json(result);
+  });
+
+  app.post('/api/sessions/:id/settle', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const result = await settleSession(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '约局'),
+      body.file,
+      optBool(body.skip_all) === true,
+      c.env,
+      resetOffsetHours(c.env.RESET_TZ_OFFSET),
+    );
+    return c.json(result);
   });
 
   // --- Admin ---------------------------------------------------------------
   app.post('/api/admin/users/:id', async (c) => {
-    const caller = requireUser(c.get('user'));
-    if (!caller.is_admin) throw new ApiError(403, '需要管理员权限');
+    requireAdmin(c.get('user'));
     const body = await readJsonBody(c.req.raw);
     await adminUpdateUser(c.env.DB, c.req.param('id'), {
       is_participant: optBool(body.is_participant),
@@ -318,6 +514,137 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       delete: optBool(body.delete),
     });
     return c.json({ ok: true });
+  });
+
+  app.post('/api/admin/records/:id/override', async (c) => {
+    const caller = requireAdmin(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const delta = optNumber(body.delta);
+    if (delta === undefined) throw new ApiError(400, '缺少 delta');
+    const record = await overrideCase(
+      c.env.DB,
+      caller,
+      parseId(c.req.param('id'), '记录'),
+      delta,
+      requireString(body.reason, 'reason'),
+    );
+    return c.json({ record });
+  });
+
+  app.get('/api/admin/ai-config', async (c) => {
+    requireAdmin(c.get('user'));
+    const settings = await readSettings(c.env.DB);
+    const cfg = resolveAiConfig(settings, c.env);
+    const stats = await c.env.DB
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS fallbacks,
+                SUM(clamped) AS clamps,
+                AVG(latency_ms) AS avg_latency
+           FROM ai_verdicts WHERE created_at >= datetime('now', '-7 days')`,
+      )
+      .first<{ total: number; fallbacks: number; clamps: number; avg_latency: number | null }>();
+    const total = stats?.total ?? 0;
+    return c.json({
+      enabled: cfg.enabled,
+      base_url: cfg.baseUrl,
+      model: cfg.model,
+      temperature: cfg.temperature,
+      prompt: cfg.prompt,
+      prompt_version: cfg.promptVersion,
+      has_api_key: (c.env.AI_API_KEY ?? '').length > 0,
+      disabled_reason: aiDisabledReason(cfg, c.env),
+      recent: {
+        total,
+        fallbackRate: total > 0 ? (stats?.fallbacks ?? 0) / total : 0,
+        clampRate: total > 0 ? (stats?.clamps ?? 0) / total : 0,
+        avgLatencyMs: Math.round(stats?.avg_latency ?? 0),
+      },
+    });
+  });
+
+  app.post('/api/admin/ai-config', async (c) => {
+    const caller = requireAdmin(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    if (body.api_key !== undefined) {
+      throw new ApiError(
+        400,
+        'API Key 不存数据库，请用 `wrangler secret put AI_API_KEY` 设置',
+      );
+    }
+    const writes: Promise<void>[] = [];
+    if (body.enabled !== undefined) {
+      const enabled = optBool(body.enabled);
+      if (enabled === undefined) throw new ApiError(400, 'enabled 必须是布尔值');
+      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.enabled, String(enabled), caller.id));
+    }
+    if (body.base_url !== undefined) {
+      const url = normalizeBaseUrl(requireString(body.base_url, 'base_url'));
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        throw new ApiError(400, 'base_url 不是合法的 URL');
+      }
+      if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
+        throw new ApiError(400, 'base_url 必须是 https（本地调试可用 localhost）');
+      }
+      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.baseUrl, url, caller.id));
+    }
+    if (body.model !== undefined) {
+      writes.push(
+        writeSetting(c.env.DB, AI_SETTING_KEYS.model, requireString(body.model, 'model').trim(), caller.id),
+      );
+    }
+    if (body.temperature !== undefined) {
+      const t = optNumber(body.temperature);
+      if (t === undefined || t < 0 || t > 2) throw new ApiError(400, 'temperature 需在 0–2 之间');
+      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.temperature, String(t), caller.id));
+    }
+    if (body.prompt !== undefined) {
+      const prompt = requireString(body.prompt, 'prompt');
+      if (prompt.length > 8000) throw new ApiError(400, '提示词最多 8000 字');
+      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.prompt, prompt, caller.id));
+    }
+    await Promise.all(writes);
+    const cfg = await loadAiConfig(c.env.DB, c.env);
+    return c.json({ ok: true, enabled: cfg.enabled, prompt_version: cfg.promptVersion });
+  });
+
+  // Dry run against a sample case: writes nothing, touches nobody's score.
+  app.post('/api/admin/ai-config/test', async (c) => {
+    requireAdmin(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const cfg = await loadAiConfig(c.env.DB, c.env);
+    const def = VIOLATION_MAP.no_show;
+    const started = Date.now();
+    const outcome = await judgeCase(cfg, {
+      def,
+      subject: { name: '测试选手', score: 72, tier: '基本靠谱' },
+      priors: { sameType30d: 1, penalties30d: 2 },
+      claim:
+        optString(body.claim) ??
+        '说好八点五排，等到八点四十还没上线，微信也不回，最后四缺一散了。',
+      statement:
+        optString(body.statement) ??
+        '公司临时通宵发版，手机落在会议室了，第二天才看到消息，已经给大家发了红包。',
+      sessionContext: null,
+    });
+    return c.json({
+      ok: outcome.source === 'ai',
+      source: outcome.source,
+      verdict: {
+        delta: outcome.delta,
+        headline: outcome.headline,
+        reasoning: outcome.reasoning,
+        factors: outcome.factors,
+      },
+      error: outcome.audit.error,
+      clamped: outcome.audit.clamped,
+      parsed_delta: outcome.audit.parsedDelta,
+      latency_ms: outcome.audit.latencyMs || Date.now() - started,
+      raw: outcome.audit.rawResponse,
+    });
   });
 
   // --- OAuth ---------------------------------------------------------------

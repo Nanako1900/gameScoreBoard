@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { affectsScore } from '@shared/scoring';
 import type { Config, PublicUser, RecordItem, User } from './types';
 import {
   ApiError,
@@ -14,9 +15,15 @@ import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
 import { RecordsFeed } from './components/RecordsFeed';
 import { RulesPanel } from './components/RulesPanel';
-import { RecordDialog } from './components/RecordDialog';
+import { CaseDialog } from './components/CaseDialog';
+import { StatementDialog } from './components/StatementDialog';
+import { PendingBanner } from './components/PendingBanner';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { PlayerDetail } from './components/PlayerDetail';
+import { SessionsPanel } from './components/SessionsPanel';
+import { SessionFormDialog } from './components/SessionFormDialog';
+import { SessionDetailDialog } from './components/SessionDetailDialog';
+import { AdminAiPanel } from './components/AdminAiPanel';
 import './app.css';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -26,6 +33,8 @@ interface CoreData {
   participants: PublicUser[];
   records: RecordItem[];
   me: User | null;
+  /** Cases where the signed-in user still owes a statement. */
+  myPending: RecordItem[];
 }
 
 type LoadState =
@@ -40,20 +49,27 @@ async function loadCore(): Promise<CoreData> {
     getRecords({ limit: 50 }),
     getMe(),
   ]);
+  // Only fetch the pending list when there is actually something pending —
+  // /api/me already tells us the count.
+  const myPending =
+    me.user && me.pending.statements > 0
+      ? (await getRecords({ mine: 'pending', limit: 20 })).records
+      : [];
   return {
     config,
     participants: leaderboard.participants,
     records: records.records,
     me: me.user,
+    myPending,
   };
 }
 
-/** Sum of active-record deltas per subject within the current heal week. */
+/** Sum of scored deltas per subject within the current heal week. */
 function computeTrends(records: RecordItem[], nextResetAt: string): Record<string, number> {
   const weekStart = parseTimestamp(nextResetAt) - WEEK_MS;
   const trends: Record<string, number> = {};
   for (const r of records) {
-    if (r.status !== 'active') {
+    if (!affectsScore(r.status)) {
       continue;
     }
     const at = parseTimestamp(r.created_at);
@@ -76,8 +92,13 @@ function computeCounts(records: RecordItem[]): Record<string, number> {
 export function App(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [recordOpen, setRecordOpen] = useState(false);
+  const [caseOpen, setCaseOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
+  const [sessionFormOpen, setSessionFormOpen] = useState(false);
+  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [sessionsKey, setSessionsKey] = useState(0);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -130,8 +151,9 @@ export function App(): JSX.Element {
     void refresh();
   }, [refresh]);
 
-  const handleRecordCreated = useCallback((): void => {
+  const handleChanged = useCallback((): void => {
     void refresh();
+    setSessionsKey((n) => n + 1);
   }, [refresh]);
 
   const trends = useMemo(
@@ -165,7 +187,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const { config, participants, records, me } = state.data;
+  const { config, participants, records, me, myPending } = state.data;
   const top = participants.length > 0 ? participants[0] : null;
   const bottom = participants.length > 1 ? participants[participants.length - 1] : null;
   const canRecord = me?.is_judge === true;
@@ -177,9 +199,12 @@ export function App(): JSX.Element {
         me={me}
         onLogout={() => void handleLogout()}
         onOpenOnboarding={() => setOnboardingOpen(true)}
+        onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
       <main className="app__main">
+        <PendingBanner cases={myPending} onOpen={setStatementCase} />
+
         <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
 
         <div className="app__grid">
@@ -189,6 +214,12 @@ export function App(): JSX.Element {
               trends={trends}
               counts={counts}
               onSelect={setSelectedUserId}
+            />
+            <SessionsPanel
+              me={me}
+              refreshKey={sessionsKey}
+              onOpenSession={setSessionId}
+              onCreate={() => setSessionFormOpen(true)}
             />
             <RulesPanel config={config} />
           </div>
@@ -212,23 +243,34 @@ export function App(): JSX.Element {
         <button
           type="button"
           className="app__fab"
-          onClick={() => setRecordOpen(true)}
-          aria-label="记一笔"
+          onClick={() => setCaseOpen(true)}
+          aria-label="立案"
         >
           <span className="app__fab-plus" aria-hidden="true">
             ✎
           </span>
-          <span className="app__fab-label">记一笔</span>
+          <span className="app__fab-label">立案</span>
         </button>
       )}
 
       {canRecord && me && (
-        <RecordDialog
-          open={recordOpen}
-          onClose={() => setRecordOpen(false)}
+        <CaseDialog
+          open={caseOpen}
+          onClose={() => setCaseOpen(false)}
           participants={participants}
           selfId={me.id}
-          onCreated={handleRecordCreated}
+          config={config}
+          onCreated={handleChanged}
+        />
+      )}
+
+      {statementCase && (
+        <StatementDialog
+          open
+          record={statementCase}
+          config={config}
+          onClose={() => setStatementCase(null)}
+          onDecided={handleChanged}
         />
       )}
 
@@ -241,12 +283,38 @@ export function App(): JSX.Element {
         />
       )}
 
+      {sessionFormOpen && (
+        <SessionFormDialog
+          open
+          onClose={() => setSessionFormOpen(false)}
+          onCreated={(session) => {
+            handleChanged();
+            setSessionId(session.id);
+          }}
+        />
+      )}
+
+      {sessionId !== null && (
+        <SessionDetailDialog
+          sessionId={sessionId}
+          me={me}
+          onClose={() => setSessionId(null)}
+          onChanged={handleChanged}
+        />
+      )}
+
+      {aiPanelOpen && <AdminAiPanel open onClose={() => setAiPanelOpen(false)} />}
+
       {selectedUserId && (
         <PlayerDetail
           userId={selectedUserId}
           me={me}
           onClose={() => setSelectedUserId(null)}
-          onChanged={() => void refresh()}
+          onOpenStatement={(record) => {
+            setSelectedUserId(null);
+            setStatementCase(record);
+          }}
+          onChanged={handleChanged}
         />
       )}
     </div>

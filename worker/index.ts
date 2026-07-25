@@ -1,10 +1,14 @@
 // Cloudflare Worker entrypoint. Hono handles /api/* and /auth/*; everything else
-// falls through to the static SPA via the ASSETS binding. The Cron Trigger runs
-// the idempotent weekly credit heal.
+// falls through to the static SPA via the ASSETS binding. The optional Cron
+// Trigger runs the weekly credit heal plus a sweep of overdue cases — both are
+// idempotent and also run lazily from GET /api/config, so the cron is optional.
 
 import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv, Env } from './types';
-import { ApiError, weeklyHeal } from './db';
+import { ApiError } from './errors';
+import { weeklyHeal } from './db';
+import { sweepDueCases } from './cases';
 import { registerRoutes } from './routes';
 import { resetOffsetHours } from './time';
 
@@ -15,7 +19,7 @@ registerRoutes(app);
 // Map thrown errors to `{ error }` with an appropriate status.
 app.onError((err, c) => {
   if (err instanceof ApiError) {
-    return c.json({ error: err.message }, err.status as 400 | 401 | 403 | 404 | 500);
+    return c.json({ error: err.message }, err.status as ContentfulStatusCode);
   }
   console.error('unhandled worker error', err);
   return c.json({ error: '服务器内部错误' }, 500);
@@ -31,6 +35,12 @@ export default {
       await weeklyHeal(env.DB, resetOffsetHours(env.RESET_TZ_OFFSET));
     } catch (err) {
       console.error('weekly heal failed', err);
+    }
+    try {
+      // No per-run cap here: a cron firing is not a user waiting on a response.
+      await sweepDueCases(env.DB, env, 50);
+    } catch (err) {
+      console.error('case sweep failed', err);
     }
   },
 };

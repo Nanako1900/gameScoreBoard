@@ -1,13 +1,25 @@
 // Typed same-origin fetch client for every /api and /auth endpoint.
 // Throws ApiError (with the parsed { error } message) on any non-2xx response.
 import type {
+  AiConfigPatch,
+  AiConfigResponse,
+  AiTestResponse,
+  CaseStatus,
   Config,
   LeaderboardResponse,
   MeResponse,
-  NewRecordInput,
+  NewCaseInput,
+  NewSessionInput,
   RecordItem,
   RecordsResponse,
   RoleUpdate,
+  RollCallEntry,
+  RollCallResponse,
+  SessionDetail,
+  SessionDetailResponse,
+  SessionsResponse,
+  SettleEntry,
+  SettleResponse,
   User,
   UserDetailResponse,
 } from './types';
@@ -89,6 +101,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+function post<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
 // --- Public reads ----------------------------------------------------------
 
 export function getConfig(): Promise<Config> {
@@ -102,22 +121,24 @@ export function getLeaderboard(): Promise<LeaderboardResponse> {
 export interface RecordsQuery {
   limit?: number;
   subject?: string;
-  status?: 'active' | 'disputed' | 'revoked';
+  status?: CaseStatus;
+  session?: number;
+  mine?: 'pending';
 }
 
 export function getRecords(query: RecordsQuery = {}): Promise<RecordsResponse> {
   const params = new URLSearchParams();
-  if (query.limit !== undefined) {
-    params.set('limit', String(query.limit));
-  }
-  if (query.subject !== undefined) {
-    params.set('subject', query.subject);
-  }
-  if (query.status !== undefined) {
-    params.set('status', query.status);
-  }
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.subject !== undefined) params.set('subject', query.subject);
+  if (query.status !== undefined) params.set('status', query.status);
+  if (query.session !== undefined) params.set('session', String(query.session));
+  if (query.mine !== undefined) params.set('mine', query.mine);
   const qs = params.toString();
   return request<RecordsResponse>(`/api/records${qs ? `?${qs}` : ''}`);
+}
+
+export function getRecord(id: number): Promise<{ record: RecordItem }> {
+  return request<{ record: RecordItem }>(`/api/records/${id}`);
 }
 
 export function getUserDetail(id: string): Promise<UserDetailResponse> {
@@ -131,41 +152,124 @@ export function getMe(): Promise<MeResponse> {
 }
 
 export function updateRoles(roles: RoleUpdate): Promise<{ user: User }> {
-  return request<{ user: User }>('/api/me/roles', {
-    method: 'POST',
-    body: JSON.stringify(roles),
-  });
+  return post<{ user: User }>('/api/me/roles', roles);
 }
 
 /** Set the caller's display name; pass null to use the OAuth (Nanako) name. */
 export function updateDisplayName(display_name: string | null): Promise<{ user: User }> {
-  return request<{ user: User }>('/api/me/display-name', {
-    method: 'POST',
-    body: JSON.stringify({ display_name }),
-  });
+  return post<{ user: User }>('/api/me/display-name', { display_name });
 }
 
-export function createRecord(input: NewRecordInput): Promise<{ record: RecordItem }> {
-  return request<{ record: RecordItem }>('/api/records', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+// --- Cases -----------------------------------------------------------------
+
+/** File a case. Penalties open a statement window; bonuses settle immediately. */
+export function createCase(input: NewCaseInput): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>('/api/records', input);
 }
 
-export function disputeRecord(id: number): Promise<{ record: RecordItem }> {
-  return request<{ record: RecordItem }>(`/api/records/${id}/dispute`, {
-    method: 'POST',
-  });
+/** Submit the subject's one statement. Resolves once the verdict is in. */
+export function submitStatement(
+  id: number,
+  statement: string,
+): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/statement`, { statement });
+}
+
+export function withdrawCase(id: number): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/withdraw`);
+}
+
+export function appealCase(id: number, reason?: string): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/records/${id}/appeal`, { reason });
 }
 
 export function revokeRecord(id: number): Promise<{ record: RecordItem }> {
-  return request<{ record: RecordItem }>(`/api/records/${id}/revoke`, {
-    method: 'POST',
+  return post<{ record: RecordItem }>(`/api/records/${id}/revoke`);
+}
+
+// --- Sessions --------------------------------------------------------------
+
+export function getSessions(
+  scope: 'upcoming' | 'past' | 'mine' = 'upcoming',
+): Promise<SessionsResponse> {
+  return request<SessionsResponse>(`/api/sessions?scope=${scope}`);
+}
+
+export function getSession(id: number): Promise<SessionDetailResponse> {
+  return request<SessionDetailResponse>(`/api/sessions/${id}`);
+}
+
+export function createSession(input: NewSessionInput): Promise<{ session: SessionDetail }> {
+  return post<{ session: SessionDetail }>('/api/sessions', input);
+}
+
+export function updateSession(
+  id: number,
+  patch: Partial<NewSessionInput>,
+): Promise<{ session: SessionDetail }> {
+  return request<{ session: SessionDetail }>(`/api/sessions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
   });
+}
+
+export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
+  return post<{ session: SessionDetail }>(`/api/sessions/${id}/cancel`);
+}
+
+export function setRsvp(
+  id: number,
+  rsvp: 'going' | 'maybe' | 'out',
+): Promise<{ session: SessionDetail }> {
+  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp });
+}
+
+/** Record attendance. Produces drafts; changes nobody's score. */
+export function rollCall(id: number, entries: RollCallEntry[]): Promise<RollCallResponse> {
+  return post<RollCallResponse>(`/api/sessions/${id}/rollcall`, { entries });
+}
+
+/** Close the session. `file` may be empty — that settles it with zero impact. */
+export function settleSession(
+  id: number,
+  file: SettleEntry[],
+  skipAll = false,
+): Promise<SettleResponse> {
+  return post<SettleResponse>(`/api/sessions/${id}/settle`, { file, skip_all: skipAll });
+}
+
+// --- Admin -----------------------------------------------------------------
+
+export function overrideCase(
+  id: number,
+  delta: number,
+  reason: string,
+): Promise<{ record: RecordItem }> {
+  return post<{ record: RecordItem }>(`/api/admin/records/${id}/override`, { delta, reason });
+}
+
+export function getAiConfig(): Promise<AiConfigResponse> {
+  return request<AiConfigResponse>('/api/admin/ai-config');
+}
+
+export function updateAiConfig(
+  patch: AiConfigPatch,
+): Promise<{ ok: true; enabled: boolean; prompt_version: string }> {
+  return post<{ ok: true; enabled: boolean; prompt_version: string }>(
+    '/api/admin/ai-config',
+    patch,
+  );
+}
+
+export function testAiConfig(input: {
+  claim?: string;
+  statement?: string;
+}): Promise<AiTestResponse> {
+  return post<AiTestResponse>('/api/admin/ai-config/test', input);
 }
 
 // --- Auth ------------------------------------------------------------------
 
 export function logout(): Promise<{ ok: true }> {
-  return request<{ ok: true }>('/auth/logout', { method: 'POST' });
+  return post<{ ok: true }>('/auth/logout');
 }

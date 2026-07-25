@@ -11,8 +11,14 @@
     "preview": "vite build && wrangler dev",
     "deploy": "vite build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "npm run test:unit && npm run test:worker",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:worker": "vitest run --config vitest.workers.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
     "db:local": "wrangler d1 execute edg-credit --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute edg-credit --remote --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute edg-credit --local --file=./migrations/002_v2_cases_and_sessions.sql",
+    "db:migrate:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/002_v2_cases_and_sessions.sql",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
@@ -21,6 +27,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.9.14",
     "@cloudflare/workers-types": "^4.20250109.0",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
@@ -28,6 +35,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
+    "vitest": "^3.2.7",
     "wrangler": "^4.107.0"
   }
 }

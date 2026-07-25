@@ -1,6 +1,6 @@
 import { useId } from 'react';
-import { VIOLATION_MAP } from '@shared/scoring';
-import type { RecordItem, RecordStatus } from '../types';
+import { CASE_STATUS_LABEL, VIOLATION_MAP } from '@shared/scoring';
+import type { RecordItem } from '../types';
 import { relativeTime } from '../lib/time';
 import { Avatar } from './Avatar';
 import './records-feed.css';
@@ -12,12 +12,6 @@ interface RecordsFeedProps {
   compact?: boolean;
   emptyHint?: string;
 }
-
-const STATUS_LABEL: Record<RecordStatus, string> = {
-  active: '',
-  disputed: '申诉中',
-  revoked: '已撤销',
-};
 
 export function RecordsFeed({
   records,
@@ -65,8 +59,11 @@ function RecordRow({ record, onSelectUser }: RecordRowProps): JSX.Element {
   const emoji = def?.emoji ?? '•';
   const label = def?.label ?? record.type;
   const positive = record.delta > 0;
-  const deltaText = positive ? `+${record.delta}` : String(record.delta);
-  const statusLabel = STATUS_LABEL[record.status];
+  const statusLabel = CASE_STATUS_LABEL[record.status];
+  // Pre-verdict the delta is still 0 — show the pending range instead of a
+  // misleading "0", so nobody reads an open case as a zero-point outcome.
+  const undecided = record.status === 'awaiting_statement' || record.status === 'judging';
+  const deltaText = undecided ? '?' : positive ? `+${record.delta}` : String(record.delta);
 
   return (
     <li className={`feed-row feed-row--${record.status}`}>
@@ -95,14 +92,24 @@ function RecordRow({ record, onSelectUser }: RecordRowProps): JSX.Element {
             ·
           </span>
           <time dateTime={record.created_at}>{relativeTime(record.created_at)}</time>
-          {record.note && <span className="feed-row__note">“{record.note}”</span>}
+          {record.verdict?.headline && (
+            <span className="feed-row__note">“{record.verdict.headline}”</span>
+          )}
         </p>
       </div>
 
       <span
         className={`feed-row__delta tabular ${
-          positive ? 'feed-row__delta--up' : 'feed-row__delta--down'
-        }${record.status === 'revoked' ? ' feed-row__delta--muted' : ''}`}
+          undecided
+            ? 'feed-row__delta--pending'
+            : positive
+              ? 'feed-row__delta--up'
+              : 'feed-row__delta--down'
+        }${
+          record.status === 'revoked' || record.status === 'withdrawn'
+            ? ' feed-row__delta--muted'
+            : ''
+        }`}
       >
         {deltaText}
       </span>

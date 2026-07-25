@@ -72,6 +72,40 @@ export function formatCountdown(targetIso: string, now: number = Date.now()): st
   return days > 0 ? `${days}天 ${clock}` : clock;
 }
 
+/** Remaining time until `target`, phrased for a deadline: '还剩 3 小时 20 分'. */
+export function formatRemaining(targetIso: string, now: number = Date.now()): string {
+  const { days, hours, minutes, done } = countdownParts(targetIso, now);
+  if (done) return '已截止';
+  if (days > 0) return `还剩 ${days} 天 ${hours} 小时`;
+  if (hours > 0) return `还剩 ${hours} 小时 ${minutes} 分`;
+  return `还剩 ${minutes} 分钟`;
+}
+
+/** True when a deadline is close enough to warrant a red, urgent treatment. */
+export function isUrgent(targetIso: string, now: number = Date.now()): boolean {
+  const { days, hours, done } = countdownParts(targetIso, now);
+  return done || (days === 0 && hours < 2);
+}
+
+/** Local wall-clock label for a session time, e.g. '7月25日 20:00 周五'. */
+export function formatDateTime(value: string): string {
+  const ms = parseTimestamp(value);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(
+    d.getMinutes(),
+  )} ${weekday}`;
+}
+
+/** `datetime-local` input value (local time, minute precision). */
+export function toDateTimeLocalValue(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
+    d.getHours(),
+  )}:${pad2(d.getMinutes())}`;
+}
+
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }

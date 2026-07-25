@@ -1,7 +1,8 @@
 // Env bindings + D1 row types + JSON output shapes for the EDG 信誉分 Worker.
 // JSON shapes mirror docs/CONTRACT.md exactly. Do not invent new field names.
 
-import type { ViolationType } from '../shared/scoring';
+import type { CaseStatus, VerdictSource, ViolationType } from '../shared/scoring';
+import type { Attendance, Rsvp, SessionStatus } from '../shared/attendance';
 
 /** Worker runtime bindings (see docs/CONTRACT.md → Env). */
 export interface Env {
@@ -14,6 +15,20 @@ export interface Env {
   APP_URL?: string; // optional; else derive from request origin
   RESET_TZ_OFFSET?: string; // hours, default "8"
   ADMIN_USERNAMES?: string; // comma-separated usernames -> is_admin on login
+
+  // --- AI 裁决 (any OpenAI-compatible endpoint) --------------------------------
+  // Defaults only. `app_settings` rows of the same name override every one of
+  // these at runtime EXCEPT AI_API_KEY, which is never stored in the database.
+  AI_ENABLED?: string; // 'false' disables AI judging (everything falls back to base)
+  AI_BASE_URL?: string; // e.g. https://api.openai.com/v1  (no trailing /chat/completions)
+  AI_MODEL?: string;
+  AI_API_KEY?: string; // SECRET ONLY — `wrangler secret put AI_API_KEY`
+  AI_SYSTEM_PROMPT?: string;
+  AI_TEMPERATURE?: string;
+  /** Hours a subject gets to file a statement; default STATEMENT_WINDOW_HOURS. */
+  STATEMENT_WINDOW_HOURS?: string;
+  /** 'false' = a non-judge organizer's roll call only produces drafts. */
+  SESSION_ORGANIZER_CAN_FILE?: string;
 
   // --- Split-deployment (frontend on a different origin, e.g. EdgeOne) ---------
   // All optional; unset = single-origin behavior (unified Worker, or EdgeOne
@@ -52,6 +67,17 @@ export interface RecordRow {
   type: string;
   delta: number;
   note: string | null;
+  claim: string | null;
+  session_id: number | null;
+  statement: string | null;
+  statement_at: string | null;
+  appeal_reason: string | null;
+  deadline_at: string | null;
+  judging_started_at: string | null;
+  verdict_source: string | null;
+  verdict_headline: string | null;
+  verdict_reason: string | null;
+  verdict_factors: string | null;
   status: string;
   created_at: string;
 }
@@ -71,6 +97,16 @@ export interface RecordJoinRow {
   type: string;
   delta: number;
   note: string | null;
+  claim: string | null;
+  session_id: number | null;
+  statement: string | null;
+  statement_at: string | null;
+  appeal_reason: string | null;
+  deadline_at: string | null;
+  verdict_source: string | null;
+  verdict_headline: string | null;
+  verdict_reason: string | null;
+  verdict_factors: string | null;
   status: string;
   created_at: string;
   s_id: string;
@@ -79,6 +115,36 @@ export interface RecordJoinRow {
   p_id: string;
   p_username: string;
   p_avatar: string | null;
+}
+
+export interface SessionRow {
+  id: number;
+  organizer_id: string;
+  title: string;
+  game: string | null;
+  starts_at: string;
+  duration_min: number | null;
+  capacity: number | null;
+  note: string | null;
+  status: string;
+  settled_at: string | null;
+  settled_by: string | null;
+  created_at: string;
+}
+
+export interface SessionPlayerJoinRow {
+  session_id: number;
+  user_id: string;
+  rsvp: string;
+  rsvp_at: string;
+  attendance: string | null;
+  late_minutes: number | null;
+  attendance_note: string | null;
+  record_id: number | null;
+  u_username: string;
+  u_avatar: string | null;
+  u_score: number;
+  u_is_participant: number;
 }
 
 // --- JSON output shapes (booleans are real booleans) -------------------------
@@ -113,20 +179,89 @@ export interface RecordActor {
   avatar_url: string | null;
 }
 
+export interface VerdictFactor {
+  kind: 'mitigating' | 'aggravating';
+  text: string;
+}
+
+export interface Verdict {
+  source: VerdictSource;
+  headline: string;
+  reasoning: string;
+  factors: VerdictFactor[];
+}
+
 export interface RecordItem {
   id: number;
   subject: RecordActor;
   reporter: RecordActor;
   type: ViolationType;
   delta: number;
+  /** Judge's short note. Public, like every other field here. */
   note: string | null;
-  status: 'active' | 'disputed' | 'revoked';
+  claim: string | null;
+  session_id: number | null;
+  statement: string | null;
+  statement_at: string | null;
+  /** Why the subject contested the verdict — the admin needs it to review. */
+  appeal_reason: string | null;
+  deadline_at: string | null;
+  status: CaseStatus;
+  verdict: Verdict | null;
+  /** Sentencing range for this case's type, so the UI can draw the scale. */
+  range: { min: number; max: number; base: number };
   created_at: string;
 }
 
 export interface HistoryPoint {
   at: string;
   score: number;
+}
+
+// --- Sessions ----------------------------------------------------------------
+
+export interface SessionPlayer {
+  user: RecordActor;
+  rsvp: Rsvp;
+  rsvp_at: string;
+  attendance: Attendance | null;
+  late_minutes: number | null;
+  attendance_note: string | null;
+  record_id: number | null;
+  is_participant: boolean;
+}
+
+export interface SessionItem {
+  id: number;
+  organizer: RecordActor;
+  title: string;
+  game: string | null;
+  starts_at: string;
+  duration_min: number | null;
+  capacity: number | null;
+  note: string | null;
+  status: SessionStatus;
+  settled_at: string | null;
+  created_at: string;
+  counts: { going: number; maybe: number; out: number };
+  /** The caller's own RSVP, when authenticated. */
+  my_rsvp: Rsvp | null;
+}
+
+export interface SessionDetail extends SessionItem {
+  players: SessionPlayer[];
+}
+
+/** A proposed case produced by roll call — nothing is filed until settle. */
+export interface CaseDraft {
+  user_id: string;
+  username: string;
+  type: ViolationType;
+  kind: 'penalty' | 'bonus';
+  range: { min: number; max: number; base: number };
+  suggested_claim: string;
+  /** Already has a filed case from a previous settle attempt. */
+  already_filed: boolean;
 }
 
 /** Hono generics for the app: bindings + per-request variables. */
