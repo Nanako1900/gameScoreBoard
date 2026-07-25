@@ -10,6 +10,8 @@ interface HeaderProps {
   me: User | null;
   onLogout: () => void;
   onOpenOnboarding: () => void;
+  /** Provided only for admins — opens the AI sentencing configuration. */
+  onOpenAiPanel?: () => void;
 }
 
 function useNow(intervalMs: number): number {
@@ -26,6 +28,7 @@ export function Header({
   me,
   onLogout,
   onOpenOnboarding,
+  onOpenAiPanel,
 }: HeaderProps): JSX.Element {
   const now = useNow(1000);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -118,6 +121,18 @@ export function Header({
                   >
                     编辑我的身份
                   </button>
+                  {onOpenAiPanel && (
+                    <button
+                      type="button"
+                      className="hdr__dropdown-item"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onOpenAiPanel();
+                      }}
+                    >
+                      AI 裁判配置
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="hdr__dropdown-item hdr__dropdown-item--danger"

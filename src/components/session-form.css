@@ -1,0 +1,80 @@
+/* 组局表单 + 约局详情 + 点名，共用一套字段样式 */
+
+.sf__title {
+  font-size: var(--text-h1);
+  padding-right: 2rem;
+}
+
+.sf__subtitle {
+  margin-top: 0.25rem;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.sf__form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.sf__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+.sf__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.sf__label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.sf__input,
+.sf__textarea,
+.sf__select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-md);
+  font-size: var(--text-base);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transition: border-color var(--dur-fast);
+}
+
+.sf__input:hover,
+.sf__textarea:hover,
+.sf__select:hover {
+  border-color: var(--border-strong);
+}
+
+.sf__textarea {
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.sf__error {
+  font-size: var(--text-sm);
+  color: var(--red);
+}
+
+.sf__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+@media (max-width: 520px) {
+  .sf__row {
+    grid-template-columns: 1fr;
+  }
+}

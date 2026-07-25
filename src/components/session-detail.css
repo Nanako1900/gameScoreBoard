@@ -1,0 +1,168 @@
+/* 约局详情 */
+
+.sdt {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.sdt__status {
+  padding: 2rem 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.sdt__head {
+  display: grid;
+  gap: 0.3rem;
+  padding-right: 2rem;
+}
+
+.sdt__when {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+}
+
+.sdt__title {
+  font-size: var(--text-h1);
+}
+
+.sdt__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.sdt__chip {
+  padding: 0.05em 0.5em;
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+}
+
+.sdt__chip--status {
+  color: var(--gold);
+  background: rgba(245, 197, 66, 0.12);
+}
+
+.sdt__note {
+  margin-top: 0.3rem;
+  font-size: var(--text-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.sdt__error {
+  font-size: var(--text-sm);
+  color: var(--red);
+}
+
+.sdt__flash {
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  color: var(--up);
+  background: rgba(61, 220, 132, 0.1);
+}
+
+.sdt__rsvp {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.sdt__rsvp-label {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.sdt__section {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.sdt__section-title {
+  font-size: var(--text-h2);
+  color: var(--muted);
+}
+
+.sdt__players {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.sdt-player {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: var(--text-sm);
+}
+
+.sdt-player--out {
+  opacity: 0.55;
+}
+
+.sdt-player__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdt-player__rsvp,
+.sdt-player__att {
+  flex: none;
+  padding: 0.08em 0.55em;
+  border-radius: var(--r-pill);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  background: var(--panel-2);
+}
+
+.sdt-player__att--on_time {
+  color: var(--up);
+  background: rgba(61, 220, 132, 0.12);
+}
+
+.sdt-player__att--late {
+  color: var(--gold);
+  background: rgba(245, 197, 66, 0.12);
+}
+
+.sdt-player__att--no_show,
+.sdt-player__att--left_early {
+  color: var(--down);
+  background: rgba(229, 72, 77, 0.12);
+}
+
+.sdt__records {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.sdt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.sdt__hint {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  text-align: right;
+}

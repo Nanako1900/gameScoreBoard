@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { tierFor } from '@shared/scoring';
-import type { HistoryPoint, RecordItem, UserDetailResponse, User } from '../types';
-import { ApiError, disputeRecord, getUserDetail, revokeRecord } from '../api';
+import type { HistoryPoint, RecordItem, User, UserDetailResponse } from '../types';
+import {
+  ApiError,
+  appealCase,
+  getUserDetail,
+  overrideCase,
+  revokeRecord,
+  withdrawCase,
+} from '../api';
 import { parseTimestamp } from '../lib/time';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
-import { RecordsFeed } from './RecordsFeed';
+import { VerdictCard } from './VerdictCard';
 import { HistoryChart } from './HistoryChart';
 import './player-detail.css';
 
@@ -15,7 +22,9 @@ interface PlayerDetailProps {
   userId: string;
   me: User | null;
   onClose: () => void;
-  /** Called after a mutation (dispute) so parent lists can refresh. */
+  /** Open the statement dialog for a case the viewer has to answer. */
+  onOpenStatement?: (record: RecordItem) => void;
+  /** Called after a mutation so parent lists can refresh. */
   onChanged?: () => void;
 }
 
@@ -27,25 +36,28 @@ interface DetailState {
 
 const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 
-/** Revocable by its own reporter within 15 minutes, or by any admin — never once revoked. */
-function canRevokeRecord(record: RecordItem, me: User | null): boolean {
-  if (!me || record.status === 'revoked') {
-    return false;
-  }
-  if (me.is_admin) {
-    return true;
-  }
-  if (record.reporter.id !== me.id) {
-    return false;
-  }
+/** Post-verdict reversal: any admin, or the reporter within 15 minutes. */
+function canRevoke(record: RecordItem, me: User | null): boolean {
+  if (!me) return false;
+  if (record.status !== 'decided' && record.status !== 'appealed') return false;
+  if (me.is_admin) return true;
+  if (record.reporter.id !== me.id) return false;
   const created = parseTimestamp(record.created_at);
   return !Number.isNaN(created) && Date.now() - created <= REVOKE_WINDOW_MS;
+}
+
+/** Pre-verdict withdrawal: no score has moved, so the reporter may just drop it. */
+function canWithdraw(record: RecordItem, me: User | null): boolean {
+  if (!me) return false;
+  if (record.status !== 'awaiting_statement') return false;
+  return me.is_admin || record.reporter.id === me.id;
 }
 
 export function PlayerDetail({
   userId,
   me,
   onClose,
+  onOpenStatement,
   onChanged,
 }: PlayerDetailProps): JSX.Element {
   const [state, setState] = useState<DetailState>({
@@ -53,8 +65,8 @@ export function PlayerDetail({
     data: null,
     error: null,
   });
-  const [disputingId, setDisputingId] = useState<number | null>(null);
-  const [revokingId, setRevokingId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [overriding, setOverriding] = useState<number | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
     setState({ status: 'loading', data: null, error: null });
@@ -76,35 +88,19 @@ export function PlayerDetail({
 
   const isSelf = me !== null && me.id === userId;
 
-  const handleDispute = async (id: number): Promise<void> => {
-    setDisputingId(id);
+  const run = async (id: number, fn: () => Promise<unknown>): Promise<void> => {
+    setBusyId(id);
     try {
-      await disputeRecord(id);
+      await fn();
       await load();
       onChanged?.();
     } catch (err) {
       setState((prev) => ({
         ...prev,
-        error: err instanceof ApiError ? err.message : '申诉失败',
+        error: err instanceof ApiError ? err.message : '操作失败',
       }));
     } finally {
-      setDisputingId(null);
-    }
-  };
-
-  const handleRevoke = async (id: number): Promise<void> => {
-    setRevokingId(id);
-    try {
-      await revokeRecord(id);
-      await load();
-      onChanged?.();
-    } catch (err) {
-      setState((prev) => ({
-        ...prev,
-        error: err instanceof ApiError ? err.message : '撤销失败',
-      }));
-    } finally {
-      setRevokingId(null);
+      setBusyId(null);
     }
   };
 
@@ -166,19 +162,41 @@ export function PlayerDetail({
             </p>
           )}
 
-          <section className="pd__section" aria-label="记录">
+          <section className="pd__section" aria-label="案件">
             <h3 className="pd__section-title">
-              记录 <span className="pd__count">{data.records.length}</span>
+              案件 <span className="pd__count">{data.records.length}</span>
             </h3>
-            <RecordList
-              records={data.records}
-              me={me}
-              isSelf={isSelf}
-              disputingId={disputingId}
-              revokingId={revokingId}
-              onDispute={handleDispute}
-              onRevoke={handleRevoke}
-            />
+            {data.records.length === 0 ? (
+              <p className="pd__empty">还没有任何记录，保持靠谱！</p>
+            ) : (
+              <div className="pd__cases">
+                {data.records.map((r) => (
+                  <VerdictCard
+                    key={r.id}
+                    record={r}
+                    actions={
+                      <CaseActions
+                        record={r}
+                        me={me}
+                        isSelf={isSelf}
+                        busy={busyId === r.id}
+                        overriding={overriding === r.id}
+                        onStartOverride={() => setOverriding(r.id)}
+                        onCancelOverride={() => setOverriding(null)}
+                        onStatement={() => onOpenStatement?.(r)}
+                        onAppeal={() => void run(r.id, () => appealCase(r.id))}
+                        onWithdraw={() => void run(r.id, () => withdrawCase(r.id))}
+                        onRevoke={() => void run(r.id, () => revokeRecord(r.id))}
+                        onOverride={(delta, reason) => {
+                          setOverriding(null);
+                          void run(r.id, () => overrideCase(r.id, delta, reason));
+                        }}
+                      />
+                    }
+                  />
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -186,72 +204,153 @@ export function PlayerDetail({
   );
 }
 
-interface RecordListProps {
-  records: RecordItem[];
+interface CaseActionsProps {
+  record: RecordItem;
   me: User | null;
   isSelf: boolean;
-  disputingId: number | null;
-  revokingId: number | null;
-  onDispute: (id: number) => void;
-  onRevoke: (id: number) => void;
+  busy: boolean;
+  overriding: boolean;
+  onStartOverride: () => void;
+  onCancelOverride: () => void;
+  onStatement: () => void;
+  onAppeal: () => void;
+  onWithdraw: () => void;
+  onRevoke: () => void;
+  onOverride: (delta: number, reason: string) => void;
 }
 
-function RecordList({
-  records,
+function CaseActions({
+  record,
   me,
   isSelf,
-  disputingId,
-  revokingId,
-  onDispute,
+  busy,
+  overriding,
+  onStartOverride,
+  onCancelOverride,
+  onStatement,
+  onAppeal,
+  onWithdraw,
   onRevoke,
-}: RecordListProps): JSX.Element {
-  if (records.length === 0) {
-    return <p className="pd__empty">还没有任何记录，保持靠谱！</p>;
+  onOverride,
+}: CaseActionsProps): JSX.Element | null {
+  const showStatement = isSelf && record.status === 'awaiting_statement';
+  const showAppeal = isSelf && record.status === 'decided';
+  const showWithdraw = canWithdraw(record, me);
+  const showRevoke = canRevoke(record, me);
+  const showOverride =
+    me?.is_admin === true && (record.status === 'appealed' || record.status === 'decided');
+
+  if (overriding) {
+    return <OverrideForm record={record} onCancel={onCancelOverride} onSubmit={onOverride} />;
   }
-  const actionable = records.filter(
-    (r) => (isSelf && r.status === 'active') || canRevokeRecord(r, me),
-  );
+
+  if (!showStatement && !showAppeal && !showWithdraw && !showRevoke && !showOverride) {
+    return null;
+  }
+
   return (
-    <div className="pd__records">
-      <RecordsFeed records={records} title="" compact />
-      {actionable.length > 0 && (
-        <ul className="pd__action-list">
-          {actionable.map((r) => {
-            const showDispute = isSelf && r.status === 'active';
-            const showRevoke = canRevokeRecord(r, me);
-            return (
-              <li key={r.id} className="pd__action-row">
-                <span className="pd__action-label">
-                  「{r.reporter.username}」记录的这一笔
-                </span>
-                <span className="pd__action-btns">
-                  {showDispute && (
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm"
-                      onClick={() => onDispute(r.id)}
-                      disabled={disputingId === r.id}
-                    >
-                      {disputingId === r.id ? '提交中…' : '申诉'}
-                    </button>
-                  )}
-                  {showRevoke && (
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm pd__revoke-btn"
-                      onClick={() => onRevoke(r.id)}
-                      disabled={revokingId === r.id}
-                    >
-                      {revokingId === r.id ? '撤销中…' : '撤销'}
-                    </button>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+    <>
+      {showStatement && (
+        <button type="button" className="btn btn--gold btn--sm" onClick={onStatement}>
+          说明情况
+        </button>
       )}
-    </div>
+      {showAppeal && (
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onAppeal}
+          disabled={busy}
+        >
+          {busy ? '提交中…' : '申诉'}
+        </button>
+      )}
+      {showWithdraw && (
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onWithdraw}
+          disabled={busy}
+        >
+          {busy ? '撤案中…' : '撤案'}
+        </button>
+      )}
+      {showRevoke && (
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm pd__revoke-btn"
+          onClick={onRevoke}
+          disabled={busy}
+        >
+          {busy ? '撤销中…' : '撤销'}
+        </button>
+      )}
+      {showOverride && (
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onStartOverride}
+          disabled={busy}
+        >
+          改判
+        </button>
+      )}
+    </>
+  );
+}
+
+interface OverrideFormProps {
+  record: RecordItem;
+  onCancel: () => void;
+  onSubmit: (delta: number, reason: string) => void;
+}
+
+/** Admin re-sentencing. The delta is bounded server-side by the same clamp. */
+function OverrideForm({ record, onCancel, onSubmit }: OverrideFormProps): JSX.Element {
+  const [delta, setDelta] = useState(String(record.delta));
+  const [reason, setReason] = useState('');
+  const value = Number(delta);
+  const valid = Number.isFinite(value) && reason.trim().length > 0;
+
+  return (
+    <form
+      className="pd__override"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid) onSubmit(Math.round(value), reason.trim());
+      }}
+    >
+      <label className="pd__override-field">
+        <span className="pd__override-label">
+          改判为（{record.range.min} ~ {record.range.max}）
+        </span>
+        <input
+          className="pd__override-input tabular"
+          type="number"
+          min={record.range.min}
+          max={record.range.max}
+          value={delta}
+          onChange={(e) => setDelta(e.target.value)}
+        />
+      </label>
+      <label className="pd__override-field pd__override-field--grow">
+        <span className="pd__override-label">理由（必填）</span>
+        <input
+          className="pd__override-input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="申诉属实，当事人确有不可抗力"
+        />
+      </label>
+      <span className="pd__override-btns">
+        <button type="button" className="btn btn--ghost btn--sm" onClick={onCancel}>
+          取消
+        </button>
+        <button type="submit" className="btn btn--gold btn--sm" disabled={!valid}>
+          确认改判
+        </button>
+      </span>
+    </form>
   );
 }
 

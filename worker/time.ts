@@ -62,3 +62,37 @@ export function nextResetAt(offsetHours: number): string {
   if (instant <= Date.now()) instant += 7 * DAY_MS;
   return new Date(instant).toISOString();
 }
+
+// --- sqlite datetime helpers -------------------------------------------------
+// D1 stores timestamps via datetime('now') => 'YYYY-MM-DD HH:MM:SS' in UTC.
+// Anything we write ourselves (deadlines, claim timestamps) MUST use the same
+// format so string comparison in SQL (`deadline_at <= ?`) stays correct.
+
+/** Format a Date as a UTC sqlite datetime string. */
+export function toSqlUtc(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(
+    d.getUTCDate(),
+  )} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+}
+
+/** Parse a UTC sqlite datetime (or ISO) string to epoch millis; NaN if unparseable. */
+export function parseSqlUtc(value: string): number {
+  // Already ISO (has 'T' and/or a zone)? Let Date handle it.
+  if (value.includes('T')) return new Date(value).getTime();
+  return new Date(value.replace(' ', 'T') + 'Z').getTime();
+}
+
+/** Sqlite-datetime string for `hours` from now (UTC). */
+export function sqlNowPlusHours(hours: number): string {
+  return toSqlUtc(new Date(Date.now() + hours * HOUR_MS));
+}
+
+/** Sqlite-datetime string for `minutes` ago (UTC). */
+export function sqlNowMinusMinutes(minutes: number): string {
+  return toSqlUtc(new Date(Date.now() - minutes * 60_000));
+}
+
+/** Current instant as a UTC sqlite datetime string. */
+export function sqlNow(): string {
+  return toSqlUtc(new Date());
+}

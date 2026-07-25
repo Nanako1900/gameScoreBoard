@@ -172,3 +172,58 @@
     justify-content: center;
   }
 }
+
+/* --- v2: case list + admin override form ---------------------------------- */
+
+.pd__cases {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.pd__override {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  border-radius: var(--r-md);
+  background: rgba(229, 72, 77, 0.06);
+}
+
+.pd__override-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.pd__override-field--grow {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.pd__override-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.pd__override-input {
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.pd__override-field:not(.pd__override-field--grow) .pd__override-input {
+  width: 7rem;
+}
+
+.pd__override-btns {
+  display: inline-flex;
+  gap: 0.45rem;
+}

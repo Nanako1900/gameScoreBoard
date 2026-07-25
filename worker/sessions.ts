@@ -1,0 +1,692 @@
+// 预约约局: create → RSVP → roll call → settle.
+//
+// The module is usable end-to-end WITHOUT ever touching scores: roll call only
+// records who showed up. Filing cases is a separate, explicitly opted-into step
+// (`settle` with a non-empty `file` list), which is what makes the scoring
+// integration "选配、不是必须".
+
+import {
+  ORGANIZER_BONUS_MIN_ATTENDEES,
+  SESSION_GAME_MAX,
+  SESSION_MAX_LEAD_MS,
+  SESSION_NOTE_MAX,
+  SESSION_TITLE_MAX,
+  draftClaim,
+  isAllowedTypeOverride,
+  isAttendance,
+  isRsvp,
+  violationForAttendance,
+  type Attendance,
+  type Rsvp,
+  type SessionStatus,
+} from '../shared/attendance';
+import {
+  MAX_NARRATIVE_LEN,
+  MIN_CLAIM_LEN,
+  VIOLATION_MAP,
+  WEEKLY_BONUS_CAP,
+  type ViolationType,
+} from '../shared/scoring';
+import type {
+  CaseDraft,
+  Env,
+  SessionDetail,
+  SessionItem,
+  SessionPlayer,
+  SessionPlayerJoinRow,
+  SessionRow,
+  User,
+} from './types';
+import { ApiError } from './errors';
+import { getUserById, scoreMutation } from './db';
+import { fileCase } from './cases';
+import { parseSqlUtc, weekStartUtcSql } from './time';
+
+const MAX_ROLLCALL_ENTRIES = 50;
+const MAX_LATE_MINUTES = 24 * 60;
+
+// --- Mapping -----------------------------------------------------------------
+
+const SESSION_SELECT = `
+SELECT g.*,
+       COALESCE(o.display_name, o.username) AS o_username,
+       o.avatar_url AS o_avatar,
+       (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'going')  AS c_going,
+       (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'maybe')  AS c_maybe,
+       (SELECT COUNT(*) FROM session_players sp WHERE sp.session_id = g.id AND sp.rsvp = 'out')    AS c_out
+FROM game_sessions g
+JOIN users o ON o.id = g.organizer_id`;
+
+interface SessionJoinRow extends SessionRow {
+  o_username: string;
+  o_avatar: string | null;
+  c_going: number;
+  c_maybe: number;
+  c_out: number;
+}
+
+function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
+  return {
+    id: row.id,
+    organizer: { id: row.organizer_id, username: row.o_username, avatar_url: row.o_avatar },
+    title: row.title,
+    game: row.game,
+    starts_at: row.starts_at,
+    duration_min: row.duration_min,
+    capacity: row.capacity,
+    note: row.note,
+    status: row.status as SessionStatus,
+    settled_at: row.settled_at,
+    created_at: row.created_at,
+    counts: { going: row.c_going, maybe: row.c_maybe, out: row.c_out },
+    my_rsvp: myRsvp,
+  };
+}
+
+function toSessionPlayer(row: SessionPlayerJoinRow): SessionPlayer {
+  return {
+    user: { id: row.user_id, username: row.u_username, avatar_url: row.u_avatar },
+    rsvp: row.rsvp as Rsvp,
+    rsvp_at: row.rsvp_at,
+    attendance: row.attendance as Attendance | null,
+    late_minutes: row.late_minutes,
+    attendance_note: row.attendance_note,
+    record_id: row.record_id,
+    is_participant: row.u_is_participant === 1,
+  };
+}
+
+const PLAYER_SELECT = `
+SELECT sp.*,
+       COALESCE(u.display_name, u.username) AS u_username,
+       u.avatar_url AS u_avatar, u.score AS u_score,
+       u.is_participant AS u_is_participant
+FROM session_players sp
+JOIN users u ON u.id = sp.user_id
+WHERE sp.session_id = ?
+ORDER BY sp.rsvp ASC, sp.rsvp_at ASC`;
+
+// --- Reads -------------------------------------------------------------------
+
+async function myRsvpMap(
+  db: D1Database,
+  callerId: string | null,
+  sessionIds: number[],
+): Promise<Map<number, Rsvp>> {
+  if (!callerId || sessionIds.length === 0) return new Map();
+  // Static placeholder list built from the row count only — values stay bound.
+  const holes = sessionIds.map(() => '?').join(', ');
+  const rows = await db
+    .prepare(
+      `SELECT session_id, rsvp FROM session_players
+        WHERE user_id = ? AND session_id IN (${holes})`,
+    )
+    .bind(callerId, ...sessionIds)
+    .all<{ session_id: number; rsvp: string }>();
+  return new Map(rows.results.map((r) => [r.session_id, r.rsvp as Rsvp]));
+}
+
+export type SessionScope = 'upcoming' | 'past' | 'mine';
+
+export async function listSessions(
+  db: D1Database,
+  scope: SessionScope,
+  callerId: string | null,
+  limit = 50,
+): Promise<SessionItem[]> {
+  // MUST be ISO, not the sqlite datetime format used elsewhere: `starts_at` is
+  // stored as ISO, and SQL compares these as plain strings. Mixing formats
+  // silently breaks the split — 'T' (0x54) sorts above ' ' (0x20), so every
+  // same-day past session would read as upcoming.
+  const now = new Date().toISOString();
+  let where: string;
+  const binds: unknown[] = [];
+  if (scope === 'past') {
+    where = "WHERE g.starts_at < ? AND g.status != 'cancelled'";
+    binds.push(now);
+  } else if (scope === 'mine') {
+    if (!callerId) return [];
+    where = `WHERE g.organizer_id = ?
+               OR g.id IN (SELECT session_id FROM session_players WHERE user_id = ?)`;
+    binds.push(callerId, callerId);
+  } else {
+    where = "WHERE g.starts_at >= ? AND g.status = 'open'";
+    binds.push(now);
+  }
+  const order = scope === 'upcoming' ? 'ASC' : 'DESC';
+  binds.push(Math.max(1, Math.min(100, limit)));
+  const rows = await db
+    .prepare(`${SESSION_SELECT} ${where} ORDER BY g.starts_at ${order}, g.id DESC LIMIT ?`)
+    .bind(...binds)
+    .all<SessionJoinRow>();
+  const mine = await myRsvpMap(
+    db,
+    callerId,
+    rows.results.map((r) => r.id),
+  );
+  return rows.results.map((r) => toSessionItem(r, mine.get(r.id) ?? null));
+}
+
+async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
+  const row = await db
+    .prepare(`${SESSION_SELECT} WHERE g.id = ?`)
+    .bind(id)
+    .first<SessionJoinRow>();
+  if (!row) throw new ApiError(404, '约局不存在');
+  return row;
+}
+
+export async function getSessionDetail(
+  db: D1Database,
+  id: number,
+  callerId: string | null,
+): Promise<SessionDetail> {
+  const row = await getSessionRow(db, id);
+  const players = await db.prepare(PLAYER_SELECT).bind(id).all<SessionPlayerJoinRow>();
+  const mapped = players.results.map(toSessionPlayer);
+  const mine = callerId ? mapped.find((p) => p.user.id === callerId)?.rsvp ?? null : null;
+  return { ...toSessionItem(row, mine), players: mapped };
+}
+
+// --- Writes ------------------------------------------------------------------
+
+function requireOrganizer(row: SessionRow, caller: User): void {
+  if (caller.is_admin) return;
+  if (row.organizer_id !== caller.id) throw new ApiError(403, '只有组织者可以操作这个约局');
+}
+
+function normalizeTitle(raw: unknown): string {
+  if (typeof raw !== 'string') throw new ApiError(400, '缺少标题');
+  const t = raw.trim();
+  if (t.length === 0) throw new ApiError(400, '标题不能为空');
+  return t.slice(0, SESSION_TITLE_MAX);
+}
+
+function normalizeOptionalText(raw: unknown, max: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  return t.length === 0 ? null : t.slice(0, max);
+}
+
+function normalizeStartsAt(raw: unknown): string {
+  if (typeof raw !== 'string') throw new ApiError(400, '缺少开始时间');
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) throw new ApiError(400, '开始时间格式无效');
+  if (ms > Date.now() + SESSION_MAX_LEAD_MS) throw new ApiError(400, '开始时间太远了（最多 90 天）');
+  return new Date(ms).toISOString();
+}
+
+function normalizeInt(raw: unknown, min: number, max: number, label: string): number | null {
+  if (raw === undefined || raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) throw new ApiError(400, `${label}必须是数字`);
+  const i = Math.round(n);
+  if (i < min || i > max) throw new ApiError(400, `${label}需在 ${min}–${max} 之间`);
+  return i;
+}
+
+export interface CreateSessionInput {
+  title: unknown;
+  game?: unknown;
+  starts_at: unknown;
+  duration_min?: unknown;
+  capacity?: unknown;
+  note?: unknown;
+}
+
+export async function createSession(
+  db: D1Database,
+  organizer: User,
+  input: CreateSessionInput,
+): Promise<SessionDetail> {
+  const title = normalizeTitle(input.title);
+  const startsAt = normalizeStartsAt(input.starts_at);
+  const game = normalizeOptionalText(input.game, SESSION_GAME_MAX);
+  const note = normalizeOptionalText(input.note, SESSION_NOTE_MAX);
+  const duration = normalizeInt(input.duration_min, 15, 1440, '时长');
+  const capacity = normalizeInt(input.capacity, 2, 50, '人数上限');
+
+  const res = await db
+    .prepare(
+      `INSERT INTO game_sessions (organizer_id, title, game, starts_at, duration_min, capacity, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(organizer.id, title, game, startsAt, duration, capacity, note)
+    .run();
+  const id = Number(res.meta?.last_row_id);
+  if (!id) throw new ApiError(500, '创建约局失败');
+
+  // The organizer is in by default — they proposed it.
+  await db
+    .prepare("INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, ?, 'going')")
+    .bind(id, organizer.id)
+    .run();
+  return getSessionDetail(db, id, organizer.id);
+}
+
+export async function updateSession(
+  db: D1Database,
+  caller: User,
+  id: number,
+  input: Partial<CreateSessionInput>,
+): Promise<SessionDetail> {
+  const row = await getSessionRow(db, id);
+  requireOrganizer(row, caller);
+  if (row.status !== 'open') throw new ApiError(400, '已取消 / 已结算的约局不能再修改');
+
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (input.title !== undefined) {
+    sets.push('title = ?');
+    binds.push(normalizeTitle(input.title));
+  }
+  if (input.starts_at !== undefined) {
+    sets.push('starts_at = ?');
+    binds.push(normalizeStartsAt(input.starts_at));
+  }
+  if (input.game !== undefined) {
+    sets.push('game = ?');
+    binds.push(normalizeOptionalText(input.game, SESSION_GAME_MAX));
+  }
+  if (input.note !== undefined) {
+    sets.push('note = ?');
+    binds.push(normalizeOptionalText(input.note, SESSION_NOTE_MAX));
+  }
+  if (input.duration_min !== undefined) {
+    sets.push('duration_min = ?');
+    binds.push(normalizeInt(input.duration_min, 15, 1440, '时长'));
+  }
+  if (input.capacity !== undefined) {
+    sets.push('capacity = ?');
+    binds.push(normalizeInt(input.capacity, 2, 50, '人数上限'));
+  }
+  if (sets.length > 0) {
+    binds.push(id);
+    await db
+      .prepare(`UPDATE game_sessions SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...binds)
+      .run();
+  }
+  return getSessionDetail(db, id, caller.id);
+}
+
+export async function cancelSession(
+  db: D1Database,
+  caller: User,
+  id: number,
+): Promise<SessionDetail> {
+  const row = await getSessionRow(db, id);
+  requireOrganizer(row, caller);
+  if (row.status === 'settled') throw new ApiError(400, '已结算的约局不能取消');
+  await db
+    .prepare("UPDATE game_sessions SET status = 'cancelled' WHERE id = ? AND status = 'open'")
+    .bind(id)
+    .run();
+  return getSessionDetail(db, id, caller.id);
+}
+
+export async function setRsvp(
+  db: D1Database,
+  caller: User,
+  id: number,
+  rawRsvp: unknown,
+): Promise<SessionDetail> {
+  if (typeof rawRsvp !== 'string' || !isRsvp(rawRsvp)) {
+    throw new ApiError(400, '无效的报名状态');
+  }
+  const row = await getSessionRow(db, id);
+  if (row.status !== 'open') throw new ApiError(400, '这个约局已经不接受报名了');
+  if (parseSqlUtc(row.starts_at) <= Date.now()) {
+    throw new ApiError(400, '约局已开始，不能再改报名');
+  }
+  if (row.organizer_id === caller.id && rawRsvp !== 'going') {
+    throw new ApiError(400, '组织者不能退出自己的局，请直接取消约局');
+  }
+
+  if (rawRsvp === 'going' && row.capacity !== null) {
+    const existing = await db
+      .prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = ?")
+      .bind(id, caller.id)
+      .first<{ rsvp: string }>();
+    if (existing?.rsvp !== 'going' && row.c_going >= row.capacity) {
+      throw new ApiError(400, '人数已满');
+    }
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(session_id, user_id) DO UPDATE SET
+         rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
+    )
+    .bind(id, caller.id, rawRsvp)
+    .run();
+  return getSessionDetail(db, id, caller.id);
+}
+
+// --- Roll call ---------------------------------------------------------------
+
+export interface RollCallEntry {
+  user_id: string;
+  attendance: string;
+  late_minutes?: unknown;
+  note?: unknown;
+}
+
+function parseRollCallEntries(raw: unknown): RollCallEntry[] {
+  if (!Array.isArray(raw)) throw new ApiError(400, '缺少点名结果');
+  if (raw.length > MAX_ROLLCALL_ENTRIES) throw new ApiError(400, '点名人数过多');
+  return raw.map((item) => {
+    if (typeof item !== 'object' || item === null) throw new ApiError(400, '点名条目格式错误');
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.user_id !== 'string' || rec.user_id.length === 0) {
+      throw new ApiError(400, '点名条目缺少 user_id');
+    }
+    if (typeof rec.attendance !== 'string' || !isAttendance(rec.attendance)) {
+      throw new ApiError(400, '无效的出勤状态');
+    }
+    return {
+      user_id: rec.user_id,
+      attendance: rec.attendance,
+      late_minutes: rec.late_minutes,
+      note: rec.note,
+    };
+  });
+}
+
+function localLabel(iso: string, offsetHours: number): string {
+  const d = new Date(parseSqlUtc(iso) + offsetHours * 3_600_000);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日 ${pad(d.getUTCHours())}:${pad(
+    d.getUTCMinutes(),
+  )}`;
+}
+
+export interface RollCallResult {
+  session: SessionDetail;
+  drafts: CaseDraft[];
+}
+
+/**
+ * Record who actually showed up. Writes ONLY to session_players — not a single
+ * point moves here. The returned drafts are a proposal the organizer may edit,
+ * partially accept, or throw away entirely.
+ */
+export async function rollCall(
+  db: D1Database,
+  caller: User,
+  id: number,
+  rawEntries: unknown,
+  offsetHours: number,
+): Promise<RollCallResult> {
+  const row = await getSessionRow(db, id);
+  requireOrganizer(row, caller);
+  if (row.status === 'cancelled') throw new ApiError(400, '已取消的约局不能点名');
+  if (row.status === 'settled') throw new ApiError(400, '该约局已经结算过了');
+  if (parseSqlUtc(row.starts_at) > Date.now()) {
+    throw new ApiError(400, '约局还没开始，现在点名太早了');
+  }
+
+  const entries = parseRollCallEntries(rawEntries);
+  const known = await db
+    .prepare('SELECT user_id FROM session_players WHERE session_id = ?')
+    .bind(id)
+    .all<{ user_id: string }>();
+  const knownIds = new Set(known.results.map((r) => r.user_id));
+
+  const statements: D1PreparedStatement[] = [];
+  for (const e of entries) {
+    if (!knownIds.has(e.user_id)) {
+      throw new ApiError(400, '只能给报名过这个约局的人点名');
+    }
+    const lateMinutes =
+      e.attendance === 'late' ? normalizeInt(e.late_minutes, 0, MAX_LATE_MINUTES, '迟到分钟数') : null;
+    statements.push(
+      db
+        .prepare(
+          `UPDATE session_players
+              SET attendance = ?, late_minutes = ?, attendance_note = ?
+            WHERE session_id = ? AND user_id = ?`,
+        )
+        .bind(
+          e.attendance,
+          lateMinutes,
+          normalizeOptionalText(e.note, SESSION_NOTE_MAX),
+          id,
+          e.user_id,
+        ),
+    );
+  }
+  if (statements.length > 0) await db.batch(statements);
+
+  const session = await getSessionDetail(db, id, caller.id);
+  return { session, drafts: buildDrafts(session, offsetHours) };
+}
+
+/** Turn recorded attendance into proposed cases. Pure derivation, no writes. */
+export function buildDrafts(session: SessionDetail, offsetHours: number): CaseDraft[] {
+  const label = localLabel(session.starts_at, offsetHours);
+  const drafts: CaseDraft[] = [];
+  for (const p of session.players) {
+    if (p.attendance === null) continue;
+    if (!p.is_participant) continue; // not on the board → no score to move
+    const type = violationForAttendance(p.attendance, p.late_minutes);
+    if (type === null) continue;
+    const def = VIOLATION_MAP[type];
+    if (!def) continue;
+    // The organizer can't file against themselves; their bonus is handled separately.
+    if (p.user.id === session.organizer.id) continue;
+    drafts.push({
+      user_id: p.user.id,
+      username: p.user.username,
+      type,
+      kind: def.kind,
+      range: { min: def.min, max: def.max, base: def.base },
+      suggested_claim: draftClaim(session.title, label, p.attendance, p.late_minutes),
+      already_filed: p.record_id !== null,
+    });
+  }
+  return drafts;
+}
+
+// --- Settlement --------------------------------------------------------------
+
+export interface SettleEntry {
+  user_id: string;
+  type?: unknown;
+  claim?: unknown;
+}
+
+function parseSettleEntries(raw: unknown): SettleEntry[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ApiError(400, 'file 必须是数组');
+  if (raw.length > MAX_ROLLCALL_ENTRIES) throw new ApiError(400, '立案条目过多');
+  return raw.map((item) => {
+    if (typeof item !== 'object' || item === null) throw new ApiError(400, '立案条目格式错误');
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.user_id !== 'string' || rec.user_id.length === 0) {
+      throw new ApiError(400, '立案条目缺少 user_id');
+    }
+    return { user_id: rec.user_id, type: rec.type, claim: rec.claim };
+  });
+}
+
+function organizerCanFile(env: Env): boolean {
+  return (env.SESSION_ORGANIZER_CAN_FILE ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+export interface SettleResult {
+  session: SessionDetail;
+  created: number;
+  skipped: number;
+}
+
+/**
+ * Close a session. `file` lists exactly which drafts become real cases — an
+ * empty list (or `skip_all`) settles the session with zero score impact.
+ *
+ * The violation type is ALWAYS re-derived server-side from stored attendance.
+ * A client-supplied `type` is honoured only for the single legitimate human
+ * re-classification: promoting a no-show to the group-wipe variant.
+ */
+export async function settleSession(
+  db: D1Database,
+  caller: User,
+  id: number,
+  rawFile: unknown,
+  skipAll: boolean,
+  env: Env,
+  offsetHours: number,
+): Promise<SettleResult> {
+  const row = await getSessionRow(db, id);
+  requireOrganizer(row, caller);
+  if (row.status === 'cancelled') throw new ApiError(400, '已取消的约局不能结算');
+  if (row.status === 'settled') throw new ApiError(409, '该约局已经结算过了');
+
+  const entries = skipAll ? [] : parseSettleEntries(rawFile);
+  const isOrganizer = row.organizer_id === caller.id;
+  if (entries.length > 0 && !caller.is_judge && !caller.is_admin) {
+    if (!isOrganizer || !organizerCanFile(env)) {
+      throw new ApiError(403, '需要裁判权限才能立案，可以只记录出勤不扣分');
+    }
+  }
+
+  // Claim the session BEFORE filing anything or granting the organizer bonus.
+  // Settling is the only irreversible, score-moving step here, so the guard has
+  // to come first — otherwise two concurrent settles would both file cases and
+  // both award the bonus, and only the second would learn it lost the race.
+  const claimed = await db
+    .prepare(
+      `UPDATE game_sessions SET status = 'settled', settled_at = datetime('now'), settled_by = ?
+        WHERE id = ? AND status = 'open'`,
+    )
+    .bind(caller.id, id)
+    .run();
+  if ((claimed.meta?.changes ?? 0) === 0) throw new ApiError(409, '该约局已经结算过了');
+
+  const players = await db.prepare(PLAYER_SELECT).bind(id).all<SessionPlayerJoinRow>();
+  const byId = new Map(players.results.map((p) => [p.user_id, toSessionPlayer(p)]));
+  const label = localLabel(row.starts_at, offsetHours);
+
+  let created = 0;
+  for (const entry of entries) {
+    const player = byId.get(entry.user_id);
+    if (!player) throw new ApiError(400, '只能给报名过这个约局的人立案');
+    if (player.attendance === null) throw new ApiError(400, '请先完成点名');
+    if (player.record_id !== null) continue; // already filed in a previous attempt
+    if (!player.is_participant) continue;
+    if (player.user.id === caller.id) continue; // never file against yourself
+    // Matches buildDrafts: the organizer is never a defendant in their own roll
+    // call, so an admin settling someone else's session cannot file against them
+    // either — the draft list never offered it.
+    if (player.user.id === row.organizer_id) continue;
+
+    const derived = violationForAttendance(player.attendance, player.late_minutes);
+    if (derived === null) continue;
+    const requested =
+      typeof entry.type === 'string' && entry.type.length > 0
+        ? (entry.type as ViolationType)
+        : derived;
+    if (!isAllowedTypeOverride(derived, requested)) {
+      throw new ApiError(400, '不允许把点名结果改判成其他类型');
+    }
+
+    const suggested = draftClaim(row.title, label, player.attendance, player.late_minutes);
+    const claimRaw =
+      typeof entry.claim === 'string' && entry.claim.trim().length >= MIN_CLAIM_LEN
+        ? entry.claim
+        : suggested;
+
+    const record = await fileCase(
+      db,
+      caller,
+      {
+        subject_id: player.user.id,
+        type: requested,
+        claim: claimRaw.slice(0, MAX_NARRATIVE_LEN),
+        session_id: id,
+      },
+      // The organizer is the only person who witnessed the session, so they may
+      // file inside it even without the global judge role — bounded to this
+      // session's own signed-up players, and switchable off via env.
+      { offsetHours, skipJudgeCheck: true, skipRateLimit: true },
+      env,
+    );
+    await db
+      .prepare('UPDATE session_players SET record_id = ? WHERE session_id = ? AND user_id = ?')
+      .bind(record.id, id, player.user.id)
+      .run();
+    created += 1;
+  }
+
+  await awardOrganizerBonus(db, row, byId, offsetHours);
+
+  const drafts = byId.size;
+  return {
+    session: await getSessionDetail(db, id, caller.id),
+    created,
+    skipped: Math.max(0, drafts - created),
+  };
+}
+
+/**
+ * Give the organizer their 组局 bonus once the session provably happened.
+ *
+ * Written directly rather than through `fileCase` because that (correctly)
+ * refuses self-directed records. Self-dealing is bounded here by objective
+ * conditions: the session must be settled, at least
+ * ORGANIZER_BONUS_MIN_ATTENDEES people must actually have turned up, and the
+ * weekly bonus cap still applies.
+ */
+async function awardOrganizerBonus(
+  db: D1Database,
+  row: SessionJoinRow,
+  players: Map<string, SessionPlayer>,
+  offsetHours: number,
+): Promise<void> {
+  const def = VIOLATION_MAP.organizer_bonus;
+  if (!def) return;
+
+  const attended = [...players.values()].filter(
+    (p) => p.attendance === 'on_time' || p.attendance === 'late',
+  ).length;
+  if (attended < ORGANIZER_BONUS_MIN_ATTENDEES) return;
+
+  const organizer = await getUserById(db, row.organizer_id);
+  if (!organizer || organizer.is_participant !== 1) return;
+
+  const since = weekStartUtcSql(offsetHours);
+  const agg = await db
+    .prepare(
+      `SELECT COALESCE(SUM(delta), 0) AS total FROM records
+        WHERE subject_id = ? AND delta > 0 AND status IN ('decided', 'appealed')
+          AND created_at >= ?`,
+    )
+    .bind(organizer.id, since)
+    .first<{ total: number }>();
+  if ((agg?.total ?? 0) + def.base > WEEKLY_BONUS_CAP) return; // cap reached, silently skip
+
+  const insert = await db
+    .prepare(
+      `INSERT INTO records
+         (subject_id, reporter_id, type, delta, claim, session_id,
+          verdict_source, verdict_headline, verdict_reason, status)
+       VALUES (?, ?, 'organizer_bonus', 0, ?, ?, 'manual', '组局召集', '结算时由系统自动发放。', 'decided')`,
+    )
+    .bind(
+      organizer.id,
+      organizer.id,
+      `组织了约局「${row.title}」，${attended} 人到场。`,
+      row.id,
+    )
+    .run();
+  const recordId = Number(insert.meta?.last_row_id);
+  if (!recordId) return;
+
+  const mutation = scoreMutation(db, organizer.id, organizer.score, def.base, `record:${recordId}`);
+  await db.batch([
+    db.prepare('UPDATE records SET delta = ? WHERE id = ?').bind(mutation.applied, recordId),
+    ...mutation.statements,
+  ]);
+}

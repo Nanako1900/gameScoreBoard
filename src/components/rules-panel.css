@@ -188,3 +188,36 @@
     transition: none;
   }
 }
+
+/* --- v2: how AI sentencing works ------------------------------------------ */
+
+.rules__ai {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--r-md);
+  background: rgba(74, 163, 255, 0.06);
+}
+
+.rules__steps {
+  display: grid;
+  gap: 0.4rem;
+  padding-left: 1.2rem;
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.rules__steps strong {
+  color: var(--text);
+}
+
+.rules__base {
+  margin-left: 0.15em;
+  font-size: 0.85em;
+  color: var(--faint);
+}

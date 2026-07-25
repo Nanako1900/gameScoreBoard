@@ -41,6 +41,18 @@ RESET_TZ_OFFSET = "8"
 # and SESSION_SECRET must be real secrets (set via `wrangler secret put`).
 OAUTH_BASE_URL = "https://nanako.org"
 OAUTH_CLIENT_ID = "4d7e107d75ac6bf7f3c2b7132b036c3f"
+
+# --- AI 裁决 (OpenAI-compatible) ---
+# These are defaults only: the admin panel writes to the `app_settings` table,
+# which overrides them at runtime — so the endpoint, model, temperature and
+# system prompt can be retuned without a redeploy.
+# AI_API_KEY is deliberately NOT here and never lands in D1; set it with:
+#   wrangler secret put AI_API_KEY
+# AI_ENABLED  = "true"
+# AI_BASE_URL = "https://api.openai.com/v1"
+# AI_MODEL    = "gpt-4o-mini"
+# STATEMENT_WINDOW_HOURS     = "12"    # hours the accused has to explain themselves
+# SESSION_ORGANIZER_CAN_FILE = "true"  # "false" = non-judge organizers can only record attendance
 # ADMIN_USERNAMES = "your-oauth-username"         # comma-separated usernames auto-granted admin
 # APP_URL = "https://your-app.edgeone.app"        # set to the EdgeOne origin for the split deploy
 

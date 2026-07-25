@@ -41,7 +41,8 @@
   border-bottom: none;
 }
 
-.feed-row--revoked {
+.feed-row--revoked,
+.feed-row--withdrawn {
   opacity: 0.62;
 }
 
@@ -102,13 +103,14 @@
   border: 1px solid transparent;
 }
 
-.feed-row__status--disputed {
+.feed-row__status--appealed {
   color: var(--gold);
   background: color-mix(in oklab, var(--gold) 14%, transparent);
   border-color: color-mix(in oklab, var(--gold) 40%, transparent);
 }
 
-.feed-row__status--revoked {
+.feed-row__status--revoked,
+.feed-row__status--withdrawn {
   color: var(--muted);
   background: var(--panel-2);
   border-color: var(--border);
@@ -145,4 +147,19 @@
 .feed-row__delta--muted {
   color: var(--faint);
   text-decoration: line-through;
+}
+
+/* Case still in trial: the delta genuinely isn't known yet. */
+.feed-row__status--awaiting_statement {
+  color: var(--gold);
+  background: rgba(245, 197, 66, 0.14);
+}
+
+.feed-row__status--judging {
+  color: var(--blue);
+  background: rgba(74, 163, 255, 0.14);
+}
+
+.feed-row__delta--pending {
+  color: var(--gold);
 }
