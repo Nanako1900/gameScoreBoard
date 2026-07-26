@@ -236,3 +236,9 @@
   color: var(--text);
   background: var(--panel-2);
 }
+
+/* iOS 上小于 16px 的输入框聚焦时会自动放大整页 */
+.aai__input,
+.aai__textarea {
+  font-size: max(16px, var(--text-sm));
+}

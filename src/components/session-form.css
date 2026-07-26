@@ -1,4 +1,8 @@
-/* 组局表单 + 约局详情 + 点名，共用一套字段样式 */
+/* 约一局 —— 时间 chip + 人物多选
+ *
+ * 组件里的 radio / checkbox 都是 .visually-hidden，所以「选中」的全部视觉都靠
+ * 这里的 label 样式。少一条规则用户就完全看不出自己选了什么 —— v3 刚上线时
+ * 就是这么坏的。 */
 
 .sf__title {
   font-size: var(--text-h1);
@@ -13,24 +17,25 @@
 
 .sf__form {
   display: grid;
-  gap: 1rem;
+  gap: 1.4rem;
   margin-top: 1.25rem;
 }
 
-.sf__row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.9rem;
-}
-
+/* fieldset 默认带边框和内边距，会破坏栅格节奏 */
 .sf__field {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.55rem;
   min-width: 0;
+  padding: 0;
+  border: none;
 }
 
 .sf__label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: var(--text-sm);
@@ -38,13 +43,94 @@
   color: var(--muted);
 }
 
+.sf__count {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--gold);
+}
+
+.sf__hint {
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+/* --- 时间 chip ------------------------------------------------------------- */
+
+.sf__slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sf-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px 最小触摸目标 */
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  border-radius: var(--r-md);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.sf-slot:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+
+/* 隐藏的 radio 拿到键盘焦点时，把焦点环画在 label 上 */
+.sf-slot:has(:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.sf-slot--on {
+  color: #17130a;
+  background: linear-gradient(180deg, #ffd75e, var(--gold));
+  border-color: var(--gold-dim);
+  box-shadow: 0 6px 18px -10px rgba(245, 197, 66, 0.9);
+}
+
+.sf-slot--on:hover {
+  color: #17130a;
+  background: linear-gradient(180deg, #ffe083, #ffce4c);
+  border-color: var(--gold);
+}
+
+.sf-slot--custom {
+  font-weight: 600;
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.sf-slot--custom.sf-slot--on {
+  color: var(--text);
+  background: var(--panel-2);
+  border-style: solid;
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
 .sf__input,
 .sf__textarea,
 .sf__select {
   width: 100%;
+  min-height: 44px;
   padding: 0.6rem 0.75rem;
   border-radius: var(--r-md);
-  font-size: var(--text-base);
+  /* 16px 起步：iOS 上更小的字号会在聚焦时自动放大页面 */
+  font-size: max(16px, var(--text-base));
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -57,9 +143,63 @@
   border-color: var(--border-strong);
 }
 
+.sf__input--custom {
+  margin-top: 0.15rem;
+}
+
 .sf__textarea {
   line-height: 1.6;
   resize: vertical;
+}
+
+/* --- 人物多选 -------------------------------------------------------------- */
+
+.sf__people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.sf-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0.35rem 0.85rem 0.35rem 0.4rem;
+  border-radius: var(--r-pill);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.sf-person:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.sf-person:has(:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.sf-person--on {
+  color: var(--text);
+  border-color: rgba(74, 163, 255, 0.55);
+  background: rgba(74, 163, 255, 0.14);
+}
+
+.sf-person__name {
+  font-weight: 600;
+}
+
+/* 选中不能只靠颜色 —— 补一个对号，色觉障碍用户也能分辨 */
+.sf-person--on .sf-person__name::after {
+  content: ' ✓';
+  color: var(--blue);
+  font-weight: 700;
 }
 
 .sf__error {
@@ -74,7 +214,17 @@
 }
 
 @media (max-width: 520px) {
-  .sf__row {
-    grid-template-columns: 1fr;
+  /* 竖排铺满；DOM 顺序是 [取消, 主操作]，用 column 让主操作落在底部 ——
+     手机上最靠拇指的位置该给主操作，不是给「取消」。 */
+  .sf__actions {
+    flex-direction: column;
+  }
+
+  .sf__actions .btn {
+    width: 100%;
+  }
+
+  .sf-slot {
+    flex: 1 1 calc(50% - 0.25rem);
   }
 }

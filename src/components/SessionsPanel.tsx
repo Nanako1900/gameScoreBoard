@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RSVP_LABEL, SELF_RSVPS, SESSION_STATUS_LABEL } from '@shared/attendance';
+import { isSynthesizedTitle } from '@shared/quickTime';
 import type { SessionItem, User } from '../types';
 import type { SelfRsvp } from '@shared/attendance';
 import { ApiError, getSessions, setRsvp } from '../api';
-import { formatDateTime, parseTimestamp } from '../lib/time';
+import { formatWhen, parseTimestamp } from '../lib/time';
 import { Avatar } from './Avatar';
 import './sessions-panel.css';
 
@@ -148,8 +149,13 @@ function SessionRow({ session, me, busy, onOpen, onRsvp }: SessionRowProps): JSX
   return (
     <li className={`srow srow--${session.status}`}>
       <button type="button" className="srow__main" onClick={onOpen}>
-        <span className="srow__when tabular">{formatDateTime(session.starts_at)}</span>
-        <span className="srow__title">{session.title}</span>
+        <span className="srow__when tabular">{formatWhen(session.starts_at)}</span>
+        {/* v3 derives the title from the start time, so for an auto-titled session
+            the line below would just repeat the line above. Only show a title
+            somebody actually chose. */}
+        {!isSynthesizedTitle(session.title) && (
+          <span className="srow__title">{session.title}</span>
+        )}
         <span className="srow__meta">
           <Avatar name={session.organizer.username} src={session.organizer.avatar_url} size={18} />
           {session.organizer.username}

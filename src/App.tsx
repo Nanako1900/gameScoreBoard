@@ -228,12 +228,32 @@ export function App(): JSX.Element {
         onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
+      {/* Stack order = 待办 → 约局 → 榜单 → 周报 → 详表.
+       *
+       * Ordered by what the visitor can ACT on, most actionable first. It is set
+       * in the DOM rather than with CSS `order` on purpose: `order` would leave
+       * tab and screen-reader order following the source, so keyboard users would
+       * traverse the page in a different sequence than they see it. One order,
+       * three consumers.
+       *
+       * The two banners self-hide when empty, so a quiet day collapses straight
+       * to 约局 without leaving gaps. */}
       <main className="app__main">
-        {/* Order is intentional: an invitation and a pending statement are both
-            actions someone owes, so they sit above the read-only report. */}
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
+
+        {/* Above the board: this is the only block on the page that leads to a new
+            game happening, and it used to sit under a 520px leaderboard where
+            nobody scrolled to it. */}
+        <SessionsPanel
+          me={me}
+          refreshKey={sessionsKey}
+          onOpenSession={setSessionId}
+          onCreate={() => setSessionFormOpen(true)}
+        />
+
+        <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
 
         {report && (
           <WeeklyReportCard
@@ -252,8 +272,6 @@ export function App(): JSX.Element {
           />
         )}
 
-        <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
-
         <div className="app__grid">
           <div className="app__col app__col--main">
             <Leaderboard
@@ -261,12 +279,6 @@ export function App(): JSX.Element {
               trends={trends}
               counts={counts}
               onSelect={setSelectedUserId}
-            />
-            <SessionsPanel
-              me={me}
-              refreshKey={sessionsKey}
-              onOpenSession={setSessionId}
-              onCreate={() => setSessionFormOpen(true)}
             />
             <RulesPanel config={config} />
           </div>
@@ -291,12 +303,12 @@ export function App(): JSX.Element {
           type="button"
           className="app__fab"
           onClick={() => setCaseOpen(true)}
-          aria-label="立案"
+          aria-label="记一笔"
         >
           <span className="app__fab-plus" aria-hidden="true">
             ✎
           </span>
-          <span className="app__fab-label">立案</span>
+          <span className="app__fab-label">记一笔</span>
         </button>
       )}
 

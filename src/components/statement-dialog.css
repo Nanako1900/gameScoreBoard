@@ -117,3 +117,19 @@
   justify-content: flex-end;
   gap: 0.6rem;
 }
+
+/* iOS 上小于 16px 的输入框聚焦时会自动放大整页 */
+.sd__textarea {
+  font-size: max(16px, var(--text-sm));
+}
+
+@media (max-width: 520px) {
+  /* 主操作在底部，最靠拇指 */
+  .sd__actions {
+    flex-direction: column;
+  }
+
+  .sd__actions .btn {
+    width: 100%;
+  }
+}
