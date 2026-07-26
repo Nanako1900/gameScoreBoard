@@ -15,5 +15,6 @@
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["worker", "shared", "tests"]
+  "include": ["worker", "shared", "tests"],
+  "exclude": ["tests/dom"]
 }

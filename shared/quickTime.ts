@@ -99,3 +99,16 @@ export function synthesizeTitle(startsAtIso: string, offsetHours: number): strin
   const weekday = WEEKDAY[d.getUTCDay()];
   return `${weekday} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} 开黑`;
 }
+
+/**
+ * True when a title looks like one `synthesizeTitle` produced.
+ *
+ * Since v3 stopped asking for a title and derives it from the start time, a list
+ * row that shows both the formatted time AND the title prints the same time
+ * twice. The UI uses this to suppress the redundant line — matched by shape
+ * rather than by regenerating it, because the client does not know the board's
+ * timezone offset.
+ */
+export function isSynthesizedTitle(title: string): boolean {
+  return /^周[日一二三四五六]\s\d{2}:\d{2}\s开黑$/.test(title.trim());
+}

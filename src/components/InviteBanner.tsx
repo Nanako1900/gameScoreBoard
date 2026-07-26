@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { SessionItem } from '../types';
 import { ApiError, setRsvp } from '../api';
-import { formatDateTime } from '../lib/time';
+import { formatWhen } from '../lib/time';
 import { Avatar } from './Avatar';
 import './invite-banner.css';
 
@@ -51,7 +51,7 @@ export function InviteBanner({
         <p className="invite__title">
           <Avatar name={next.organizer.username} src={next.organizer.avatar_url} size={20} />
           <strong>{next.organizer.username}</strong> 约你
-          <span className="invite__when tabular">{formatDateTime(next.starts_at)}</span>
+          <span className="invite__when tabular">{formatWhen(next.starts_at)}</span>
           开黑
         </p>
         <p className="invite__sub">

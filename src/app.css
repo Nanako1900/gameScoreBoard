@@ -64,7 +64,21 @@
     clamp(2rem, 1.5rem + 3vw, 4rem);
   display: flex;
   flex-direction: column;
-  gap: var(--space-section);
+  /* Was --space-section (up to 5rem) between EVERY block, which pushed the page
+     to 2.4 screens with the same airy gap around a 77px banner as around the
+     hero. A dashboard wants a tighter, tiered rhythm instead. */
+  gap: clamp(1.1rem, 0.9rem + 1vw, 1.9rem);
+}
+
+/* The two to-do banners belong to each other — keep them as one cluster rather
+   than three equally-spaced strangers. */
+.app__main > .invite + .pending {
+  margin-top: calc(-1 * clamp(1.1rem, 0.9rem + 1vw, 1.9rem) + 0.5rem);
+}
+
+/* The board is the brand moment: give it room above, but only above. */
+.app__main > .rbb {
+  margin-top: clamp(0.5rem, 0.25rem + 1.5vw, 1.75rem);
 }
 
 .app__grid {
@@ -149,6 +163,11 @@
   }
   .app__col--side {
     position: static;
+  }
+  /* Reclaim the hero's breathing room on phones — vertical space is the scarce
+     resource there, not visual drama. */
+  .app__main > .rbb {
+    margin-top: 0;
   }
 }
 

@@ -35,7 +35,7 @@ function HeroCard({ kind, eyebrow, crown, user, onSelect }: HeroCardProps): JSX.
       </header>
 
       <div className="hero-card__body">
-        <ScoreGauge score={user.score} size={148} strokeWidth={12} />
+        <ScoreGauge score={user.score} size={118} strokeWidth={10} />
         <div className="hero-card__meta">
           <div className="hero-card__id">
             <Avatar

@@ -134,7 +134,9 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.32rem 0.7rem 0.32rem 0.35rem;
+  /* 44px 最小触摸目标 —— 原来只有约 30px，手机上很容易点错人 */
+  min-height: 44px;
+  padding: 0.35rem 0.85rem 0.35rem 0.4rem;
   border-radius: var(--r-pill);
   font-size: var(--text-sm);
   color: var(--muted);
@@ -142,6 +144,11 @@
   border: 1px solid var(--border);
   cursor: pointer;
   transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
+}
+
+/* checkbox 是 visually-hidden 的，焦点环得画在 label 上 */
+.cd-chip:has(:focus-visible) {
+  box-shadow: var(--focus-ring);
 }
 
 .cd-chip:hover {
@@ -162,6 +169,13 @@
 
 .cd-chip__name {
   font-weight: 600;
+}
+
+/* 选中不能只靠颜色 */
+.cd-chip--on .cd-chip__name::after {
+  content: ' ✓';
+  color: var(--gold);
+  font-weight: 700;
 }
 
 .cd-chip__score {
@@ -236,4 +250,22 @@
 .cd__failed ul {
   padding-left: 1.2rem;
   margin-top: 0.25rem;
+}
+
+/* iOS 上小于 16px 的输入框聚焦时会自动放大整页 */
+.cd__textarea,
+.cd-extra__input,
+.cd__select {
+  font-size: max(16px, var(--text-sm));
+}
+
+@media (max-width: 520px) {
+  /* 主操作在底部，最靠拇指 */
+  .cd__actions {
+    flex-direction: column;
+  }
+
+  .cd__actions .btn {
+    width: 100%;
+  }
 }

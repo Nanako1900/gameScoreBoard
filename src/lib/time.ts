@@ -98,6 +98,33 @@ export function formatDateTime(value: string): string {
   )} ${weekday}`;
 }
 
+/**
+ * Compact when-label for a scheduled session: '今天 20:00' / '明天 20:00' /
+ * '周五 20:00', falling back to a date beyond a week out.
+ *
+ * `formatDateTime` produces '7月28日 09:48 周二' — 14 characters, which wrapped
+ * the invite banner onto three lines on a 375px screen and orphaned a word. For
+ * a game that is days away at most, the weekday is the part people actually read.
+ */
+export function formatWhen(value: string, now: number = Date.now()): string {
+  const ms = parseTimestamp(value);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const startOfDay = (t: number): number => {
+    const x = new Date(t);
+    x.setHours(0, 0, 0, 0);
+    return x.getTime();
+  };
+  const days = Math.round((startOfDay(ms) - startOfDay(now)) / DAY);
+  if (days === 0) return `今天 ${time}`;
+  if (days === 1) return `明天 ${time}`;
+  if (days > 1 && days < 7) {
+    return `${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]} ${time}`;
+  }
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${time}`;
+}
+
 /** `datetime-local` input value (local time, minute precision). */
 export function toDateTimeLocalValue(ms: number): string {
   const d = new Date(ms);

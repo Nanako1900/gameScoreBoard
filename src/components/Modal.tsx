@@ -54,6 +54,20 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
+  // The setup effect below MUST run exactly once per open. It moves focus into
+  // the dialog, and re-running it mid-session yanks the caret out of whatever
+  // the user is typing in.
+  //
+  // `onClose` cannot be a dependency: callers pass inline arrows, so it is a new
+  // function on every parent render — and a parent re-renders on every keystroke
+  // in any field it owns. Depending on it meant the focus trap tore down and
+  // rebuilt itself per character, stealing focus each time. Keep it in a ref that
+  // the effect reads at call time instead.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) {
       return;
@@ -71,7 +85,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab' || !panel) {
@@ -110,7 +124,8 @@ export function Modal({
       setAppRootInert(false);
       restoreRef.current?.focus?.();
     };
-  }, [open, onClose]);
+    // `open` only — see the onCloseRef comment above.
+  }, [open]);
 
   if (!open) {
     return null;

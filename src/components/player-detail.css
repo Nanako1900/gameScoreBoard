@@ -227,3 +227,8 @@
   display: inline-flex;
   gap: 0.45rem;
 }
+
+/* iOS 上小于 16px 的输入框聚焦时会自动放大整页 */
+.pd__override-input {
+  font-size: max(16px, var(--text-sm));
+}
