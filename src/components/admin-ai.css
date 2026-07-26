@@ -211,3 +211,28 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --- v3: 三套提示词切换 ---------------------------------------------------- */
+
+.aai__tabs {
+  display: inline-flex;
+  padding: 2px;
+  margin-bottom: 0.35rem;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.aai__tab {
+  padding: 0.26em 0.85em;
+  border-radius: var(--r-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+  transition: color var(--dur-fast), background var(--dur-fast);
+}
+
+.aai__tab--active {
+  color: var(--text);
+  background: var(--panel-2);
+}

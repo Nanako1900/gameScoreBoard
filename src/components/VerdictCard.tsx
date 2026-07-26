@@ -8,6 +8,8 @@ interface VerdictCardProps {
   record: RecordItem;
   /** Rendered under the verdict — statement / appeal / revoke buttons. */
   actions?: React.ReactNode;
+  /** Shown only to the filing judge / an admin while the hint is live. */
+  escalation?: React.ReactNode;
 }
 
 const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
@@ -23,7 +25,11 @@ const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
  * The verdict text is the product, not a status line — this is the difference
  * between v1's bare "-15" and v2's "-11，因为你提前告知了，虽然晚了点".
  */
-export function VerdictCard({ record, actions }: VerdictCardProps): JSX.Element {
+export function VerdictCard({
+  record,
+  actions,
+  escalation,
+}: VerdictCardProps): JSX.Element {
   const def = VIOLATION_MAP[record.type];
   const { verdict, status } = record;
   const pending = status === 'awaiting_statement';
@@ -38,8 +44,18 @@ export function VerdictCard({ record, actions }: VerdictCardProps): JSX.Element 
           {def?.emoji ?? '📝'}
         </span>
         <div className="vc__head-text">
-          <h4 className="vc__type">{def?.label ?? record.type}</h4>
+          <h4 className="vc__type">
+            {record.claim_summary ?? def?.label ?? record.type}
+          </h4>
           <p className="vc__meta">
+            <span className="vc__charge">{def?.label ?? record.type}</span>
+            {record.classified_by === 'ai' && (
+              <span className="vc__by" title="案由由 AI 从事实描述归类">AI 归类</span>
+            )}
+            {record.classified_by === 'derived' && (
+              <span className="vc__by" title="案由由点名结果确定性推导">点名推导</span>
+            )}
+            <span aria-hidden="true"> · </span>
             裁判 {record.reporter.username}
             <span aria-hidden="true"> · </span>
             <time dateTime={record.created_at}>{relativeTime(record.created_at)}</time>
@@ -121,6 +137,15 @@ export function VerdictCard({ record, actions }: VerdictCardProps): JSX.Element 
       )}
       {status === 'revoked' && <p className="vc__flag">这笔记录已被撤销，分数已还原。</p>}
       {status === 'withdrawn' && <p className="vc__flag">裁判已撤案，未产生任何扣分。</p>}
+
+      {record.escalation_suggested && (
+        <div className="vc__escalate">
+          <p className="vc__escalate-text">
+            AI 认为这够得上「团灭级放鸽」。系统先按较轻的案由立案了 —— 要升级得由人确认。
+          </p>
+          {escalation && <div className="vc__escalate-actions">{escalation}</div>}
+        </div>
+      )}
 
       {actions && <div className="vc__actions">{actions}</div>}
     </article>

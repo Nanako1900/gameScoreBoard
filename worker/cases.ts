@@ -29,6 +29,35 @@ import type {
   VerdictFactor,
 } from './types';
 import { ApiError } from './errors';
+import { normalizeNarrative } from './case-limits';
+import { statementWindowHours } from './case-limits';
+export {
+  MAX_BATCH_SUBJECTS,
+  confirmEscalation,
+  dismissEscalation,
+  fileCase,
+  fileCases,
+  reclassifyCase,
+  type BatchAccusation,
+  type BatchFailure,
+  type BatchResult,
+  type FileCaseInput,
+  type FileCaseOptions,
+} from './case-filing';
+export { MAX_CASES_PER_REPORTER_24H, MAX_CASES_PER_SUBJECT_24H } from './case-limits';
+import {
+  SCORED_STATUSES,
+  defFor,
+  getRecordRow,
+  loadRecordItem,
+} from './case-reads';
+export {
+  getRecordItemById,
+  listRecords,
+  pendingCounts,
+  type ListRecordsFilters,
+  type PendingCounts,
+} from './case-reads';
 import {
   getUserById,
   requireParticipant,
@@ -39,6 +68,13 @@ import { loadAiConfig } from './ai/config';
 import { judgeCase } from './ai/provider';
 import type { JudgeRequest } from './ai/prompt';
 import {
+  ESCALATION_ONLY,
+  classifyClaim,
+  summaryFromClaim,
+  type Classification,
+  type ClassifiedBy,
+} from './ai/classify';
+import {
   parseSqlUtc,
   sqlNow,
   sqlNowMinusMinutes,
@@ -48,10 +84,6 @@ import {
 
 // --- Tunables ----------------------------------------------------------------
 
-/** A judge may not file more than this many cases in a rolling 24h. */
-export const MAX_CASES_PER_REPORTER_24H = 20;
-/** A single player may not be hauled in more than this many times in 24h. */
-export const MAX_CASES_PER_SUBJECT_24H = 5;
 /** A `judging` row older than this is treated as abandoned and re-claimed. */
 export const JUDGING_STALE_MINUTES = 2;
 /** Cases judged per lazy sweep — bounds AI spend on a single page load. */
@@ -60,171 +92,7 @@ export const SWEEP_BATCH = 5;
 const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 const PRIORS_WINDOW_DAYS = 30;
 
-/** Statuses in which the case's delta is reflected in the subject's score. */
-const SCORED_STATUSES = "('decided', 'appealed')";
-
 // --- Mapping -----------------------------------------------------------------
-
-const RECORD_SELECT = `
-SELECT r.id AS id, r.type AS type, r.delta AS delta, r.note AS note,
-       r.claim AS claim, r.session_id AS session_id,
-       r.statement AS statement, r.statement_at AS statement_at,
-       r.appeal_reason AS appeal_reason, r.deadline_at AS deadline_at,
-       r.verdict_source AS verdict_source, r.verdict_headline AS verdict_headline,
-       r.verdict_reason AS verdict_reason, r.verdict_factors AS verdict_factors,
-       r.status AS status, r.created_at AS created_at,
-       s.id AS s_id, COALESCE(s.display_name, s.username) AS s_username, s.avatar_url AS s_avatar,
-       p.id AS p_id, COALESCE(p.display_name, p.username) AS p_username, p.avatar_url AS p_avatar
-FROM records r
-JOIN users s ON s.id = r.subject_id
-JOIN users p ON p.id = r.reporter_id`;
-
-function parseFactors(raw: string | null): VerdictFactor[] {
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (f): f is VerdictFactor =>
-        typeof f === 'object' &&
-        f !== null &&
-        (('kind' in f && (f.kind === 'mitigating' || f.kind === 'aggravating')) as boolean) &&
-        typeof (f as VerdictFactor).text === 'string',
-    );
-  } catch {
-    return [];
-  }
-}
-
-function defFor(type: string): ViolationDef {
-  const def = VIOLATION_MAP[type];
-  if (!def) throw new ApiError(500, `未知的记录类型: ${type}`);
-  return def;
-}
-
-function toRecordItem(row: RecordJoinRow): RecordItem {
-  const def = VIOLATION_MAP[row.type];
-  return {
-    id: row.id,
-    subject: { id: row.s_id, username: row.s_username, avatar_url: row.s_avatar },
-    reporter: { id: row.p_id, username: row.p_username, avatar_url: row.p_avatar },
-    type: row.type as ViolationType,
-    delta: row.delta,
-    note: row.note,
-    claim: row.claim,
-    session_id: row.session_id,
-    statement: row.statement,
-    statement_at: row.statement_at,
-    appeal_reason: row.appeal_reason,
-    deadline_at: row.deadline_at,
-    status: row.status as CaseStatus,
-    verdict: row.verdict_source
-      ? {
-          source: row.verdict_source as VerdictSource,
-          headline: row.verdict_headline ?? '',
-          reasoning: row.verdict_reason ?? '',
-          factors: parseFactors(row.verdict_factors),
-        }
-      : null,
-    range: def
-      ? { min: def.min, max: def.max, base: def.base }
-      : { min: 0, max: 0, base: 0 },
-    created_at: row.created_at,
-  };
-}
-
-// --- Reads -------------------------------------------------------------------
-
-export interface ListRecordsFilters {
-  limit?: number;
-  subject?: string;
-  status?: string;
-  session?: number;
-  /** Only cases this user still has to answer for. */
-  pendingFor?: string;
-}
-
-export async function listRecords(
-  db: D1Database,
-  filters: ListRecordsFilters,
-): Promise<RecordItem[]> {
-  const clauses: string[] = [];
-  const binds: unknown[] = [];
-  if (filters.subject) {
-    clauses.push('r.subject_id = ?');
-    binds.push(filters.subject);
-  }
-  if (filters.status) {
-    clauses.push('r.status = ?');
-    binds.push(filters.status);
-  }
-  if (filters.session !== undefined) {
-    clauses.push('r.session_id = ?');
-    binds.push(filters.session);
-  }
-  if (filters.pendingFor) {
-    clauses.push("r.subject_id = ? AND r.status = 'awaiting_statement'");
-    binds.push(filters.pendingFor);
-  }
-  const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
-  const limit = Math.max(1, Math.min(200, filters.limit ?? 50));
-  binds.push(limit);
-  const sql = `${RECORD_SELECT}${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ?`;
-  const rows = await db
-    .prepare(sql)
-    .bind(...binds)
-    .all<RecordJoinRow>();
-  return rows.results.map(toRecordItem);
-}
-
-export async function getRecordItemById(
-  db: D1Database,
-  id: number,
-): Promise<RecordItem | null> {
-  const row = await db
-    .prepare(`${RECORD_SELECT} WHERE r.id = ?`)
-    .bind(id)
-    .first<RecordJoinRow>();
-  return row ? toRecordItem(row) : null;
-}
-
-async function loadRecordItem(db: D1Database, id: number): Promise<RecordItem> {
-  const item = await getRecordItemById(db, id);
-  if (!item) throw new ApiError(500, '读取记录失败');
-  return item;
-}
-
-async function getRecordRow(db: D1Database, id: number): Promise<RecordRow> {
-  const rec = await db.prepare('SELECT * FROM records WHERE id = ?').bind(id).first<RecordRow>();
-  if (!rec) throw new ApiError(404, '记录不存在');
-  return rec;
-}
-
-export interface PendingCounts {
-  statements: number;
-  appeals: number;
-}
-
-/** Badge counts for /api/me: cases awaiting my statement, appeals awaiting review. */
-export async function pendingCounts(
-  db: D1Database,
-  user: User,
-): Promise<PendingCounts> {
-  const mine = await db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM records WHERE subject_id = ? AND status = 'awaiting_statement'",
-    )
-    .bind(user.id)
-    .first<{ n: number }>();
-  let appeals = 0;
-  if (user.is_admin) {
-    const row = await db
-      .prepare("SELECT COUNT(*) AS n FROM records WHERE status = 'appealed'")
-      .first<{ n: number }>();
-    appeals = row?.n ?? 0;
-  }
-  return { statements: mine?.n ?? 0, appeals };
-}
 
 // --- Guarded score writes ----------------------------------------------------
 
@@ -267,173 +135,6 @@ function guardedScoreMutation(
         .bind(userId, applied, reason, newScore, recordId, expectedStatus),
     ],
   };
-}
-
-// --- Input validation --------------------------------------------------------
-
-function normalizeNote(note: string | undefined): string | null {
-  if (note === undefined) return null;
-  const trimmed = note.trim();
-  return trimmed.length === 0 ? null : trimmed.slice(0, 500);
-}
-
-function normalizeNarrative(raw: string, label: string, minLen: number): string {
-  const trimmed = raw.trim();
-  if (trimmed.length < minLen) {
-    throw new ApiError(400, `${label}太短了，至少写 ${minLen} 个字说清楚发生了什么`);
-  }
-  if (trimmed.length > MAX_NARRATIVE_LEN) {
-    throw new ApiError(400, `${label}最多 ${MAX_NARRATIVE_LEN} 个字`);
-  }
-  return trimmed;
-}
-
-function statementWindowHours(env: Env): number {
-  const n = Number(env.STATEMENT_WINDOW_HOURS);
-  if (!Number.isFinite(n) || n <= 0 || n > 24 * 14) return STATEMENT_WINDOW_HOURS;
-  return n;
-}
-
-async function assertRateLimits(
-  db: D1Database,
-  reporterId: string,
-  subjectId: string,
-): Promise<void> {
-  const since = sqlNowMinusMinutes(24 * 60);
-  const byReporter = await db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM records WHERE reporter_id = ? AND created_at >= ? AND status != 'withdrawn'",
-    )
-    .bind(reporterId, since)
-    .first<{ n: number }>();
-  if ((byReporter?.n ?? 0) >= MAX_CASES_PER_REPORTER_24H) {
-    throw new ApiError(429, `24 小时内最多立案 ${MAX_CASES_PER_REPORTER_24H} 次，先歇歇`);
-  }
-  const onSubject = await db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM records WHERE subject_id = ? AND created_at >= ? AND status != 'withdrawn'",
-    )
-    .bind(subjectId, since)
-    .first<{ n: number }>();
-  if ((onSubject?.n ?? 0) >= MAX_CASES_PER_SUBJECT_24H) {
-    throw new ApiError(429, `该选手 24 小时内已被立案 ${MAX_CASES_PER_SUBJECT_24H} 次，明天再说`);
-  }
-}
-
-async function assertWeeklyBonusCap(
-  db: D1Database,
-  subjectId: string,
-  delta: number,
-  offsetHours: number,
-): Promise<void> {
-  const since = weekStartUtcSql(offsetHours);
-  const agg = await db
-    .prepare(
-      `SELECT COALESCE(SUM(delta), 0) AS total FROM records
-       WHERE subject_id = ? AND delta > 0 AND status IN ${SCORED_STATUSES} AND created_at >= ?`,
-    )
-    .bind(subjectId, since)
-    .first<{ total: number }>();
-  if ((agg?.total ?? 0) + delta > WEEKLY_BONUS_CAP) {
-    throw new ApiError(400, `本周奖励分已达上限 (${WEEKLY_BONUS_CAP})`);
-  }
-}
-
-// --- Filing ------------------------------------------------------------------
-
-export interface FileCaseInput {
-  subject_id: string;
-  type: string;
-  claim?: string;
-  /** Short judge note. Returned publicly like every other record field. */
-  note?: string;
-  session_id?: number;
-}
-
-export interface FileCaseOptions {
-  offsetHours: number;
-  /** Set when a session organizer files within their own session (see sessions.ts). */
-  skipJudgeCheck?: boolean;
-  /** Skip the per-day limits for organizer roll-call settlement (already bounded). */
-  skipRateLimit?: boolean;
-}
-
-/**
- * Open a case. Penalties enter `awaiting_statement` with delta 0 — no score
- * moves until the subject has had their say (or the window lapses). Bonuses
- * settle on the spot at their base value.
- */
-export async function fileCase(
-  db: D1Database,
-  reporter: User,
-  input: FileCaseInput,
-  opts: FileCaseOptions,
-  env: Env,
-): Promise<RecordItem> {
-  if (!opts.skipJudgeCheck && !reporter.is_judge) {
-    throw new ApiError(403, '需要裁判权限');
-  }
-  if (!isValidViolationType(input.type)) {
-    throw new ApiError(400, '无效的记录类型');
-  }
-  if (input.subject_id === reporter.id) {
-    throw new ApiError(400, '不能记录自己');
-  }
-  const subject = await requireParticipant(db, input.subject_id);
-  const def = defFor(input.type);
-  const note = normalizeNote(input.note);
-
-  if (!opts.skipRateLimit) {
-    await assertRateLimits(db, reporter.id, subject.id);
-  }
-
-  // --- Bonus: no trial, settle now ------------------------------------------
-  if (!needsTrial(def)) {
-    await assertWeeklyBonusCap(db, subject.id, def.base, opts.offsetHours);
-    const claim = input.claim ? input.claim.trim().slice(0, MAX_NARRATIVE_LEN) : null;
-    const insert = await db
-      .prepare(
-        `INSERT INTO records
-           (subject_id, reporter_id, type, delta, note, claim, session_id,
-            verdict_source, verdict_headline, verdict_reason, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?, '', 'decided')`,
-      )
-      .bind(
-        subject.id,
-        reporter.id,
-        input.type,
-        0, // patched below with the clamped applied delta
-        note,
-        claim,
-        input.session_id ?? null,
-        def.label,
-      )
-      .run();
-    const recordId = Number(insert.meta?.last_row_id);
-    if (!recordId) throw new ApiError(500, '创建记录失败');
-
-    const mutation = scoreMutation(db, subject.id, subject.score, def.base, `record:${recordId}`);
-    await db.batch([
-      db.prepare('UPDATE records SET delta = ? WHERE id = ?').bind(mutation.applied, recordId),
-      ...mutation.statements,
-    ]);
-    return loadRecordItem(db, recordId);
-  }
-
-  // --- Penalty: open the trial ----------------------------------------------
-  const claim = normalizeNarrative(input.claim ?? '', '事实描述', MIN_CLAIM_LEN);
-  const deadline = sqlNowPlusHours(statementWindowHours(env));
-  const insert = await db
-    .prepare(
-      `INSERT INTO records
-         (subject_id, reporter_id, type, delta, note, claim, session_id, deadline_at, status)
-       VALUES (?, ?, ?, 0, ?, ?, ?, ?, 'awaiting_statement')`,
-    )
-    .bind(subject.id, reporter.id, input.type, note, claim, input.session_id ?? null, deadline)
-    .run();
-  const recordId = Number(insert.meta?.last_row_id);
-  if (!recordId) throw new ApiError(500, '创建记录失败');
-  return loadRecordItem(db, recordId);
 }
 
 // --- Statement ---------------------------------------------------------------
@@ -596,9 +297,9 @@ export async function judgeAndDecide(db: D1Database, env: Env, id: number): Prom
     db
       .prepare(
         `INSERT INTO ai_verdicts
-           (record_id, provider, model, prompt_version, raw_response, parsed_delta,
+           (record_id, kind, provider, model, prompt_version, raw_response, parsed_delta,
             applied_delta, clamped, confidence, latency_ms, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, 'sentence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,

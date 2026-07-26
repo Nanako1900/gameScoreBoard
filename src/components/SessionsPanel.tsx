@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RSVP_LABEL, SESSION_STATUS_LABEL } from '@shared/attendance';
-import type { Rsvp, SessionItem, User } from '../types';
+import { RSVP_LABEL, SELF_RSVPS, SESSION_STATUS_LABEL } from '@shared/attendance';
+import type { SessionItem, User } from '../types';
+import type { SelfRsvp } from '@shared/attendance';
 import { ApiError, getSessions, setRsvp } from '../api';
 import { formatDateTime, parseTimestamp } from '../lib/time';
 import { Avatar } from './Avatar';
@@ -21,7 +22,7 @@ const SCOPES: { value: Scope; label: string }[] = [
   { value: 'past', label: '已结束' },
 ];
 
-const RSVP_ORDER: Rsvp[] = ['going', 'maybe', 'out'];
+const RSVP_ORDER = SELF_RSVPS;
 
 /** 约局 — the scheduling half of v2. Fully usable without ever touching scores. */
 export function SessionsPanel({
@@ -53,7 +54,7 @@ export function SessionsPanel({
     void load();
   }, [load, refreshKey]);
 
-  const handleRsvp = async (id: number, rsvp: Rsvp): Promise<void> => {
+  const handleRsvp = async (id: number, rsvp: SelfRsvp): Promise<void> => {
     setBusyId(id);
     try {
       const res = await setRsvp(id, rsvp);
@@ -132,7 +133,7 @@ interface SessionRowProps {
   me: User | null;
   busy: boolean;
   onOpen: () => void;
-  onRsvp: (rsvp: Rsvp) => void;
+  onRsvp: (rsvp: SelfRsvp) => void;
 }
 
 function SessionRow({ session, me, busy, onOpen, onRsvp }: SessionRowProps): JSX.Element {

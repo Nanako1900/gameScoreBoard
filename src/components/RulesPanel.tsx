@@ -43,17 +43,22 @@ export function RulesPanel({ config }: RulesPanelProps): JSX.Element {
           <div className="rules__ai">
             <h3 className="rules__block-title">AI 怎么量刑</h3>
             <ol className="rules__steps">
-              <li>裁判只认定「发生了什么」，并写清事实 —— 定性归人。</li>
+              <li>裁判只写「发生了什么」，不用选类型 —— 一次可以记多个人。</li>
               <li>
                 被记录的人有 <strong className="tabular">{config.statementWindowHours}</strong>{' '}
                 小时说明情况，说与不说都会进入裁决。
               </li>
               <li>
-                AI 在该案由的量刑区间内定分并写判词，提前告知、不可抗力、事后补偿从轻；
+                AI 先读裁判的描述、归到下面某个案由（此时被告还没开口，所以他无法影响
+                自己被归成哪一类），拿不准就归到「其他」。
+              </li>
+              <li>
+                AI 再在该案由的量刑区间内定分并写判词，提前告知、不可抗力、事后补偿从轻；
                 失联、甩锅、短期重犯从重。
               </li>
               <li>
-                无论 AI 输出什么，服务端都会把分值夹回区间 —— 判罚不可能越界，也不可能变成加分。
+                无论 AI 输出什么，服务端都会校验案由、把分值夹回区间 —— 判罚不可能越界，
+                也不可能变成加分；「团灭级放鸽」这种重罪还必须由人再确认一次。
                 {!config.aiEnabled && ' 当前 AI 未启用，一律按基准分判罚。'}
               </li>
             </ol>
@@ -61,7 +66,7 @@ export function RulesPanel({ config }: RulesPanelProps): JSX.Element {
 
           <div className="rules__grid">
             <div className="rules__block">
-              <h3 className="rules__block-title">案由与量刑区间</h3>
+              <h3 className="rules__block-title">案由与量刑区间（AI 归类到其中之一）</h3>
               <table className="rules__table">
                 <thead>
                   <tr>

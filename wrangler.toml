@@ -42,6 +42,13 @@ RESET_TZ_OFFSET = "8"
 OAUTH_BASE_URL = "https://nanako.org"
 OAUTH_CLIENT_ID = "4d7e107d75ac6bf7f3c2b7132b036c3f"
 
+# Matched against the RAW OAuth username (not the custom display name), and only
+# ever grants admin — never revokes it. Kept here rather than in the dashboard so
+# a deploy can't silently drop it and leave the board with zero admins, which is
+# exactly what had happened before v2: no admin meant the AI config panel and the
+# appeal queue were both unreachable.
+ADMIN_USERNAMES = "Hongyu Qi"
+
 # --- AI 裁决 (OpenAI-compatible) ---
 # These are defaults only: the admin panel writes to the `app_settings` table,
 # which overrides them at runtime — so the endpoint, model, temperature and
@@ -53,7 +60,6 @@ OAUTH_CLIENT_ID = "4d7e107d75ac6bf7f3c2b7132b036c3f"
 # AI_MODEL    = "gpt-4o-mini"
 # STATEMENT_WINDOW_HOURS     = "12"    # hours the accused has to explain themselves
 # SESSION_ORGANIZER_CAN_FILE = "true"  # "false" = non-judge organizers can only record attendance
-# ADMIN_USERNAMES = "your-oauth-username"         # comma-separated usernames auto-granted admin
 # APP_URL = "https://your-app.edgeone.app"        # set to the EdgeOne origin for the split deploy
 
 # --- Split deployment: frontend on EdgeOne, backend here. See DEPLOY-EDGEONE.md.

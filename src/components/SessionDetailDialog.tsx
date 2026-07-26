@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ATTENDANCE_MAP,
   RSVP_LABEL,
+  SELF_RSVPS,
   SESSION_STATUS_LABEL,
 } from '@shared/attendance';
-import type { Rsvp } from '@shared/attendance';
+import type { SelfRsvp } from '@shared/attendance';
 import type { RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { formatDateTime, parseTimestamp } from '../lib/time';
@@ -22,7 +23,7 @@ interface SessionDetailDialogProps {
   onChanged: () => void;
 }
 
-const RSVP_ORDER: Rsvp[] = ['going', 'maybe', 'out'];
+const RSVP_ORDER = SELF_RSVPS;
 
 export function SessionDetailDialog({
   sessionId,

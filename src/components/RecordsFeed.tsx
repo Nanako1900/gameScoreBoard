@@ -85,6 +85,14 @@ function RecordRow({ record, onSelectUser }: RecordRowProps): JSX.Element {
               {statusLabel}
             </span>
           )}
+          {record.escalation_suggested && (
+            <span
+              className="feed-row__status feed-row__status--escalate"
+              title="AI 认为够得上团灭级，等裁判确认"
+            >
+              待确认升级
+            </span>
+          )}
         </p>
         <p className="feed-row__meta">
           <span className="feed-row__reporter">裁判 {record.reporter.username}</span>
@@ -92,8 +100,14 @@ function RecordRow({ record, onSelectUser }: RecordRowProps): JSX.Element {
             ·
           </span>
           <time dateTime={record.created_at}>{relativeTime(record.created_at)}</time>
-          {record.verdict?.headline && (
+          {/* Pre-verdict there is no headline yet, so show the AI's summary of the
+              accusation instead — otherwise an open case reads as contentless. */}
+          {record.verdict?.headline ? (
             <span className="feed-row__note">“{record.verdict.headline}”</span>
+          ) : (
+            record.claim_summary && (
+              <span className="feed-row__note">“{record.claim_summary}”</span>
+            )
           )}
         </p>
       </div>
