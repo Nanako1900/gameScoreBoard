@@ -164,6 +164,12 @@ export function OnboardingDialog({
         </div>
       </div>
 
+      {me.is_judge && !me.is_admin && choice === 'participant' && (
+        <p className="ob__hint" role="note">
+          放弃裁判资格后，要再当裁判需要管理员重新授予。
+        </p>
+      )}
+
       {/* Renders nothing on a backend without Discord support. */}
       <DiscordLinkCard />
 

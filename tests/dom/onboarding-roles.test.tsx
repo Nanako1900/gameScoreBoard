@@ -1,4 +1,5 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OnboardingDialog } from '../../src/components/OnboardingDialog';
 import type { User } from '../../src/types';
@@ -47,5 +48,41 @@ describe('OnboardingDialog roles', () => {
     const { judge, both } = radios(me);
     expect(judge).toBeEnabled();
     expect(both).toBeEnabled();
+  });
+});
+
+describe('OnboardingDialog saves', () => {
+  function stubSave() {
+    const posts: Array<{ path: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const path = url.replace(/^https?:\/\/[^/]+/, '');
+        if (init?.method === 'POST') posts.push({ path, body: JSON.parse(String(init.body ?? '{}')) });
+        const body = path === '/api/me/roles' ? { user: BASE } : path === '/api/me/display-name' ? { user: BASE } : {};
+        const status = path === '/api/me/discord' ? 404 : 200;
+        return { ok: status === 200, status, text: async () => JSON.stringify(body) };
+      }),
+    );
+    return posts;
+  }
+
+  it('a player who is not a judge saves as a player only', async () => {
+    const posts = stubSave();
+    const user = userEvent.setup();
+    render(<OnboardingDialog open onClose={() => {}} me={BASE} onSaved={() => {}} />);
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(posts.find((p) => p.path === '/api/me/roles')).toBeDefined());
+    expect(posts.find((p) => p.path === '/api/me/roles')?.body).toEqual({ is_participant: true, is_judge: false });
+  });
+
+  it('warns a judge who is about to step down', async () => {
+    stubSave();
+    const user = userEvent.setup();
+    render(<OnboardingDialog open onClose={() => {}} me={{ ...BASE, is_judge: true, is_participant: true }} onSaved={() => {}} />);
+    expect(screen.queryByText(/需要管理员重新授予/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: /上榜选手/ }));
+    expect(screen.getByText(/需要管理员重新授予/)).toBeInTheDocument();
   });
 });

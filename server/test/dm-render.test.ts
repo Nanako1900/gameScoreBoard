@@ -1,3 +1,4 @@
+import { ModalBuilder } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { dmStillRelevant, renderDm } from '../src/discord/dm';
 import { parseCaseButton, parseCaseModal, toModal } from '../src/discord/case-actions';
@@ -93,5 +94,7 @@ describe('case buttons and modals', () => {
     expect(input).toMatchObject({ custom_id: 'text', style: 2, required: true, min_length: 1, max_length: 1000 });
     expect(String(input.label).length).toBeLessThanOrEqual(45);
     expect(String(input.placeholder).length).toBeLessThanOrEqual(100);
+    // discord.js's own validation of the whole shape (throws on anything Discord would refuse).
+    expect(() => new ModalBuilder(modal).toJSON()).not.toThrow();
   });
 });

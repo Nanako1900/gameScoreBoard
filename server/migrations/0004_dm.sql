@@ -73,7 +73,9 @@ BEGIN
     PERFORM outbox_emit('dm.decided', 'user', NEW.subject_id, 'dm:case:' || rid || ':decided', dm, NULL);
 
   ELSIF NEW.status = 'decided' AND OLD.status IN ('decided', 'appealed') AND NEW.verdict_source = 'admin_override'
-        AND (NEW.delta IS DISTINCT FROM OLD.delta OR OLD.verdict_source IS DISTINCT FROM 'admin_override') THEN
+        AND (NEW.delta IS DISTINCT FROM OLD.delta OR OLD.verdict_source IS DISTINCT FROM 'admin_override'
+             OR OLD.status = 'appealed') THEN
+    -- (An appeal answered by an override, even at the same points, is news to the subject.)
     -- A case can be re-sentenced more than once: one event per transaction.
     PERFORM outbox_emit('case.overridden', 'record', rid, 'case:' || rid || ':overridden:' || txid_current(), '{}', NULL);
     PERFORM outbox_emit('dm.overridden', 'user', NEW.subject_id,

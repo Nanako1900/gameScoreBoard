@@ -139,15 +139,15 @@ export async function submitCaseAction(
   try {
     if (action === 'appeal') {
       await appealCase(ctx.db, user, recordId, text);
-      return ephemeralReply('已提交申诉，管理员会复核。结果会私信告诉你。');
+      return ephemeralReply('已提交申诉，管理员会复核。结果在网页上能看到（开着私信提醒的话也会私信你）。');
     }
     const record = await submitStatement(ctx.db, user, recordId, text, ctx.env);
     if (record.status === 'decided') {
       return ephemeralReply(
-        `已收到你的陈述。判决：**${formatDelta(record.delta)} 分**（${safeLine(record.verdict?.headline ?? '', 120)}）。完整判词在下一条私信里。`,
+        `已收到你的陈述。判决：**${formatDelta(record.delta)} 分**（${safeLine(record.verdict?.headline ?? '', 120)}）。完整判词在网页上，开着私信提醒的话也会私信你。`,
       );
     }
-    return ephemeralReply('已收到你的陈述，正在裁决，结果会私信告诉你。');
+    return ephemeralReply('已收到你的陈述，正在裁决。结果在网页上能看到（开着私信提醒的话也会私信你）。');
   } catch (error) {
     if (error instanceof ApiError) return ephemeralReply(safeLine(error.message, LIMITS.content));
     throw error;

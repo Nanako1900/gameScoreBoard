@@ -84,9 +84,10 @@ export async function linkAccounts(db: D1Database, input: LinkInput): Promise<Li
     );
   }
   statements.push(
+    // A move keeps the person's DM choice (/notify): relinking must not quietly turn DMs back on.
     db
-      .prepare('INSERT INTO discord_links (discord_user_id, user_id, discord_username) VALUES (?, ?, ?)')
-      .bind(input.discordUserId, input.userId, username),
+      .prepare('INSERT INTO discord_links (discord_user_id, user_id, discord_username, notify_dm) VALUES (?, ?, ?, ?)')
+      .bind(input.discordUserId, input.userId, username, byUser ? byUser.notify_dm : 1),
     db
       .prepare('INSERT INTO link_audit (action, via, user_id, discord_user_id) VALUES (?, ?, ?, ?)')
       .bind(byUser ? 'relink' : 'link', input.via, input.userId, input.discordUserId),

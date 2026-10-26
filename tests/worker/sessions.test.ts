@@ -312,6 +312,47 @@ describe('settleSession', () => {
     expect(await scoreOf(a.id)).toBe(100);
   });
 
+  it('penalises only those who said they would come — never the merely invited', async () => {
+    // An organizer invites someone who never answers (and one who said maybe),
+    // then marks both absent: 放鸽子 needs a promise, so nothing is filed.
+    const { organizer, a, b } = await cast();
+    const session = await createSession(
+      env.DB,
+      organizer,
+      { title: '周五五排', starts_at: FUTURE, capacity: 10, invite: [a.id, b.id] },
+      OFFSET_HOURS,
+    );
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(PAST, session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: a.id, attendance: 'no_show' },
+        { user_id: b.id, attendance: 'late', late_minutes: 20 },
+        { user_id: organizer.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    // No draft offered for either…
+    expect(roll.drafts.filter((d) => d.kind === 'penalty')).toEqual([]);
+    // …and a hand-made settle request files nothing against them either.
+    const res = await settleSession(
+      env.DB,
+      organizer,
+      session.id,
+      [{ user_id: a.id, claim: '随便写点什么让他收到私信，凑够字数凑够字数' }, { user_id: b.id }],
+      false,
+      noAiEnv(),
+      OFFSET_HOURS,
+    );
+    expect(res.created).toBe(0);
+    // (Two turned up, so the organizer earns their 组局 bonus — that is all.)
+    const filed = await listRecords(env.DB, { session: session.id });
+    expect(filed.filter((r) => r.subject.id !== organizer.id)).toEqual([]);
+  });
+
   it('re-derives the violation type and refuses a tampered escalation', async () => {
     const { organizer, a, b, session } = await rolled();
     // b was on time; a tampered client asks for the -25 group-wipe charge.

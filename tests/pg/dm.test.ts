@@ -208,6 +208,68 @@ describe('DM delivery', () => {
     expect(text(verdict!.message)).toContain(`v1:appeal:${filed.id}`);
   });
 
+  it('a withdrawal rewrites the reminder too, not just the filing DM', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    expect(discord.sent).toHaveLength(2); // filing + reminder
+    await withdrawCase(env.DB, judge, filed.id);
+    await d.runOnce();
+    expect(discord.edits.map((e) => e.messageId).sort()).toEqual(discord.sent.map((_, i) => `90000000000000${String(i + 1).padStart(4, '0')}`).sort());
+    for (const e of discord.edits) expect(e.message.components).toEqual([]);
+  });
+
+  it('a withdrawal while the filing DM is still 3 minutes away: nothing at all, in the real order', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await withdrawCase(env.DB, judge, filed.id);
+    // Only the withdrawal is due; the filing DM still waits its 3 minutes.
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'dm.filed'");
+    await d.runOnce();
+    expect(discord.sent).toEqual([]);
+    expect(discord.edits).toEqual([]);
+  });
+
+  it('re-arms a reminder that already went out when the deadline is extended', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    const reminders = () => discord.sent.filter((m) => text(m.message).includes('陈述快截止了')).length;
+    expect(reminders()).toBe(1);
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
+    const [row] = (await pool.query("SELECT processed_at, available_at > now() AS later FROM outbox WHERE kind = 'dm.deadline'")).rows;
+    expect(row).toEqual({ processed_at: null, later: true });
+    await dueNow();
+    await d.runOnce();
+    expect(reminders()).toBe(2);
+  });
+
+  it('DMs and channel posts of the same changes do not hold each other up', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
+    const discord = fakeDiscord();
+    const d = createDispatcher({
+      pool,
+      db: env.DB,
+      api: discord.api,
+      config: { verdictChannelId: '200000000000000009', frontendUrl: FRONTEND },
+      log: quiet,
+    });
+    // The filing DM and reminder are still scheduled; the verdict (post + DM) is due.
+    await d.runOnce();
+    expect(discord.sent.map((m) => m.channelId).sort()).toEqual(['200000000000000009', `dm-${SUBJECT_DC.id}`]);
+  });
+
   it('rewrites the filing DM on withdrawal instead of sending another', async () => {
     const { judge, subject } = await people();
     const filed = await file(judge, subject);
@@ -219,7 +281,7 @@ describe('DM delivery', () => {
     await withdrawCase(env.DB, judge, filed.id);
     await d.runOnce();
     expect(discord.sent).toHaveLength(before);
-    expect(discord.edits).toHaveLength(1);
+    expect(discord.edits).toHaveLength(2); // the filing DM and the reminder
     expect(text(discord.edits[0].message)).toContain('立案已撤回');
     expect(discord.edits[0].message.components).toEqual([]);
   });
@@ -266,16 +328,92 @@ describe('DM delivery', () => {
     });
   });
 
-  it(`caps new DMs at ${DM_BUDGET} per person per day`, async () => {
+  it(`caps reminders at ${DM_BUDGET} per person per day — but never a verdict`, async () => {
     const { judge, subject } = await people();
-    for (let i = 0; i < DM_BUDGET + 2; i += 1) {
+    const cases: number[] = [];
+    // Each case is two reminders (filing + deadline): this is past the cap.
+    const n = DM_BUDGET / 2 + 2;
+    for (let i = 0; i < n; i += 1) {
       await seedUser({ id: `j${i}`, judge: true });
-      await fileCase(env.DB, { ...judge, id: `j${i}` }, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv());
+      const filed = await fileCase(env.DB, { ...judge, id: `j${i}` }, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv());
+      cases.push(filed.id);
     }
     await dueNow();
     const discord = fakeDiscord();
-    await dispatcher(discord.api).runOnce();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
     expect(discord.sent).toHaveLength(DM_BUDGET);
+    // The verdicts that follow still all arrive.
+    for (const id of cases) await submitStatement(env.DB, subject, id, '临时加班', noAiEnv());
+    await d.runOnce();
+    const verdicts = discord.sent.filter((m) => text(m.message).includes('判决：'));
+    expect(verdicts).toHaveLength(n);
+  });
+
+  it('a second appeal answered at the same points still reaches the subject', async () => {
+    const { judge, admin, subject } = await people();
+    const filed = await file(judge, subject);
+    await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
+    await appealCase(env.DB, subject, filed.id, '我那天在医院');
+    await overrideCase(env.DB, admin, filed.id, -8, '情有可原');
+    await appealCase(env.DB, subject, filed.id, '还是觉得重');
+    await overrideCase(env.DB, admin, filed.id, -8, '维持');
+    const overrides = (await dmEvents()).filter((e) => e.kind === 'dm.overridden');
+    expect(overrides).toHaveLength(2);
+    const channel = (await events()).filter((e) => e.kind === 'case.overridden');
+    expect(channel).toHaveLength(2);
+  });
+
+  it('does not show an appeal to someone who is no longer an admin', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
+    await appealCase(env.DB, subject, filed.id, '我在医院');
+    await adminUpdateUser(env.DB, 'admin', { is_admin: false });
+    await dueNow();
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    expect(discord.sent.filter((m) => m.channelId === `dm-${ADMIN_DC.id}`)).toEqual([]);
+  });
+
+  it('a relink keeps the DM choice', async () => {
+    await people();
+    await handleCommand({ commandName: 'notify', caller: SUBJECT_DC, targetUser: null, state: 'off' }, ctx);
+    const outcome = await linkAccounts(env.DB, {
+      userId: 'subject',
+      discordUserId: OTHER_DC.id,
+      discordUsername: OTHER_DC.username,
+      replace: true,
+      via: 'web',
+    });
+    expect(outcome.kind).toBe('relinked');
+    expect(await env.DB.prepare('SELECT notify_dm FROM discord_links WHERE user_id = ?').bind('subject').first()).toEqual({ notify_dm: 0 });
+  });
+
+  it('a refused DM is retried for a day, then given up', async () => {
+    const { judge, subject } = await people();
+    await file(judge, subject);
+    await pool.query("DELETE FROM outbox WHERE kind = 'dm.deadline'");
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
+    await d.runOnce();
+    expect((await dmEvents())[0].result).toBeNull();
+    await pool.query("UPDATE outbox SET available_at = now(), created_at = now() - interval '25 hours'");
+    discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
+    await d.runOnce();
+    expect((await dmEvents())[0].result).toBe('dead');
+  });
+
+  it('leaves an event it cannot handle for a newer bot instead of dropping it', async () => {
+    await people();
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key) VALUES ('dm.from.the.future', 'user', 'subject', 'future:1')`,
+    );
+    await dispatcher(fakeDiscord().api).runOnce();
+    const [row] = (await pool.query("SELECT result, attempts, available_at > now() AS later FROM outbox WHERE dedupe_key = 'future:1'")).rows;
+    expect(row).toEqual({ result: null, attempts: 0, later: true });
   });
 
   it('a reminder scheduled for later does not hold up the DMs behind it', async () => {

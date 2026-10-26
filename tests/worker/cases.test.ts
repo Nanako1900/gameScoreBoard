@@ -15,7 +15,7 @@ import {
   withdrawCase,
 } from '../../worker/cases';
 import { ApiError } from '../../worker/errors';
-import { MAX_CASES_PER_SUBJECT_24H } from '../../worker/case-limits';
+import { MAX_CASES_PER_REPORTER_24H, MAX_CASES_PER_SUBJECT_24H } from '../../worker/case-limits';
 import {
   OFFSET_HOURS,
   expireDeadline,
@@ -651,6 +651,21 @@ describe('rate limits', () => {
     }
     await expect(
       fileCase(env.DB, judge, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv()),
+    ).rejects.toMatchObject({ status: 429 });
+  });
+
+  it('counts a reporter’s withdrawn cases too', async () => {
+    const judge = await seedUser({ id: 'judge', judge: true });
+    const perSubject = MAX_CASES_PER_SUBJECT_24H;
+    for (let i = 0; i < MAX_CASES_PER_REPORTER_24H; i += 1) {
+      const subjectId = `s${Math.floor(i / perSubject)}`;
+      if (i % perSubject === 0) await seedUser({ id: subjectId });
+      const filed = await fileCase(env.DB, judge, { subject_id: subjectId, type: 'afk', claim: CLAIM }, OPTS, noAiEnv());
+      await withdrawCase(env.DB, judge, filed.id);
+    }
+    await seedUser({ id: 'fresh' });
+    await expect(
+      fileCase(env.DB, judge, { subject_id: 'fresh', type: 'afk', claim: CLAIM }, OPTS, noAiEnv()),
     ).rejects.toMatchObject({ status: 429 });
   });
 });

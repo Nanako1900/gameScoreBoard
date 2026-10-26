@@ -68,6 +68,15 @@
   line-height: 1.45;
 }
 
+.ob__hint {
+  margin: 0.25rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--r-md);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+}
+
 .ob__error {
   margin-top: 1rem;
   color: var(--red);

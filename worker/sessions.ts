@@ -593,6 +593,8 @@ export function buildDrafts(session: SessionDetail, offsetHours: number): CaseDr
     if (!def) continue;
     // The organizer can't file against themselves; their bonus is handled separately.
     if (p.user.id === session.organizer.id) continue;
+    // Same rule as planFilings: only a promise can be broken.
+    if (def.kind === 'penalty' && p.rsvp !== 'going') continue;
     drafts.push({
       user_id: p.user.id,
       username: p.user.username,
@@ -679,6 +681,11 @@ function planFilings(
 
     const derived = violationForAttendance(player.attendance, player.late_minutes);
     if (derived === null) continue;
+    // A penalty only for someone who said they would come: 放鸽子 is "答应了没来".
+    // Someone merely invited (or a maybe) made no promise — and without this an
+    // organizer could invite anyone, mark them absent and so file a case, with
+    // its DM, against a person who never agreed to anything.
+    if (VIOLATION_MAP[derived]?.kind === 'penalty' && player.rsvp !== 'going') continue;
     const requested =
       typeof entry.type === 'string' && entry.type.length > 0
         ? (entry.type as ViolationType)

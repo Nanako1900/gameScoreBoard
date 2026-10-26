@@ -288,6 +288,14 @@ export function overrideCase(
   return post<{ record: RecordItem }>(`/api/admin/records/${id}/override`, { delta, reason });
 }
 
+/**
+ * Admin: appoint or dismiss a judge. Since P6 this is the only way to become
+ * one — the self-service role switch refuses is_judge for non-judges.
+ */
+export function setJudge(userId: string, isJudge: boolean): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(userId)}`, { is_judge: isJudge });
+}
+
 export function getAiConfig(): Promise<AiConfigResponse> {
   return request<AiConfigResponse>('/api/admin/ai-config');
 }
