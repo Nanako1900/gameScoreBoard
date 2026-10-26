@@ -60,9 +60,11 @@ docker exec "$PG" psql -U edg -d edg -c 'DROP SCHEMA public CASCADE; CREATE SCHE
 
 ## 没人在用时：简化顺序（推荐）
 
-1. **后端域名**：Cloudflare DNS 加 A 记录 `capi` → 服务器公网 IP（DNS only），Coolify 里 `app` 加域名
-   `https://capi.nanako.org`、端口 **8787**，Redeploy（见 [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)「给 `app` 配域名」）。
-   此时 `https://capi.nanako.org` 返回 404，证书有效即可——API 还没打开。
+1. **后端域名**：Cloudflare DNS 加 A 记录 `capi` → 服务器公网 IP，再按
+   [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)「给 `app` 配域名」把 `capi.nanako.org` 接到 `app`：
+   只有 Coolify 时在 Coolify 里给 `app` 加域名（端口 **8787**）并 Redeploy；装了 1Panel 时在 1Panel 建反向代理站点，
+   指向 `http://127.0.0.1:8787`、发送域名 `$host`、开 HTTPS。
+   此时 `https://capi.nanako.org` 返回 `app` 的 `{"error":"Not found"}`、`/healthz` 返回 `ok`，证书有效即可——API 还没打开。
 2. **冻结 D1**（建议）：Cloudflare 后台 → Worker `gamescoreboard-bn` → Settings → Variables and Secrets 加
    `READ_ONLY` = `1`，保存并 Deploy。之后 D1 不会再变（包括爬虫打开页面触发的惰性回血、判决）。
 3. **导出 D1、导入 PG**：见上一节。
@@ -114,6 +116,9 @@ docker exec "$PG" psql -U edg -d edg -c 'DROP SCHEMA public CASCADE; CREATE SCHE
 前提：[DEPLOY-PAGES.md](DEPLOY-PAGES.md) 已做完——SPA 在 `community.nanako.org`（Pages），Worker 挂在
 `capi.nanako.org`。切换时 `capi.nanako.org`、cookie 名、`SESSION_SECRET` 都不变，没人需要重新登录，
 只有 30–45 分钟的只读窗口，期间能看不能写。
+
+下面写的「Coolify 里给 `app` 加域名」，用 1Panel 时都换成在 1Panel 里建对应的反向代理站点
+（见 [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)「方式二」）。
 
 ### 准备（不影响线上）
 
