@@ -42,7 +42,7 @@ import { ApiError } from './errors';
 import { appliedDeltaSql, getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
 import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limits';
-import { parseSqlUtc } from './time';
+import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 
 const MAX_ROLLCALL_ENTRIES = 50;
@@ -254,6 +254,30 @@ export interface CreateSessionInput {
 }
 
 export const MAX_INVITES = 20;
+/**
+ * Per organizer: sessions open at once, and sessions created per 24 hours.
+ * Every session invites, posts a card and DMs reminders (Discord, P7), so
+ * creating them must not be free.
+ */
+export const MAX_OPEN_SESSIONS = 5;
+export const MAX_SESSIONS_PER_DAY = 10;
+
+async function assertCanOrganize(db: D1Database, organizerId: string): Promise<void> {
+  const open = await db
+    .prepare("SELECT COUNT(*) AS n FROM game_sessions WHERE organizer_id = ? AND status = 'open' AND starts_at > ?")
+    .bind(organizerId, new Date().toISOString())
+    .first<{ n: number }>();
+  if ((open?.n ?? 0) >= MAX_OPEN_SESSIONS) {
+    throw new ApiError(429, `同时最多有 ${MAX_OPEN_SESSIONS} 个还没开的局，先取消一个或等它开完`);
+  }
+  const recent = await db
+    .prepare('SELECT COUNT(*) AS n FROM game_sessions WHERE organizer_id = ? AND created_at >= ?')
+    .bind(organizerId, sqlNowMinusMinutes(24 * 60))
+    .first<{ n: number }>();
+  if ((recent?.n ?? 0) >= MAX_SESSIONS_PER_DAY) {
+    throw new ApiError(429, `24 小时内最多发起 ${MAX_SESSIONS_PER_DAY} 个约局，明天再约`);
+  }
+}
 
 function normalizeInvites(raw: unknown, organizerId: string): string[] {
   if (raw === undefined || raw === null) return [];
@@ -293,14 +317,40 @@ export async function createSession(
   const duration = normalizeInt(input.duration_min, 15, 1440, '时长');
   const capacity = normalizeInt(input.capacity, 2, 50, '人数上限');
   const invites = normalizeInvites(input.invite, organizer.id);
-
-  const res = await db
-    .prepare(
-      `INSERT INTO game_sessions (organizer_id, title, game, starts_at, duration_min, capacity, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(organizer.id, title, game, startsAt, duration, capacity, note)
-    .run();
+  // The friendly check, with the right message…
+  await assertCanOrganize(db, organizer.id);
+  // …and the one that holds: the caps again inside the write, after taking the
+  // organizer's row lock (PostgreSQL; D1 serialises batches anyway), so a
+  // burst of parallel creates cannot all slip under them.
+  const [, res] = await db.batch([
+    db.prepare('UPDATE users SET score = score WHERE id = ?').bind(organizer.id),
+    db
+      .prepare(
+        `INSERT INTO game_sessions (organizer_id, title, game, starts_at, duration_min, capacity, note)
+         SELECT ?, ?, ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), ?
+          WHERE (SELECT COUNT(*) FROM game_sessions
+                  WHERE organizer_id = ? AND status = 'open' AND starts_at > ?) < ?
+            AND (SELECT COUNT(*) FROM game_sessions WHERE organizer_id = ? AND created_at >= ?) < ?`,
+      )
+      .bind(
+        organizer.id,
+        title,
+        game,
+        startsAt,
+        duration,
+        capacity,
+        note,
+        organizer.id,
+        new Date().toISOString(),
+        MAX_OPEN_SESSIONS,
+        organizer.id,
+        sqlNowMinusMinutes(24 * 60),
+        MAX_SESSIONS_PER_DAY,
+      ),
+  ]);
+  if ((res?.meta?.changes ?? 0) === 0) {
+    throw new ApiError(429, `同时最多有 ${MAX_OPEN_SESSIONS} 个还没开的局、24 小时内最多发起 ${MAX_SESSIONS_PER_DAY} 个`);
+  }
   const id = Number(res.meta?.last_row_id);
   if (!id) throw new ApiError(500, '创建约局失败');
 

@@ -15,6 +15,15 @@
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
 import { dmStillRelevant, isDmKind, removedDm, renderDm, type DmKind } from '../discord/dm';
+import {
+  isSessionDmKind,
+  isUpcoming,
+  loadSession,
+  renderSessionDm,
+  sessionCard,
+  sessionDmRelevant,
+  type SessionDmKind,
+} from '../discord/sessions';
 import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
 
 const POLL_MS = 30_000;
@@ -41,7 +50,28 @@ const PAUSE_MS = 5 * 60_000;
  * subject's own 'going' to a session.
  */
 export const DM_BUDGET = 20;
-const BUDGETED: ReadonlySet<string> = new Set(['dm.filed', 'dm.deadline']);
+/**
+ * Session DMs nobody asked for — invitations and time changes — have their own,
+ * smaller allowance, so a flood of them can never use up the one that tells
+ * someone a statement is due. The 15-minute reminder is not in it: it only goes
+ * to a session the recipient said 来 to.
+ */
+export const SESSION_DM_BUDGET = 10;
+/** Invitations from one organizer to one person per 24 h. */
+export const INVITES_PER_ORGANIZER = 3;
+
+interface Budget {
+  kinds: readonly string[];
+  limit: number;
+}
+const BUDGETS: readonly Budget[] = [
+  { kinds: ['dm.filed', 'dm.deadline'], limit: DM_BUDGET },
+  { kinds: ['dm.session.invited', 'dm.session.changed'], limit: SESSION_DM_BUDGET },
+];
+
+function budgetFor(kind: string): Budget | null {
+  return BUDGETS.find((b) => b.kinds.includes(kind)) ?? null;
+}
 /** News (not to-dos) that could not go out within this long is not worth sending late. */
 const NEWS_KINDS: ReadonlySet<DmKind> = new Set(['dm.decided', 'dm.overridden', 'dm.revoked', 'dm.appealed']);
 
@@ -62,6 +92,8 @@ export interface ChannelApi {
 export interface DispatcherConfig {
   /** null: verdict events are marked skipped, nothing is posted. */
   verdictChannelId: string | null;
+  /** Where session cards go (P7); null or absent: no cards. */
+  sessionChannelId?: string | null;
   frontendUrl: string;
 }
 
@@ -228,7 +260,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     while (authFailures.length > 0 && authFailures[0] < now - AUTH_WINDOW_MS) authFailures.shift();
     if (authFailures.length >= AUTH_FAILURES_TO_PAUSE) {
       authFailures.length = 0;
-      pause('Discord keeps refusing the bot (403) — check its permissions in the verdict channel');
+      pause(
+        'Discord keeps refusing the bot (403) — check its permissions in the verdict and session channels ' +
+          '(DISCORD_VERDICT_CHANNEL_ID / DISCORD_SESSION_CHANNEL_ID)',
+      );
     }
   }
 
@@ -243,7 +278,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       if (status === 401 || row.refused_since === null) noteAuthFailure(status);
       return { result: 'retry', note, refused: true };
     }
-    if (errorCode(error) === UNKNOWN_CHANNEL) return { result: 'dead', note: `unknown channel — check DISCORD_VERDICT_CHANNEL_ID: ${note}` };
+    if (errorCode(error) === UNKNOWN_CHANNEL) {
+      const setting = row.entity === 'session' ? 'DISCORD_SESSION_CHANNEL_ID' : 'DISCORD_VERDICT_CHANNEL_ID';
+      return { result: 'dead', note: `unknown channel — check ${setting}: ${note}` };
+    }
     if (status !== null && status >= 400 && status < 500 && status !== 429) return { result: 'dead', note };
     // 5xx, 429 that outlived discord.js's own handling, network errors.
     return { result: 'retry', note };
@@ -269,7 +307,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   /** The record is gone (its user was deleted): take its post down too. */
-  async function removePost(row: OutboxRow): Promise<Outcome> {
+  async function removeMessage(row: OutboxRow, entity: 'record' | 'session', purpose: string): Promise<Outcome> {
     const channelId = typeof row.payload.channel_id === 'string' ? row.payload.channel_id : null;
     const messageId = typeof row.payload.message_id === 'string' ? row.payload.message_id : null;
     if (!channelId || !messageId) return { result: 'skipped', note: 'no message to remove' };
@@ -279,13 +317,17 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       const code = errorCode(error);
       if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
     }
-    await forgetMessage(row.entity_id);
+    await pool.query('DELETE FROM discord_messages WHERE entity = $1 AND entity_id = $2 AND purpose = $3', [
+      entity,
+      String(Number.parseInt(row.entity_id, 10)),
+      purpose,
+    ]);
     return { result: 'sent', note: null };
   }
 
   async function deliverRecord(row: OutboxRow): Promise<Outcome> {
     if (!RECORD_KINDS.has(row.kind)) return unhandled(row);
-    if (row.kind === 'case.removed') return removePost(row);
+    if (row.kind === 'case.removed') return removeMessage(row, 'record', 'verdict');
     const channelId = config.verdictChannelId;
     if (!channelId) return { result: 'skipped', note: 'no verdict channel configured' };
     const record = await getRecordItemById(db, Number(row.entity_id));
@@ -330,13 +372,25 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return { result: 'sent', note: null };
   }
 
-  /** Budgeted DMs (reminders, to-dos) this person got in the last 24 h. */
-  async function dmsToday(userId: string): Promise<number> {
+  /** DMs of this budget this person got in the last 24 h. */
+  async function dmsToday(userId: string, budget: Budget): Promise<number> {
     const res = await pool.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM outbox
         WHERE entity = 'user' AND entity_id = $1 AND result = 'sent' AND kind = ANY($2::text[])
           AND processed_at > now() - interval '1 day'`,
-      [userId, [...BUDGETED]],
+      [userId, [...budget.kinds]],
+    );
+    return res.rows[0]?.n ?? 0;
+  }
+
+  /** Invitations this person got from this organizer in the last 24 h. */
+  async function invitesFrom(userId: string, organizerId: string): Promise<number> {
+    const res = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM outbox o
+         JOIN game_sessions g ON g.id = (o.payload->>'session_id')::bigint
+        WHERE o.entity = 'user' AND o.entity_id = $1 AND o.kind = 'dm.session.invited' AND o.result = 'sent'
+          AND o.processed_at > now() - interval '1 day' AND g.organizer_id = $2`,
+      [userId, organizerId],
     );
     return res.rows[0]?.n ?? 0;
   }
@@ -376,7 +430,8 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     to: Recipient,
     message: ChannelMessage,
   ): Promise<{ channelId: string; messageId: string } | Outcome> {
-    if (BUDGETED.has(row.kind) && (await dmsToday(row.entity_id)) >= DM_BUDGET) {
+    const budget = budgetFor(row.kind);
+    if (budget && (await dmsToday(row.entity_id, budget)) >= budget.limit) {
       return { result: 'skipped', note: 'daily DM budget used up' };
     }
     try {
@@ -398,7 +453,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return res.rows[0]?.is_admin === 1;
   }
 
-  /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
   /** Rewrite DMs already sent (no new notification); 50007 marks DMs closed. */
   async function rewrite(
     userId: string,
@@ -445,6 +499,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
+    if (isSessionDmKind(row.kind)) return deliverSessionDm(row, row.kind);
     if (!isDmKind(row.kind)) return unhandled(row);
     const kind = row.kind;
     const recordId = Number(row.payload.record_id);
@@ -527,6 +582,113 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
   }
 
+  /** A DM about a game session (P7): invitation, start, change, cancel, roll call. */
+  async function deliverSessionDm(row: OutboxRow, kind: SessionDmKind): Promise<Outcome> {
+    const sessionId = Number(row.payload.session_id);
+    if (!Number.isSafeInteger(sessionId)) return { result: 'skipped', note: 'no session in the payload' };
+    const to = await recipient(row.entity_id);
+    if (isOutcome(to)) return to;
+    const session = await loadSession(db, sessionId);
+    if (!session) return { result: 'skipped', note: 'session is gone' };
+    if (!sessionDmRelevant(kind, session, row.entity_id)) return { result: 'skipped', note: 'no longer true' };
+    // A start reminder held up (retries, a pause) past a move would say "15
+    // minutes" about a session that is now hours away.
+    if (kind === 'dm.session.starting' && row.payload.starts_at !== session.starts_at) {
+      return { result: 'skipped', note: 'the session moved since' };
+    }
+    if (kind === 'dm.session.invited' && (await invitesFrom(row.entity_id, session.organizer.id)) >= INVITES_PER_ORGANIZER) {
+      return { result: 'skipped', note: 'enough invitations from this organizer today' };
+    }
+    const sent = await sendDm(row, to, renderSessionDm(kind, session, config.frontendUrl));
+    if (isOutcome(sent)) return sent;
+    if (kind === 'dm.session.invited' || kind === 'dm.session.changed') {
+      // They know about it now: a cancel is news to them. (Cancelled while
+      // this was on its way: the cancel went past them — tell them now.)
+      await pool.query('UPDATE session_players SET knows = true WHERE session_id = $1 AND user_id = $2', [sessionId, row.entity_id]);
+      await pool.query(
+        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+         SELECT 'dm.session.cancelled', 'user', $2, 'dm:session:' || $1 || ':cancelled:' || $2, jsonb_build_object('session_id', $1::bigint)
+          WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = $1::bigint AND status = 'cancelled')
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+        [sessionId, row.entity_id],
+      );
+    }
+    return { result: 'sent', note: null };
+  }
+
+  /** Card events, the start-of-session fan-out, a deleted session's card. */
+  async function deliverSession(row: OutboxRow): Promise<Outcome> {
+    // entity_id is the session id — or '<id>:starting' for the fan-out, which
+    // has its own queue so a card stuck in retries cannot hold it up.
+    const sessionId = Number.parseInt(row.entity_id, 10);
+    if (row.kind === 'session.removed') return removeMessage(row, 'session', 'card');
+    if (row.kind === 'session.starting') {
+      // Whoever is going right now gets their own DM event (budget, retries…).
+      // Keyed by the start time too: a session moved after its first reminder
+      // gets a second one.
+      const session = await loadSession(db, sessionId);
+      if (!session || !isUpcoming(session)) return { result: 'skipped', note: 'session is not on any more' };
+      await pool.query(
+        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+         SELECT 'dm.session.starting', 'user', sp.user_id,
+                'dm:session:' || $1 || ':starting:' || $2 || ':' || sp.user_id,
+                jsonb_build_object('session_id', $1::bigint, 'starts_at', $2::text)
+           FROM session_players sp WHERE sp.session_id = $1::bigint AND sp.rsvp = 'going'
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+        [sessionId, session.starts_at],
+      );
+      return { result: 'sent', note: null };
+    }
+    if (row.kind !== 'session.card') return unhandled(row);
+
+    const channelId = config.sessionChannelId ?? null;
+    if (!channelId) return { result: 'skipped', note: 'no session channel configured' };
+    const session = await loadSession(db, sessionId);
+    if (!session) return { result: 'skipped', note: 'session is gone' };
+    const card = sessionCard(session, config.frontendUrl);
+    const posted = await messageFor('session', String(sessionId), 'card');
+    if (posted && posted.channel_id === channelId) {
+      try {
+        await api.edit(posted.channel_id, posted.message_id, card);
+        return { result: 'sent', note: null };
+      } catch (error) {
+        const code = errorCode(error);
+        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+      }
+    } else if (posted) {
+      // The session channel was changed: take the old card down (its buttons
+      // would keep working, and it would never be updated again) — if the bot
+      // still can: an old channel it may no longer see must not keep the new
+      // one from getting its card.
+      try {
+        await api.remove(posted.channel_id, posted.message_id);
+      } catch (error) {
+        const code = errorCode(error);
+        if (code === UNKNOWN_MESSAGE || code === UNKNOWN_CHANNEL) {
+          // Gone already.
+        } else if (errorStatus(error) === 403) {
+          log.warn(`outbox ${row.id}: may not take down the old card in ${posted.channel_id} any more: ${describe(error)}`);
+        } else {
+          throw error; // a passing failure: try again
+        }
+      }
+      await pool.query("DELETE FROM discord_messages WHERE entity = 'session' AND entity_id = $1 AND purpose = 'card'", [
+        String(sessionId),
+      ]);
+    }
+    // A new card only for a session people can still join.
+    if (!isUpcoming(session)) return { result: 'skipped', note: 'not open for RSVPs' };
+    const sent = await api.send(channelId, { ...card, nonce: nonceFor(row), enforce_nonce: true });
+    await pool.query(
+      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
+       VALUES ('session', $1, 'card', $2, $3)
+       ON CONFLICT (entity, entity_id, purpose)
+       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
+      [String(sessionId), channelId, sent.id],
+    );
+    return { result: 'sent', note: null };
+  }
+
   /**
    * An event this version cannot deliver — most likely written by a newer
    * schema while this (older) bot is still running a rolling deploy. Leave it
@@ -545,7 +707,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           ? await deliverRecord(row)
           : row.entity === 'user'
             ? await deliverDm(row)
-            : unhandled(row);
+            : row.entity === 'session'
+              ? await deliverSession(row)
+              : unhandled(row);
     } catch (error) {
       outcome = outcomeOf(error, row);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);

@@ -21,6 +21,8 @@ import {
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
+import { handleRsvpButton, parseRsvpButton } from './discord/sessions';
+import { resetOffsetHours } from '../../worker/time';
 import {
   MODAL_FIELD,
   openCaseAction,
@@ -144,6 +146,8 @@ function main(): void {
     appUrl: config.appUrl,
     frontendUrl: config.frontendUrl,
     readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
+    offsetHours: resetOffsetHours(process.env.RESET_TZ_OFFSET),
+    sessionCards: config.sessionChannelId !== null,
   };
   // The Worker's Env for the domain calls that need one: a statement sent from
   // Discord is judged right away, with the same AI settings as the web.
@@ -172,7 +176,11 @@ function main(): void {
       pool,
       db: ctx.db,
       api: restChannelApi(ready.rest),
-      config: { verdictChannelId: config.verdictChannelId, frontendUrl: config.frontendUrl },
+      config: {
+        verdictChannelId: config.verdictChannelId,
+        sessionChannelId: config.sessionChannelId,
+        frontendUrl: config.frontendUrl,
+      },
       createListener: () => new pg.Client({ connectionString: config.databaseUrl, options: '-c TimeZone=UTC' }),
       describeError,
     });
@@ -181,6 +189,11 @@ function main(): void {
       config.verdictChannelId
         ? `posting verdicts to channel ${config.verdictChannelId}`
         : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts are not posted',
+    );
+    console.log(
+      config.sessionChannelId
+        ? `posting session cards to channel ${config.sessionChannelId}`
+        : 'DISCORD_SESSION_CHANNEL_ID is not set: no session cards',
     );
   });
   client.on(Events.ShardReady, () => (gateway = 'ready'));
@@ -212,7 +225,11 @@ function main(): void {
     } else if (interaction.isButton()) {
       const verdictId = parseVerdictButton(interaction.customId);
       const caseButton = parseCaseButton(interaction.customId);
-      if (verdictId !== null) {
+      const rsvp = parseRsvpButton(interaction.customId);
+      if (rsvp) {
+        // On a card in the channel or on an invitation DM: no guild check.
+        work = answer(interaction, 'rsvp button', () => handleRsvpButton(rsvp.sessionId, rsvp.choice, rsvp.startsAt, caller, ctx));
+      } else if (verdictId !== null) {
         work = answer(interaction, 'verdict button', () => handleVerdictButton(verdictId, caller, ctx), {
           guildId: config.guildId,
         });

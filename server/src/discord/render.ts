@@ -14,6 +14,8 @@ import type { BotEmbed, BotEmbedField, BotLinkButton, BotReply } from './types';
 /** Scoreboard theme (src/theme.css): gold for good news, red for bad. */
 export const GOLD = 0xf5c542;
 export const RED = 0xe5484d;
+/** Something no longer in force (a revoked verdict, a cancelled session). */
+export const GREY = 0x8b8579;
 
 /** Discord's hard limits; a reply over any of them is rejected outright. */
 export const LIMITS = {

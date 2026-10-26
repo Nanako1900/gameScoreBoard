@@ -390,6 +390,7 @@ describe('readBotConfig', () => {
       appUrl: 'https://api.nanako.org',
       frontendUrl: 'https://score.nanako.org',
       verdictChannelId: null,
+      sessionChannelId: null,
     });
   });
 

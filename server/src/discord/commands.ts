@@ -18,7 +18,10 @@ import { ApiError } from '../../../worker/errors';
 import { getLatestReport } from '../../../worker/report';
 import { listMyInvites } from '../../../worker/sessions';
 import type { RecordItem, SessionItem, User } from '../../../worker/types';
-import { linkByDiscordId, unlinkAccounts } from './links';
+import { boundUser, linkByDiscordId, unlinkAccounts } from './links';
+import { handleYue, YUE_SLOTS } from './sessions';
+
+export { boundUser };
 import {
   GOLD,
   LIMITS,
@@ -55,7 +58,11 @@ interface CommandOption {
   description: string;
   required?: boolean;
   choices?: Array<{ name: string; value: string }>;
+  min_value?: number;
+  max_value?: number;
 }
+
+const INTEGER_OPTION = 4;
 
 export interface CommandDefinition {
   type: number;
@@ -104,6 +111,21 @@ export const COMMANDS: readonly CommandDefinition[] = [
       },
     ],
   },
+  {
+    type: CHAT_INPUT,
+    name: 'yue',
+    description: '约一局：卡片发到约局频道，大家点按钮报名',
+    options: [
+      {
+        type: STRING_OPTION,
+        name: 'when',
+        description: '什么时候',
+        required: true,
+        choices: YUE_SLOTS.map((s) => ({ name: s.name, value: s.value })),
+      },
+      { type: INTEGER_OPTION, name: 'capacity', description: '最多几个人（不填就不限）', min_value: 2, max_value: 50 },
+    ],
+  },
 ];
 
 // --- Shared pieces -----------------------------------------------------------
@@ -126,13 +148,6 @@ export function webButton(ctx: BotContext, label = '打开网页'): BotLinkButto
   return linkButton(label, joinUrl(ctx.frontendUrl, '/'));
 }
 
-/** The Nanako user bound to this Discord account, or null. */
-export async function boundUser(db: D1Database, discordUserId: string): Promise<User | null> {
-  const link = await linkByDiscordId(db, discordUserId);
-  if (!link) return null;
-  const row = await getUserById(db, link.user_id);
-  return row ? toUser(row) : null;
-}
 
 interface Target {
   self: boolean;
@@ -376,6 +391,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   todo: handleTodo,
   report: handleReport,
   notify: handleNotify,
+  yue: (input, ctx) => handleYue(input, { ...ctx, offsetHours: ctx.offsetHours ?? 8 }),
 };
 
 /**
