@@ -74,12 +74,13 @@ export async function assertRateLimits(
   }
 }
 
-export async function assertWeeklyBonusCap(
+/** True when `delta` more bonus points still fit under this week's cap. */
+export async function fitsWeeklyBonusCap(
   db: D1Database,
   subjectId: string,
   delta: number,
   offsetHours: number,
-): Promise<void> {
+): Promise<boolean> {
   const since = weekStartUtcSql(offsetHours);
   const agg = await db
     .prepare(
@@ -88,7 +89,16 @@ export async function assertWeeklyBonusCap(
     )
     .bind(subjectId, since)
     .first<{ total: number }>();
-  if ((agg?.total ?? 0) + delta > WEEKLY_BONUS_CAP) {
+  return (agg?.total ?? 0) + delta <= WEEKLY_BONUS_CAP;
+}
+
+export async function assertWeeklyBonusCap(
+  db: D1Database,
+  subjectId: string,
+  delta: number,
+  offsetHours: number,
+): Promise<void> {
+  if (!(await fitsWeeklyBonusCap(db, subjectId, delta, offsetHours))) {
     throw new ApiError(400, `本周奖励分已达上限 (${WEEKLY_BONUS_CAP})`);
   }
 }
