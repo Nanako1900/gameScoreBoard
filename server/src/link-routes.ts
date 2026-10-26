@@ -228,15 +228,26 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     return c.html(htmlPage(heading, body), status as ContentfulStatusCode);
   }
 
-  const restart = `<div class="actions"><a href="${START_PATH}">重新开始绑定</a><a href="${esc(homeHref)}">回到信誉分</a></div>`;
-  const home = `<div class="actions"><a href="${esc(homeHref)}">回到信誉分</a></div>`;
+  // A first login on its way here (?onboarding=1) keeps that flag through
+  // every link off these pages, failures included: the SPA shows its first-run
+  // dialog only when the flag arrives, and a first login happens only once.
+  function homeLink(onboarding: boolean): string {
+    return onboarding ? `${frontend}/?onboarding=1` : homeHref;
+  }
+  function restart(onboarding: boolean): string {
+    const start = onboarding ? `${START_PATH}?onboarding=1` : START_PATH;
+    return `<div class="actions"><a href="${esc(start)}">重新开始绑定</a><a href="${esc(homeLink(onboarding))}">回到信誉分</a></div>`;
+  }
+  function home(onboarding: boolean): string {
+    return `<div class="actions"><a href="${esc(homeLink(onboarding))}">回到信誉分</a></div>`;
+  }
 
-  function takenPage(c: Context, discordUsername: string): Response {
+  function takenPage(c: Context, discordUsername: string, onboarding: boolean): Response {
     return page(
       c,
       409,
       '这个 Discord 已经绑定了别的账号',
-      `<p>Discord <strong>@${esc(discordUsername)}</strong> 已经绑定在另一个信誉分账号上。请先用那个账号在网页设置里解绑（或在 Discord 里用 /unlink），再回来绑定。</p>${home}`,
+      `<p>Discord <strong>@${esc(discordUsername)}</strong> 已经绑定在另一个信誉分账号上。请先用那个账号在网页设置里解绑（或在 Discord 里用 /unlink），再回来绑定。</p>${home(onboarding)}`,
     );
   }
 
@@ -296,26 +307,28 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     // One attempt per state: whatever happens below, the browser forgets it.
     const cookie = stateCookie();
     c.header('Set-Cookie', `${cookie.name}=; ${cookie.attrs}; Max-Age=0`, { append: true });
+    // Read first: even a cancelled attempt must keep the onboarding flag.
+    const state = await readState(c.req.raw);
+    const onboarding = state?.onboarding ?? false;
 
     if (c.req.query('error') !== undefined) {
-      return page(c, 400, '已取消绑定', `<p>你在 Discord 的授权页取消了授权，什么都没有改变。</p>${restart}`);
+      return page(c, 400, '已取消绑定', `<p>你在 Discord 的授权页取消了授权，什么都没有改变。</p>${restart(onboarding)}`);
     }
     const session = await readSession(c.req.raw);
     if (!session) {
-      return page(c, 401, '登录已失效', `<p>请重新开始绑定，会先带你登录信誉分。</p>${restart}`);
+      return page(c, 401, '登录已失效', `<p>请重新开始绑定，会先带你登录信誉分。</p>${restart(onboarding)}`);
     }
-    const state = await readState(c.req.raw);
     const code = c.req.query('code');
     if (!state || !code || state.nonce !== c.req.query('state')) {
       return page(
         c,
         400,
         '绑定请求已失效',
-        `<p>可能已经超过 10 分钟，或者不是在发起绑定的那个浏览器里打开的。请重新开始。</p>${restart}`,
+        `<p>可能已经超过 10 分钟，或者不是在发起绑定的那个浏览器里打开的。请重新开始。</p>${restart(onboarding)}`,
       );
     }
     if (state.userId !== session.user.id) {
-      return page(c, 403, '账号不一致', `<p>这次绑定是用另一个信誉分账号发起的。请用现在登录的账号重新开始。</p>${restart}`);
+      return page(c, 403, '账号不一致', `<p>这次绑定是用另一个信誉分账号发起的。请用现在登录的账号重新开始。</p>${restart(onboarding)}`);
     }
 
     let identity: DiscordIdentity;
@@ -324,11 +337,11 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
       identity = await fetchMe(token, deps.fetch);
     } catch (error) {
       onError('Discord binding: OAuth with Discord failed', error instanceof Error ? error.message : String(error));
-      return page(c, 502, '连接 Discord 失败', `<p>暂时没能从 Discord 确认你的账号，请稍后再试。</p>${restart}`);
+      return page(c, 502, '连接 Discord 失败', `<p>暂时没能从 Discord 确认你的账号，请稍后再试。</p>${restart(onboarding)}`);
     }
 
     const [byDiscord, mine] = await Promise.all([linkByDiscordId(db, identity.id), linkByUserId(db, session.user.id)]);
-    if (byDiscord && byDiscord.user_id !== session.user.id) return takenPage(c, identity.username);
+    if (byDiscord && byDiscord.user_id !== session.user.id) return takenPage(c, identity.username, onboarding);
 
     const pending = await seal(
       CONFIRM_PREFIX,
@@ -362,23 +375,24 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
       `把 Discord <strong>@${esc(identity.username)}</strong> 绑定到 <strong>${esc(session.user.username)}</strong>？`,
       `${lines.join('')}<form method="post" action="/link/discord/confirm">` +
         `<input type="hidden" name="payload" value="${esc(pending)}">${replace}` +
-        `<div class="actions"><button type="submit">确认绑定</button><a href="${esc(homeHref)}">取消</a></div></form>`,
+        `<div class="actions"><button type="submit">确认绑定</button><a href="${esc(homeLink(onboarding))}">取消</a></div></form>`,
     );
   });
 
   app.post('/link/discord/confirm', async (c) => {
     if (isReadOnly(env)) throw new ApiError(503, READ_ONLY_MESSAGE);
-    const session = await readSession(c.req.raw);
-    if (!session) {
-      return page(c, 401, '登录已失效', `<p>请重新开始绑定，会先带你登录信誉分。</p>${restart}`);
-    }
     const form = await c.req.parseBody();
     const pending = await readPending(typeof form.payload === 'string' ? form.payload : '');
+    const onboarding = pending?.onboarding ?? false;
+    const session = await readSession(c.req.raw);
+    if (!session) {
+      return page(c, 401, '登录已失效', `<p>请重新开始绑定，会先带你登录信誉分。</p>${restart(onboarding)}`);
+    }
     if (!pending) {
-      return page(c, 400, '确认页已过期', `<p>确认页只在 5 分钟内有效。请重新开始绑定。</p>${restart}`);
+      return page(c, 400, '确认页已过期', `<p>确认页只在 5 分钟内有效。请重新开始绑定。</p>${restart(false)}`);
     }
     if (pending.userId !== session.user.id) {
-      return page(c, 403, '账号不一致', `<p>这个确认页属于另一个信誉分账号。请用现在登录的账号重新开始。</p>${restart}`);
+      return page(c, 403, '账号不一致', `<p>这个确认页属于另一个信誉分账号。请用现在登录的账号重新开始。</p>${restart(onboarding)}`);
     }
     const outcome = await linkAccounts(db, {
       userId: session.user.id,
@@ -392,22 +406,22 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
       case 'relinked':
       case 'unchanged':
         c.header('Cache-Control', 'no-store');
-        return c.redirect(pending.onboarding ? `${successUrl}&onboarding=1` : successUrl, 302);
+        return c.redirect(onboarding ? `${successUrl}&onboarding=1` : successUrl, 302);
       case 'taken':
-        return takenPage(c, pending.discordUsername);
+        return takenPage(c, pending.discordUsername, onboarding);
       case 'needs_replace':
         return page(
           c,
           409,
           '需要确认换绑',
-          `<p>你的账号已经绑定了 Discord <strong>@${esc(outcome.current.discord_username)}</strong>。要换成新的账号，请重新开始，并在确认页勾选「换绑」。</p>${restart}`,
+          `<p>你的账号已经绑定了 Discord <strong>@${esc(outcome.current.discord_username)}</strong>。要换成新的账号，请重新开始，并在确认页勾选「换绑」。</p>${restart(onboarding)}`,
         );
     }
   });
 
   app.notFound((c) => {
     if (c.req.path.startsWith('/api/')) return c.json({ error: 'Not found' }, 404);
-    return page(c, 404, '页面不存在', home);
+    return page(c, 404, '页面不存在', home(false));
   });
 
   // Same `{ error }` shape for the SPA as the Worker app; a page for browsers.
@@ -425,7 +439,7 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
       onError('Discord binding route failed', err);
     }
     if (c.req.path.startsWith('/api/')) return c.json({ error: message }, status as ContentfulStatusCode);
-    return page(c, status, esc(message), home);
+    return page(c, status, esc(message), home(false));
   });
 
   return app;

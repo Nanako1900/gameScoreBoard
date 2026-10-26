@@ -137,6 +137,8 @@ services:
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
       APP_URL: ${APP_URL:-https://api.nanako.org}
       FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
+      # Same switch as the app's: /unlink refuses while it is on.
+      READ_ONLY: ${READ_ONLY:-}
     depends_on:
       postgres:
         condition: service_healthy

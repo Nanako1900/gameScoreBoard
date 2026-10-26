@@ -13,6 +13,12 @@ function under(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);
 }
 
+/** Is this one of the binding routes' paths (/link/*, /api/me/discord*)? */
+export function isBindingPath(url: string): boolean {
+  const path = routedPath(url);
+  return under(path, '/link') || under(path, '/api/me/discord');
+}
+
 /**
  * The path as Hono's router will see it — percent-decoded — so `/%6Cink/...`
  * cannot reach one app's routes while being sent to the other.
@@ -30,8 +36,7 @@ export function createApiHost(parts: ApiHostParts): (req: Request) => Promise<Re
   return async (request) => {
     // First, so both apps see the public https origin (CSRF allowlists, own-host checks).
     const req = withForwardedProto(request);
-    const path = routedPath(req.url);
-    if (under(path, '/link') || under(path, '/api/me/discord')) return parts.linkRoutes.fetch(req);
+    if (isBindingPath(req.url)) return parts.linkRoutes.fetch(req);
     return parts.workerFetch(req);
   };
 }

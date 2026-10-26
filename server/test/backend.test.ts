@@ -100,11 +100,17 @@ describe('createBackend', () => {
     expect(res.headers.get('Location')).toBe('/auth/login?next=/link/discord');
   });
 
-  it('leaves the binding paths to the Worker (404) without it', async () => {
+  it('answers 404 on the binding paths without it — not the Worker’s redirect to the SPA', async () => {
     const log = quietLog();
     const { createPool } = fakePool();
-    const backend = createBackend({ ...API_ENV, DISCORD_CLIENT_SECRET: '' }, { createPool, log });
-    expect((await backend!.part.fetch(new Request('https://api.example.com/link/discord'))).status).toBe(404);
+    // FRONTEND_URL makes the Worker 302 unknown paths to the SPA, as in production.
+    const backend = createBackend(
+      { ...API_ENV, FRONTEND_URL: 'https://score.example.com', DISCORD_CLIENT_SECRET: '' },
+      { createPool, log },
+    );
+    for (const path of ['/link/discord', '/link/discord/callback?code=x', '/api/me/discord']) {
+      expect((await backend!.part.fetch(new Request(`https://api.example.com${path}`))).status, path).toBe(404);
+    }
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('Discord binding disabled'));
   });
 

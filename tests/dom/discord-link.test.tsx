@@ -245,4 +245,38 @@ describe('App — ?linked=discord', () => {
     await screen.findByRole('heading', { name: /约局/ });
     expect(screen.queryByText('Discord 绑定成功')).not.toBeInTheDocument();
   });
+
+  const signedIn = (roles: { is_participant: boolean; is_judge: boolean }): Routes => ({
+    ...appRoutes,
+    'GET /api/me': () =>
+      json(200, {
+        user: {
+          id: 'u1',
+          username: 'nanako',
+          oauth_username: 'nanako',
+          avatar_url: null,
+          score: 100,
+          is_admin: false,
+          ...roles,
+        },
+        pending: { statements: 0, appeals: 0 },
+      }),
+    'GET /api/me/discord': () => json(200, BOUND),
+  });
+
+  it('asks the first-run question again when someone without a role comes back from binding', async () => {
+    mockFetch(signedIn({ is_participant: false, is_judge: false }));
+    window.history.replaceState(null, '', '/?linked=discord');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '设置你的显示名字与身份' })).toBeInTheDocument();
+  });
+
+  it('does not bother someone who already chose a role', async () => {
+    mockFetch(signedIn({ is_participant: true, is_judge: false }));
+    window.history.replaceState(null, '', '/?linked=discord');
+    render(<App />);
+    expect(await screen.findByText('Discord 绑定成功')).toBeInTheDocument();
+    await settle();
+    expect(screen.queryByRole('heading', { name: '设置你的显示名字与身份' })).not.toBeInTheDocument();
+  });
 });

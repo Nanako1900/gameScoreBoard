@@ -167,7 +167,10 @@ async function handleLink(input: CommandInput, ctx: BotContext): Promise<BotRepl
   return ephemeralReply(content, { buttons: [button] });
 }
 
+const READ_ONLY_TEXT = '系统维护中（只读），请稍后再试。';
+
 async function handleUnlink(input: CommandInput, ctx: BotContext): Promise<BotReply> {
+  if (ctx.readOnly) return ephemeralReply(READ_ONLY_TEXT);
   const removed = await unlinkAccounts(ctx.db, { discordUserId: input.caller.id }, 'discord');
   return ephemeralReply(removed ? '已解绑。想重新绑定随时用 /link。' : '你还没有绑定 Nanako 账号。');
 }

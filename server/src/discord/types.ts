@@ -25,6 +25,8 @@ export interface BotContext {
   appUrl: string;
   /** Public SPA origin, e.g. https://score.nanako.org (links into the web app). */
   frontendUrl: string;
+  /** READ_ONLY maintenance: commands that write answer with a notice instead. */
+  readOnly?: boolean;
 }
 
 export interface BotEmbedField {

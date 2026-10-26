@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { affectsScore } from '@shared/scoring';
 import type {
   Config,
@@ -180,6 +180,17 @@ export function App(): JSX.Element {
       );
     }
   }, [ready?.me]);
+
+  // Back from binding Discord with no role chosen yet: the bind was started
+  // from the first-run dialog (or a first login lost its flag on the way), so
+  // the first-run question is still open — ask it once more.
+  const askedAfterLink = useRef(false);
+  useEffect(() => {
+    const me = ready?.me;
+    if (!discordLinked || !me || askedAfterLink.current) return;
+    askedAfterLink.current = true;
+    if (!me.is_participant && !me.is_judge) setOnboardingOpen(true);
+  }, [discordLinked, ready?.me]);
 
   const handleLogout = useCallback(async (): Promise<void> => {
     try {

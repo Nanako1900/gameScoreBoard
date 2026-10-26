@@ -148,6 +148,13 @@ describe('/link', () => {
 });
 
 describe('/unlink', () => {
+  it('refuses during READ_ONLY maintenance, like the web unlink', async () => {
+    await seedPeople();
+    const reply = await handleCommand({ commandName: 'unlink', caller: ALICE_DC, targetUser: null }, { ...ctx, readOnly: true });
+    expect(reply).toMatchObject({ ephemeral: true, content: expect.stringContaining('只读') });
+    expect(await linkByDiscordId(env.DB, ALICE_DC.id)).not.toBeNull();
+  });
+
   it('removes the binding and audits it as done from Discord', async () => {
     await seedPeople();
     const reply = await run('unlink', ALICE_DC);

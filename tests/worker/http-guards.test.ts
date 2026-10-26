@@ -169,6 +169,14 @@ describe('login ?next= (back to a binding page after login)', () => {
     expect(res.headers.get('Location')).toBe('/link/discord?onboarding=1');
   });
 
+  it('a plain login clears a next cookie left by an abandoned binding login', async () => {
+    const plain = await call('/auth/login', { headers: { Cookie: 'edg_login_next=%2Flink%2Fdiscord' } });
+    expect(plain.headers.get('Set-Cookie') ?? '').toMatch(/edg_login_next=;[^,]*Max-Age=0/);
+    // Nothing to clear: a normal login sets exactly what it always did.
+    const clean = await call('/auth/login');
+    expect(clean.headers.get('Set-Cookie') ?? '').not.toContain('edg_login_next');
+  });
+
   it('shrugs off a malformed cookie instead of failing the login', async () => {
     const res = await callbackWith('%E0%A4%A');
     expect(res.status).toBe(302);

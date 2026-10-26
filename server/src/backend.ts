@@ -12,7 +12,7 @@
 import pg from 'pg';
 import type { Env } from '../../worker/types';
 import { buildEnv, ConfigError, createApi } from './api';
-import { createApiHost } from './api-host';
+import { createApiHost, isBindingPath } from './api-host';
 import type { HostedApp } from './app';
 import { asD1, installTypeParsers, PgD1Database } from './db/d1';
 import { envFlag, envInt, MAX_TIMER_MS } from './env';
@@ -130,7 +130,10 @@ function withDiscordBinding(
   const clientSecret = (processEnv.DISCORD_CLIENT_SECRET ?? '').trim();
   if (!clientId || !clientSecret) {
     log.warn('Discord binding disabled: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET not set');
-    return workerFetch;
+    // A plain 404 — the Worker would send /link/* on to the SPA's front page,
+    // so the bot's /link button would quietly land on the scoreboard instead.
+    return async (request) =>
+      isBindingPath(request.url) ? Response.json({ error: 'Not found' }, { status: 404 }) : workerFetch(request);
   }
   const linkRoutes = createLinkRoutes({ env, db: env.DB, discord: { clientId, clientSecret } });
   return createApiHost({ linkRoutes, workerFetch });

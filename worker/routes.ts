@@ -561,7 +561,12 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     // ?next=/link/... — come back to a binding page (the Discord bot's link)
     // instead of the SPA. Only this host's /link/ paths are accepted.
     const next = safeNextPath(c.req.query('next'));
-    if (next) c.header('Set-Cookie', buildNextCookie(next, cookieConfig(env)), { append: true });
+    if (next) {
+      c.header('Set-Cookie', buildNextCookie(next, cookieConfig(env)), { append: true });
+    } else if (getCookie(c.req.raw, cookieNames(cookieConfig(env)).next)) {
+      // Left over from an abandoned binding login: this login is going home.
+      c.header('Set-Cookie', buildClearNextCookie(cookieConfig(env)), { append: true });
+    }
     return c.redirect(buildAuthorizeUrl(env, redirectUri, state), 302);
   });
 

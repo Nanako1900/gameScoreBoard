@@ -458,6 +458,19 @@ describe('the callback refuses a state it cannot trust', () => {
     expect(await res.text()).toContain('已取消绑定');
     expect(calls).toHaveLength(0);
   });
+
+  it('a first login that gives up keeps its onboarding flag on every way out', async () => {
+    await seedUser({ id: 'a' });
+    const { host } = makeHost();
+    const sess = await session('a');
+    const res = await host(new Request(`${API}/link/discord?onboarding=1`, { headers: { Cookie: sess } }));
+    const state = new URL(res.headers.get('Location') ?? '').searchParams.get('state') ?? '';
+    const linkCookie = `edg_link=${cookieValue(res, 'edg_link')}`;
+    const page = await callback(host, { session: sess, linkCookie, state, extra: '&error=access_denied' });
+    const html = await page.text();
+    expect(html).toContain('href="/link/discord?onboarding=1"');
+    expect(html).toContain(`href="${SPA}/?onboarding=1"`);
+  });
 });
 
 describe('Discord itself failing', () => {

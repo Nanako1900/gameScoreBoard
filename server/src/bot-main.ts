@@ -18,7 +18,7 @@ import {
 } from './discord/client';
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
-import { envInt } from './env';
+import { envFlag, envInt } from './env';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -130,6 +130,7 @@ function main(): void {
     db: asD1(new PgD1Database(pool)),
     appUrl: config.appUrl,
     frontendUrl: config.frontendUrl,
+    readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
   };
 
   let gateway: GatewayState = 'connecting';
