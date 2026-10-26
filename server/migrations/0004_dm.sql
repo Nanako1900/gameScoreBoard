@@ -42,13 +42,19 @@ $$;
  * up), or being delivered right now, is left alone under a retired key and the
  * new schedule is a new row: a send already made keeps counting toward the
  * daily DM budgets, and a delivery in flight is not pulled from under its
- * dispatcher. Moved in place, a row keeps its created_at (a retry of a send
- * whose answer was lost keeps its nonce) and a refusal keeps its refused_since
- * — so it still waits behind fresh events and is not counted as a new refusal
- * — and its later retry time.
+ * dispatcher. (A claim older than the dispatcher's 2-minute claim timeout is a
+ * dispatcher that died: that row is simply waiting again.) The row is locked
+ * first, so a dispatcher cannot claim it between the look and the move.
  *
- * `p_coalesce`: a burst — keep the earliest time rather than pushing it back,
- * so a steady stream of changes cannot hold the delivery off for good.
+ * Moved in place, a reminder is a new delivery at a new time: its attempts and
+ * any refusal start over. Its created_at stays (a retry of a send whose answer
+ * was lost keeps its nonce).
+ *
+ * `p_coalesce`: a refresh — keep the earliest time rather than pushing it back,
+ * so a steady stream of changes cannot hold the delivery off; a refresh already
+ * failing (backing off, or refused) keeps its retry as it is — delivery renders
+ * the current state anyway — so changes neither hurry it into more failures
+ * nor make a refusal look new.
  */
 CREATE OR REPLACE FUNCTION outbox_schedule(
   p_kind text, p_entity text, p_entity_id text, p_dedupe text, p_payload jsonb, p_at timestamptz,
@@ -56,16 +62,22 @@ CREATE OR REPLACE FUNCTION outbox_schedule(
 ) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
+  PERFORM 1 FROM outbox WHERE dedupe_key = p_dedupe FOR UPDATE;
   UPDATE outbox SET dedupe_key = dedupe_key || ':was:' || id
-   WHERE dedupe_key = p_dedupe AND (processed_at IS NOT NULL OR claim_token IS NOT NULL);
+   WHERE dedupe_key = p_dedupe
+     AND (processed_at IS NOT NULL OR (claim_token IS NOT NULL AND claimed_at > now() - interval '2 minutes'));
   INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload, available_at)
   VALUES (p_kind, p_entity, p_entity_id, p_dedupe, p_payload, p_at)
   ON CONFLICT (dedupe_key) DO UPDATE
     SET available_at = CASE
-          WHEN outbox.refused_since IS NOT NULL THEN GREATEST(outbox.available_at, excluded.available_at)
-          WHEN p_coalesce THEN LEAST(outbox.available_at, excluded.available_at)
-          ELSE excluded.available_at
-        END;
+          WHEN NOT p_coalesce THEN excluded.available_at
+          WHEN outbox.attempts > 0 OR outbox.refused_since IS NOT NULL THEN outbox.available_at
+          ELSE LEAST(outbox.available_at, excluded.available_at)
+        END,
+        attempts = CASE WHEN p_coalesce THEN outbox.attempts ELSE 0 END,
+        refused_since = CASE WHEN p_coalesce THEN outbox.refused_since ELSE NULL END,
+        last_error = CASE WHEN p_coalesce THEN outbox.last_error ELSE NULL END,
+        claim_token = NULL, claimed_at = NULL;
 END;
 $$;
 
