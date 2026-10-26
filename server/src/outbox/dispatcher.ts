@@ -600,7 +600,20 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return { result: 'skipped', note: 'enough invitations from this organizer today' };
     }
     const sent = await sendDm(row, to, renderSessionDm(kind, session, config.frontendUrl));
-    return isOutcome(sent) ? sent : { result: 'sent', note: null };
+    if (isOutcome(sent)) return sent;
+    if (kind === 'dm.session.invited' || kind === 'dm.session.changed') {
+      // They know about it now: a cancel is news to them. (Cancelled while
+      // this was on its way: the cancel went past them — tell them now.)
+      await pool.query('UPDATE session_players SET knows = true WHERE session_id = $1 AND user_id = $2', [sessionId, row.entity_id]);
+      await pool.query(
+        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+         SELECT 'dm.session.cancelled', 'user', $2, 'dm:session:' || $1 || ':cancelled:' || $2, jsonb_build_object('session_id', $1::bigint)
+          WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = $1::bigint AND status = 'cancelled')
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+        [sessionId, row.entity_id],
+      );
+    }
+    return { result: 'sent', note: null };
   }
 
   /** Card events, the start-of-session fan-out, a deleted session's card. */
@@ -651,8 +664,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         await api.remove(posted.channel_id, posted.message_id);
       } catch (error) {
         const code = errorCode(error);
-        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) {
-          log.warn(`outbox ${row.id}: could not take down the old card in ${posted.channel_id}: ${describe(error)}`);
+        if (code === UNKNOWN_MESSAGE || code === UNKNOWN_CHANNEL) {
+          // Gone already.
+        } else if (errorStatus(error) === 403) {
+          log.warn(`outbox ${row.id}: may not take down the old card in ${posted.channel_id} any more: ${describe(error)}`);
+        } else {
+          throw error; // a passing failure: try again
         }
       }
       await pool.query("DELETE FROM discord_messages WHERE entity = 'session' AND entity_id = $1 AND purpose = 'card'", [

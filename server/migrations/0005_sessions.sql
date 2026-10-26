@@ -20,6 +20,27 @@
 -- change; when an admin cancels or moves someone else's session, the organizer
 -- sees it on the card and the web instead.
 
+-- Whether a player knows about the session: they answered at some point, or
+-- the bot sent them its invitation or a "time changed" DM (the dispatcher
+-- marks that). A cancel is news only to those who know — and a move puts
+-- everyone back to 'invited', so the answer alone would forget them.
+ALTER TABLE session_players ADD COLUMN IF NOT EXISTS knows boolean NOT NULL DEFAULT false;
+
+CREATE OR REPLACE FUNCTION session_players_knows() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.rsvp <> 'invited' THEN
+    NEW.knows := true;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS session_players_knows ON session_players;
+CREATE TRIGGER session_players_knows
+  BEFORE INSERT OR UPDATE ON session_players
+  FOR EACH ROW EXECUTE FUNCTION session_players_knows();
+
 /** A stored ISO 8601 instant (starts_at) as timestamptz; NULL if it is not one. */
 CREATE OR REPLACE FUNCTION outbox_iso(value text) RETURNS timestamptz
 LANGUAGE plpgsql STABLE AS $$
@@ -107,20 +128,15 @@ BEGIN
     PERFORM outbox_session_card(NEW.id);
 
     IF NEW.status = 'cancelled' AND OLD.status = 'open' AND outbox_iso(NEW.starts_at) > now() THEN
-      -- Tell everyone still in it — a yes, a maybe, or an invitation not yet
-      -- answered (a move puts the yeses back there), if the bot ever told them
-      -- about it — while it is still ahead: cancelling one that already
-      -- happened is bookkeeping, not news.
+      -- Tell everyone still in it who knows about it — a yes, a maybe, or an
+      -- invitation the bot sent or they once answered (a move puts the yeses
+      -- back to 'invited') — while it is still ahead: cancelling one that
+      -- already happened is bookkeeping, not news.
       INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
       SELECT 'dm.session.cancelled', 'user', sp.user_id, 'dm:session:' || sid || ':cancelled:' || sp.user_id, ref
         FROM session_players sp
        WHERE sp.session_id = NEW.id AND sp.user_id <> NEW.organizer_id
-         AND (sp.rsvp IN ('going', 'maybe')
-              OR (sp.rsvp = 'invited' AND EXISTS (
-                    SELECT 1 FROM outbox o
-                     WHERE o.entity = 'user' AND o.entity_id = sp.user_id AND o.result = 'sent'
-                       AND o.kind IN ('dm.session.invited', 'dm.session.changed')
-                       AND o.payload->>'session_id' = sid)))
+         AND (sp.rsvp IN ('going', 'maybe') OR (sp.rsvp = 'invited' AND sp.knows))
       ON CONFLICT (dedupe_key) DO NOTHING;
     ELSIF NEW.status = 'open' AND NEW.starts_at IS DISTINCT FROM OLD.starts_at THEN
       -- One "the time changed" DM per person, however often it moves — to

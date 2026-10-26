@@ -800,6 +800,94 @@ describe('coalescing that cannot be gamed', () => {
     expect((await events()).filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id)).toEqual(['a']);
   });
 
+  it('cancelled right after a move: those who had said yes or maybe still hear about it', async () => {
+    const { org, a, b } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    // Before their "the time changed" DMs went out.
+    await cancelSession(env.DB, org, session.id);
+    expect((await events()).filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('knowing about another session does not count', async () => {
+    const { org } = await cast();
+    const told = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    const d = dispatcher(fakeDiscord().api, null);
+    await d.runOnce();
+    await pool.query("UPDATE discord_links SET notify_dm = 0 WHERE user_id = 'a'");
+    const untold = await createSession(env.DB, org, { starts_at: IN_3H(), invite: ['a'] }, OFFSET_HOURS);
+    await d.runOnce();
+    await cancelSession(env.DB, org, untold.id);
+    await cancelSession(env.DB, org, told.id);
+    const cancels = (await pool.query("SELECT payload->>'session_id' AS sid FROM outbox WHERE kind = 'dm.session.cancelled'")).rows;
+    expect(cancels).toEqual([{ sid: String(told.id) }]);
+  });
+
+  it('an invitation from long ago still counts, after the outbox has been cleaned', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    await dispatcher(fakeDiscord().api, null).runOnce();
+    await pool.query('DELETE FROM outbox WHERE processed_at IS NOT NULL'); // what the 30-day cleanup does
+    await cancelSession(env.DB, org, session.id);
+    expect((await events()).filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id)).toEqual(['a']);
+  });
+
+  it('cancelled while its invitation was on the way: the cancel follows it', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const send = discord.api.send.bind(discord.api);
+    let cancelled = false;
+    discord.api.send = async (channelId, message) => {
+      const out = await send(channelId, message);
+      if (!cancelled && text(message).includes('约你')) {
+        cancelled = true;
+        await cancelSession(env.DB, org, session.id);
+      }
+      return out;
+    };
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    await d.runOnce();
+    expect(discord.sent.filter((m) => text(m.message).includes('约局取消了')).map((m) => m.channelId)).toEqual([`dm-${dc(2).id}`]);
+  });
+
+  it('a passing failure taking the old card down is retried, not forgotten', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    let fail = true;
+    const discord = fakeDiscord({
+      remove: () => {
+        if (fail) {
+          fail = false;
+          throw httpError(500);
+        }
+      },
+    });
+    await dispatcher(discord.api).runOnce();
+    await setRsvp(env.DB, a, session.id, 'going');
+    const moved = dispatcher(discord.api, OTHER_CARDS);
+    await moved.runOnce(); // the removal fails: nothing forgotten
+    expect(discord.sent.filter((s) => s.channelId === OTHER_CARDS)).toEqual([]);
+    await pool.query("UPDATE outbox SET available_at = now() WHERE processed_at IS NULL AND kind = 'session.card' AND attempts > 0");
+    await moved.runOnce();
+    expect(discord.removed).toEqual(['910000000000000001']);
+    expect(discord.sent.filter((s) => s.channelId === OTHER_CARDS)).toHaveLength(1);
+  });
+
+  it('"the time changed" keeps the time of the first move of a burst', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    const due = async () => (await pool.query("SELECT available_at FROM outbox WHERE kind = 'dm.session.changed'")).rows[0].available_at as Date;
+    await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    const first = await due();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await updateSession(env.DB, org, session.id, { starts_at: new Date(Date.now() + 4 * 3_600_000).toISOString() });
+    expect((await due()).getTime()).toBe(first.getTime());
+  });
+
   it('a session moved to start in a couple of minutes says so before it starts', async () => {
     const { org } = await cast();
     const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
