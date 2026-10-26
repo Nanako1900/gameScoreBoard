@@ -5,7 +5,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index';
-import { STATE_COOKIE, makeSignedState } from '../../worker/session';
+import { SESSION_COOKIE, STATE_COOKIE, makeSignedState, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
 import { expireDeadline, noAiEnv, seedUser, statusOf } from './helpers';
 
@@ -324,5 +324,64 @@ describe('READ_ONLY maintenance mode', () => {
     // Off: the lazy heal runs as usual — the baseline the switch is measured against.
     await call('/api/config', {}, { READ_ONLY: 'false' });
     expect(await healedWeeks()).toBe(1);
+  });
+});
+
+describe('U+0000 and out-of-range ids are refused at the edge', () => {
+  const SECRET = 'test-session-secret-0123456789abcdef';
+
+  async function postAs(sub: string, path: string, body: string): Promise<Response> {
+    const token = await signSession({ sub }, SECRET);
+    return call(path, {
+      method: 'POST',
+      headers: { Cookie: `${SESSION_COOKIE}=${token}`, Origin: BASE, 'Content-Type': 'application/json' },
+      body,
+    });
+  }
+
+  it('refuses a JSON body with NUL — "mallory\\u0000" must not resolve to mallory', async () => {
+    // PostgreSQL strips NUL on the way in, so this once filed a bonus for oneself.
+    await seedUser({ id: 'mallory', judge: true, score: 50 });
+    const res = await postAs('mallory', '/api/records', JSON.stringify({ subject_id: 'mallory\u0000', type: 'on_time_bonus' }));
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('请求包含非法字符');
+    const row = await env.DB.prepare("SELECT score FROM users WHERE id = 'mallory'").first<{ score: number }>();
+    expect(row?.score).toBe(50);
+  });
+
+  it('refuses NUL nested anywhere in the body, keys included', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    await seedUser({ id: 'p', score: 50 });
+    // Otherwise valid filings: only the NUL can make them fail.
+    const valid = { subject_id: 'p', type: 'on_time_bonus' };
+    for (const extra of [{ tags: ['ok', { deep: 'a\u0000' }] }, { 'k\u0000': 1 }]) {
+      const res = await postAs('judge', '/api/records', JSON.stringify({ ...valid, ...extra }));
+      expect(res.status).toBe(400);
+      expect(await errorOf(res)).toBe('请求包含非法字符');
+    }
+    const ok = await postAs('judge', '/api/records', JSON.stringify(valid));
+    expect(ok.status).toBe(200);
+  });
+
+  it('survives a body nested far deeper than any real one', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    const deep = `${'['.repeat(20_000)}${']'.repeat(20_000)}`;
+    const res = await postAs('judge', '/api/records', deep);
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a percent-encoded NUL in the path or the query', async () => {
+    await seedUser({ id: 'alice' });
+    expect((await call('/api/users/alice%00')).status).toBe(400);
+    expect((await call('/api/records?subject=alice%00')).status).toBe(400);
+    expect((await call('/api/users/alice')).status).toBe(200);
+  });
+
+  it('answers 400 for an id beyond 2^53 instead of failing the query', async () => {
+    for (const path of ['/api/records/100000000000000000000', '/api/sessions/1e21', '/api/records?session=9007199254740993']) {
+      const res = await call(path);
+      expect(res.status, path).toBe(400);
+    }
+    expect((await call('/api/records/9007199254740991')).status).toBe(404);
   });
 });

@@ -47,6 +47,17 @@ function hostOf(baseUrl: string): string {
   }
 }
 
+/**
+ * What the model asked for, for the audit row only. A wild value (say -1e20
+ * after a prompt injection) is recorded as null: the clamp already decided the
+ * sentence, and PostgreSQL's bigint column would reject it — failing the
+ * whole verdict batch and leaving the case stuck in 'judging'.
+ */
+function auditDelta(raw: number): number | null {
+  const rounded = Math.round(raw);
+  return Number.isSafeInteger(rounded) ? rounded : null;
+}
+
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return `${err.name}: ${err.message}`;
   return String(err);
@@ -219,7 +230,7 @@ export async function judgeCase(cfg: AiConfig, req: JudgeRequest): Promise<Judge
       model: cfg.model,
       promptVersion: cfg.promptVersion,
       rawResponse: result.text.slice(0, RAW_RESPONSE_MAX),
-      parsedDelta: Math.round(parsed.delta),
+      parsedDelta: auditDelta(parsed.delta),
       appliedDelta: applied,
       clamped,
       confidence: parsed.confidence,

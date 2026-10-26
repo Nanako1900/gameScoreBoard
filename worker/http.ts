@@ -15,13 +15,53 @@ export function isRecordObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+/**
+ * True if any string (or key) anywhere in a parsed JSON value contains U+0000.
+ * Walks with its own stack: `[[[[…]]]]` 20 000 deep parses fine but would
+ * overflow a recursive walk.
+ */
+function containsNul(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      if (v.includes('\u0000')) return true;
+    } else if (Array.isArray(v)) {
+      stack.push(...v);
+    } else if (isRecordObject(v)) {
+      for (const [k, x] of Object.entries(v)) {
+        if (k.includes('\u0000')) return true;
+        stack.push(x);
+      }
+    }
+  }
+  return false;
+}
+
+/** The message for a request carrying U+0000 (see hasNulInUrl). */
+export const NUL_MESSAGE = '请求包含非法字符';
+
+/**
+ * U+0000 is refused at the edge, in the URL (hasNulInUrl) and in JSON bodies
+ * here. PostgreSQL text cannot hold it and the database adapter strips it, so
+ * 'alice\u0000' would look up alice while every JS comparison saw a different
+ * id — enough to slip past a "not yourself" check. Refusing it gives the same
+ * answer on D1 and on PostgreSQL.
+ */
 export async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
+  let parsed: unknown;
   try {
-    const parsed: unknown = await req.json();
-    return isRecordObject(parsed) ? parsed : {};
+    parsed = await req.json();
   } catch {
     return {};
   }
+  if (containsNul(parsed)) throw new ApiError(400, NUL_MESSAGE);
+  return isRecordObject(parsed) ? parsed : {};
+}
+
+/** A NUL can only reach a URL percent-encoded. */
+export function hasNulInUrl(url: string): boolean {
+  return /%00/i.test(url);
 }
 
 export function optBool(v: unknown): boolean | undefined {
@@ -151,7 +191,9 @@ export function requireAdmin(caller: User | null): User {
 
 export function parseId(raw: string, label: string): number {
   const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, `无效的${label} ID`);
+  // Safe integers only: 1e20 is an "integer" to JS, but it overflows
+  // PostgreSQL's bigint and the lookup would fail with a 500, not a 404.
+  if (!Number.isSafeInteger(id) || id <= 0) throw new ApiError(400, `无效的${label} ID`);
   return id;
 }
 

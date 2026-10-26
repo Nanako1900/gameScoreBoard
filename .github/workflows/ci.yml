@@ -18,6 +18,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: edg
+          POSTGRES_PASSWORD: edg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U edg"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,5 +45,9 @@ jobs:
       - run: npm run test:worker
       # Node backend (server/): share page, host routing.
       - run: npm run test:server
+      # The same worker suite again, on PostgreSQL through the D1 adapter.
+      - run: npm run test:pg
+        env:
+          TEST_DATABASE_URL: postgres://edg:edg@localhost:5432/postgres
       - run: npm run build
       - run: npm run build --workspace server

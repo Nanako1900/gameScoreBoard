@@ -847,17 +847,15 @@ describe('writeSetting / readSettings', () => {
     for (const value of settings.values()) expect(typeof value).toBe('string');
   });
 
-  it('round-trips a U+0000 inside a value intact', async () => {
-    // D1 keeps the full string even though sqlite's own length() stops at the NUL.
+  it('drops a U+0000 inside a value — and stores the rest intact', async () => {
     // PostgreSQL `text` rejects U+0000 outright, and the admin route does not strip
-    // it from prompts — so the port has to handle it explicitly, not by accident.
-    const value = 'before\u0000after';
-    await writeSetting(env.DB, AI_SETTING_KEYS.prompt, value, 'admin');
+    // it from prompts — so the port handles it explicitly: writeSetting drops NULs
+    // on every engine, so D1 and PostgreSQL store the same prompt.
+    await writeSetting(env.DB, AI_SETTING_KEYS.prompt, 'before\u0000after', 'admin');
 
     const got = (await readSettings(env.DB)).get('ai.prompt');
-    expect(got).toBe(value);
-    expect(got).toHaveLength(12);
-    expect((await loadAiConfig(env.DB, {})).prompt).toBe(value);
+    expect(got).toBe('beforeafter');
+    expect((await loadAiConfig(env.DB, {})).prompt).toBe('beforeafter');
   });
 
   it('lands every write when several keys are written concurrently, like the admin route does', async () => {

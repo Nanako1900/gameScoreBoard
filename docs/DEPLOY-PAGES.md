@@ -4,7 +4,6 @@
 > （现在的 Worker；P3a 起换成 Coolify 上的 Node）。两者同属 `nanako.org`，是
 > **同站（same-site）**，所以 `SameSite=Lax` 的会话 cookie 在 SPA 的
 > `fetch(…, { credentials: 'include' })` 里照常发送，不需要 `SameSite=None`。
-> 整体方案见 [DESIGN-v4-discord-coolify.md](DESIGN-v4-discord-coolify.md)。
 
 **合并本期 PR 不会改变线上行为**：所有新行为都由下面的变量开启，变量不设就和现在一样。
 切换时**所有人需要重新登录一次**（cookie 换名 + 换 `SESSION_SECRET`），整个迁移只有这一次。

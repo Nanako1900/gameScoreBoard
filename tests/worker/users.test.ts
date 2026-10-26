@@ -835,9 +835,15 @@ describe('getLeaderboard', () => {
     expect(JSON.stringify(entry)).not.toContain('nanako@example.org');
   });
 
-  it.todo(
-    'BUG: no final tie-break — two participants with the same score and same effective name come back in unspecified order, so the board can reshuffle between requests (worker/db.ts:73; add `, id ASC`)',
-  );
+  it('breaks full ties by join time, then id — a total order on every engine', async () => {
+    // Same score, same effective name. D1 happened to return insertion order;
+    // PostgreSQL promises nothing, so the board could reshuffle between requests.
+    for (const [id, at] of [['c', '2026-10-02 00:00:00'], ['a', '2026-10-03 00:00:00'], ['b', '2026-10-01 00:00:00'], ['d', '2026-10-01 00:00:00']]) {
+      await seedUser({ id, username: 'same', score: 80 });
+      await env.DB.prepare('UPDATE users SET created_at = ? WHERE id = ?').bind(at, id).run();
+    }
+    expect((await getLeaderboard(env.DB)).map((u) => u.id)).toEqual(['b', 'd', 'c', 'a']);
+  });
 });
 
 // ---------------------------------------------------------------------------

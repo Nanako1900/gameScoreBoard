@@ -7,6 +7,8 @@ on:
   pull_request:
     paths:
       - server/**
+      - worker/**
+      - shared/**
       - Dockerfile
       - .dockerignore
       - package.json
@@ -16,6 +18,8 @@ on:
     branches: [main]
     paths:
       - server/**
+      - worker/**
+      - shared/**
       - Dockerfile
       - .dockerignore
       - package.json

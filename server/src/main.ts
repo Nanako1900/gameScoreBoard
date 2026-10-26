@@ -1,11 +1,15 @@
 // Node entry point for the Coolify container. One long-lived process: an HTTP
-// server split by Host (app.ts) plus the background poller that keeps the
-// Discord share page's snapshot fresh.
+// server split by Host (app.ts) serving
+//   * the Discord share page, kept fresh by a background poller;
+//   * the scoreboard API (once API_HOST is set), with a timer for the jobs the
+//     Worker's cron used to run.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { createApp } from './app';
+import { createApp, type HostedApp } from './app';
+import { createBackend } from './backend';
+import { hostSet } from './hosts';
 import {
   createShareApp,
   createSnapshotPoller,
@@ -24,15 +28,11 @@ function main(): void {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const publicDir = process.env.SHARE_PUBLIC_DIR ?? path.resolve(here, '../share-public');
 
+  // --- Discord share page --------------------------------------------------
   const shareConfig = readShareConfig(process.env);
   // Comma-separated, e.g. "discord.nanako.org,discord-next.nanako.org" while a
   // cutover is being verified. Canonical / og URLs always come from SITE_URL.
-  const shareHosts = new Set(
-    (process.env.SHARE_HOST || new URL(shareConfig.siteUrl).hostname)
-      .split(',')
-      .map((h) => h.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  const shareHosts = hostSet(process.env.SHARE_HOST || new URL(shareConfig.siteUrl).hostname);
   // Optional: a file on a volume that keeps the last good snapshot across restarts.
   const snapshotFile = process.env.SNAPSHOT_FILE || null;
   const poller = createSnapshotPoller(shareConfig, {
@@ -48,20 +48,37 @@ function main(): void {
     },
   });
   poller.start();
+  const share: HostedApp = {
+    hosts: shareHosts,
+    fetch: createShareApp({ config: shareConfig, poller, publicDir }).fetch,
+  };
+
+  // --- Scoreboard API (PostgreSQL) -----------------------------------------
+  // Only once API_HOST names a hostname; a broken API config answers 503 on
+  // those hostnames instead of crashing the share page (backend.ts).
+  const backend = createBackend(process.env);
+  backend?.startJobs();
 
   const app = createApp({
-    shareHosts,
-    share: createShareApp({ config: shareConfig, poller, publicDir }),
+    share,
+    api: backend?.part ?? null,
+    status: async () => (backend ? { ...(await backend.status()) } : { ok: true }),
   });
+
   const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
-    console.log(`listening on :${info.port} (share hosts ${[...shareHosts].join(', ')})`);
+    const hosts = [...shareHosts, ...(backend?.part.hosts ?? [])].join(', ');
+    console.log(`listening on :${info.port} (${hosts})`);
   });
 
   const shutdown = (signal: string): void => {
     console.log(`${signal}: shutting down`);
     poller.stop();
-    server.close(() => process.exit(0));
+    backend?.stopJobs();
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
+    server.close(async () => {
+      await backend?.close(SHUTDOWN_GRACE_MS / 2);
+      process.exit(0);
+    });
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

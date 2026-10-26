@@ -86,6 +86,11 @@ export async function fileCase(
     throw new ApiError(400, '不能记录自己');
   }
   const subject = await requireParticipant(db, input.subject_id);
+  // Again on the row actually found, in case the input and the id it
+  // resolved to ever differ.
+  if (subject.id === reporter.id) {
+    throw new ApiError(400, '不能记录自己');
+  }
   const note = normalizeNote(input.note);
 
   if (!opts.skipRateLimit) {
