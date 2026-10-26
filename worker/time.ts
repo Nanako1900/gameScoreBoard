@@ -9,7 +9,8 @@ const HOUR_MS = 3_600_000;
  * as unset — Number('') is 0, which would silently mean UTC.
  */
 export function resetOffsetHours(raw: string | undefined): number {
-  const trimmed = raw?.trim() ?? '';
+  // String(): `RESET_TZ_OFFSET = 8` unquoted in TOML arrives as a number.
+  const trimmed = raw === undefined || raw === null ? '' : String(raw).trim();
   const n = trimmed.length > 0 ? Number(trimmed) : NaN;
   return Number.isFinite(n) ? n : 8;
 }

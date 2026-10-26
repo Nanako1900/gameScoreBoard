@@ -27,11 +27,15 @@ interface FakeReply {
   body?: BodyInit | null;
 }
 
-/** A fetch that answers from a script and records every URL it was asked for. */
-function fakeFetch(replies: Record<string, FakeReply>): FetchLike & { calls: string[] } {
+/** A fetch that answers from a script and records every URL and init it was given. */
+function fakeFetch(
+  replies: Record<string, FakeReply>,
+): FetchLike & { calls: string[]; inits: RequestInit[] } {
   const calls: string[] = [];
-  const impl = async (input: string): Promise<Response> => {
+  const inits: RequestInit[] = [];
+  const impl = async (input: string, init: RequestInit): Promise<Response> => {
     calls.push(input);
+    inits.push(init);
     const reply = replies[input];
     if (!reply) throw new TypeError(`unexpected fetch ${input}`);
     return new Response(reply.body === undefined ? PNG : reply.body, {
@@ -39,7 +43,7 @@ function fakeFetch(replies: Record<string, FakeReply>): FetchLike & { calls: str
       headers: reply.headers ?? { 'Content-Type': 'image/png' },
     });
   };
-  return Object.assign(impl, { calls });
+  return Object.assign(impl, { calls, inits });
 }
 
 async function rejection(promise: Promise<unknown>): Promise<ApiError> {
@@ -105,6 +109,39 @@ describe('proxyAvatar — what it will fetch', () => {
 });
 
 describe('proxyAvatar — redirects', () => {
+  it('asks the runtime NOT to follow redirects, with a timeout, on every hop', async () => {
+    // With the default redirect: 'follow' the runtime would chase the 302
+    // itself and none of the later hops would be re-checked.
+    const f = fakeFetch({
+      'https://nanako.org/a.png': { status: 302, headers: { Location: 'https://cdn.example.net/1' } },
+      'https://cdn.example.net/1': {},
+    });
+    await proxyAvatar('https://nanako.org/a.png', POLICY, f);
+    expect(f.inits).toHaveLength(2);
+    for (const init of f.inits) {
+      expect(init.redirect).toBe('manual');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('treats a trailing-dot hostname like the name itself', async () => {
+    for (const location of ['https://localhost./x.png', 'https://api.nanako.org./api/avatar']) {
+      const f = fakeFetch({
+        'https://nanako.org/a.png': { status: 302, headers: { Location: location } },
+      });
+      expect((await rejection(proxyAvatar('https://nanako.org/a.png', POLICY, f))).status).toBe(403);
+    }
+    const listed = fakeFetch({ 'https://nanako.org./a.png': {} });
+    expect((await proxyAvatar('https://nanako.org./a.png', POLICY, listed)).status).toBe(200);
+  });
+
+  it('turns an unparseable Location into 502, not a crash', async () => {
+    const f = fakeFetch({
+      'https://nanako.org/a.png': { status: 302, headers: { Location: 'https://[bad' } },
+    });
+    expect((await rejection(proxyAvatar('https://nanako.org/a.png', POLICY, f))).status).toBe(502);
+  });
+
   it(`follows up to ${AVATAR_MAX_REDIRECTS} redirects, re-checking each hop`, async () => {
     const f = fakeFetch({
       'https://nanako.org/a.png': { status: 302, headers: { Location: 'https://cdn.example.net/1' } },
@@ -166,10 +203,15 @@ describe('proxyAvatar — what it will serve', () => {
 
   it('refuses an oversized body, declared or not', async () => {
     const big = new Uint8Array(AVATAR_MAX_BYTES + 1);
+    // Declared too big: refused from the header alone — reading this body would throw.
     const declared = fakeFetch({
       'https://nanako.org/a.png': {
-        headers: { 'Content-Type': 'image/png', 'Content-Length': String(big.byteLength) },
-        body: big,
+        headers: { 'Content-Type': 'image/png', 'Content-Length': String(AVATAR_MAX_BYTES + 1) },
+        body: new ReadableStream({
+          pull() {
+            throw new Error('the body must not be read');
+          },
+        }),
       },
     });
     expect((await rejection(proxyAvatar('https://nanako.org/a.png', POLICY, declared))).status).toBe(502);
@@ -185,6 +227,15 @@ describe('proxyAvatar — what it will serve', () => {
       },
     });
     expect((await rejection(proxyAvatar('https://nanako.org/b.png', POLICY, streamed))).status).toBe(502);
+  });
+
+  it('gives up on an upstream that never answers', async () => {
+    const hang: FetchLike = (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const err = await rejection(proxyAvatar('https://nanako.org/a.png', POLICY, hang, 30));
+    expect(err.status).toBe(502);
   });
 
   it('turns an upstream error or network failure into 502', async () => {

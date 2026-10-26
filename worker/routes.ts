@@ -152,7 +152,10 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   // Logout only clears a cookie, so it stays available.
   app.use('*', async (c, next) => {
     if (!isReadOnly(c.env)) return next();
-    const path = new URL(c.req.url).pathname;
+    // c.req.path is the percent-decoded path the router matches on. The raw
+    // URL pathname would let /%61pi/... slip past this check yet still be
+    // routed to /api/....
+    const path = c.req.path;
     const scoped = path.startsWith('/api/') || path.startsWith('/auth/');
     const writes = !/^(GET|HEAD|OPTIONS)$/.test(c.req.method) || path === '/auth/callback';
     if (scoped && writes && path !== '/auth/logout') {

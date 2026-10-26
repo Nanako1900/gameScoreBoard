@@ -1270,16 +1270,22 @@ describe('POST /api/admin/users/:id', () => {
     expect(res.json).toEqual({ error: '用户不存在' });
   });
 
-  it('ignores non-boolean role flags and non-numeric scores', async () => {
+  it('never writes wrongly-typed role flags or scores', async () => {
+    // Only "nothing is written" is pinned. Answering 200 here is itself a
+    // known bug (see the BUG todo in admin-users.test.ts): fixing it to a 400
+    // must not break this test.
     await seedAdmin();
     await seedUser({ id: 'target', score: 77 });
-    const res = await call('POST', '/api/admin/users/target', {
+    await call('POST', '/api/admin/users/target', {
       as: 'admin',
       body: { is_admin: 'yes', score: '0' },
     });
-    expect(res.status).toBe(200);
     expect(await scoreOf('target')).toBe(77);
     expect(await scoreEventCount('target')).toBe(0);
+    const row = await env.DB.prepare('SELECT is_admin FROM users WHERE id = ?')
+      .bind('target')
+      .first<{ is_admin: number }>();
+    expect(row?.is_admin).toBe(0);
   });
 });
 

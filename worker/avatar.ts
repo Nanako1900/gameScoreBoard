@@ -35,10 +35,15 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 
+/** Lowercased, without the trailing dot of a fully-qualified name ('localhost.'). */
+function normalHost(url: URL): string {
+  return url.hostname.toLowerCase().replace(/\.+$/, '');
+}
+
 /** Checks every hop must pass, the first one included. */
 function assertSafeHop(url: URL, policy: AvatarPolicy): void {
   if (url.protocol !== 'https:') throw new ApiError(400, '仅支持 https 头像');
-  const host = url.hostname.toLowerCase();
+  const host = normalHost(url);
   const isIpLiteral = IPV4.test(host) || host.includes(':') || host.startsWith('[');
   const isLocal = host === 'localhost' || host.endsWith('.localhost');
   if (isIpLiteral || isLocal || policy.selfHosts.includes(host)) {
@@ -80,12 +85,12 @@ function imageHeaders(contentType: string): Headers {
   return headers;
 }
 
-async function fetchHop(url: URL, fetchImpl: FetchLike): Promise<Response> {
+async function fetchHop(url: URL, fetchImpl: FetchLike, timeoutMs: number): Promise<Response> {
   try {
     return await fetchImpl(url.toString(), {
       headers: { Accept: 'image/*' },
       redirect: 'manual',
-      signal: AbortSignal.timeout(AVATAR_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     throw new ApiError(502, '头像获取失败');
@@ -96,6 +101,7 @@ export async function proxyAvatar(
   raw: string | undefined,
   policy: AvatarPolicy,
   fetchImpl: FetchLike = fetch,
+  timeoutMs: number = AVATAR_TIMEOUT_MS,
 ): Promise<Response> {
   if (!raw) throw new ApiError(400, '缺少头像地址');
   let url: URL;
@@ -108,17 +114,21 @@ export async function proxyAvatar(
   // Exact hosts only: a whole registrable domain would include the app itself
   // once it moves to a subdomain. Any stored avatar URL is allowed verbatim,
   // which keeps unlisted avatar CDNs working with zero config.
-  const listed = policy.allowedHosts.includes(url.hostname.toLowerCase());
+  const listed = policy.allowedHosts.includes(normalHost(url));
   if (!listed && !(await policy.isStoredAvatar(raw))) {
     throw new ApiError(403, '不允许的头像来源');
   }
 
   for (let hop = 0; ; hop += 1) {
-    const res = await fetchHop(url, fetchImpl);
+    const res = await fetchHop(url, fetchImpl, timeoutMs);
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('Location');
       if (!location || hop >= AVATAR_MAX_REDIRECTS) throw new ApiError(502, '头像获取失败');
-      url = new URL(location, url);
+      try {
+        url = new URL(location, url);
+      } catch {
+        throw new ApiError(502, '头像获取失败');
+      }
       assertSafeHop(url, policy);
       continue;
     }

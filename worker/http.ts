@@ -44,8 +44,9 @@ export function requireString(v: unknown, label: string): string {
 }
 
 export function parseCsvList(csv: string | undefined): string[] {
-  if (!csv) return [];
-  return csv
+  if (csv === undefined || csv === null) return [];
+  // String(): a var written unquoted in TOML / dashboard JSON arrives as a number.
+  return String(csv)
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -57,7 +58,8 @@ export function cookieConfig(env: Env): CookieConfig {
 
 /** READ_ONLY=1 / true: maintenance mode for the database cutover. */
 export function isReadOnly(env: Env): boolean {
-  return ['1', 'true', 'yes'].includes((env.READ_ONLY ?? '').trim().toLowerCase());
+  // String(): `READ_ONLY = true` unquoted in TOML arrives as a boolean.
+  return ['1', 'true', 'yes'].includes(String(env.READ_ONLY ?? '').trim().toLowerCase());
 }
 
 /**
@@ -69,7 +71,11 @@ export function allowedOrigins(env: Env, requestUrl: string): string[] {
   const origins = [new URL(requestUrl).origin];
   for (const entry of configured) {
     try {
-      origins.push(new URL(entry).origin);
+      const url = new URL(entry);
+      // 'app.example.com:8443' or 'capacitor://localhost' parse without error
+      // but have the opaque origin 'null' — which is exactly what a sandboxed
+      // iframe or data: URL sends as Origin. Only real web origins count.
+      if (url.protocol === 'https:' || url.protocol === 'http:') origins.push(url.origin);
     } catch {
       // Malformed entries are skipped; a bad APP_URL also fails loudly on login.
     }
