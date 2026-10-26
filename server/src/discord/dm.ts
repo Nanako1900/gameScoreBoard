@@ -15,6 +15,7 @@ import {
   discordTime,
   formatDelta,
   GOLD,
+  GREY,
   joinUrl,
   LIMITS,
   linkButton,
@@ -24,7 +25,7 @@ import {
   safeText,
 } from './render';
 import type { BotEmbed } from './types';
-import { GREY, type ChannelMessage } from './verdict';
+import type { ChannelMessage } from './verdict';
 
 const NAME_MAX = 64;
 const HEADLINE_MAX = 200;

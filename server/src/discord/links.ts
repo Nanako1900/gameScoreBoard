@@ -6,6 +6,9 @@
 // two racing binds can never both land; the loser is reported as a conflict.
 // Every change is written to link_audit in the same batch.
 
+import { getUserById, toUser } from '../../../worker/db';
+import type { User } from '../../../worker/types';
+
 export interface DiscordLink {
   discord_user_id: string;
   user_id: string;
@@ -36,6 +39,14 @@ export async function linkByDiscordId(db: D1Database, discordUserId: string): Pr
     .prepare('SELECT * FROM discord_links WHERE discord_user_id = ?')
     .bind(discordUserId)
     .first<DiscordLink>();
+}
+
+/** The Nanako user bound to this Discord account, or null. */
+export async function boundUser(db: D1Database, discordUserId: string): Promise<User | null> {
+  const link = await linkByDiscordId(db, discordUserId);
+  if (!link) return null;
+  const row = await getUserById(db, link.user_id);
+  return row ? toUser(row) : null;
 }
 
 export async function linkByUserId(db: D1Database, userId: string): Promise<DiscordLink | null> {

@@ -19,10 +19,12 @@ import { VIOLATION_MAP } from '../../../shared/scoring';
 import { getRecordItemById } from '../../../worker/case-reads';
 import type { RecordItem } from '../../../worker/types';
 import { toEmbed } from './client';
-import { boundUser, judgedInAbsence, violationLabel, webButton } from './commands';
+import { judgedInAbsence, violationLabel, webButton } from './commands';
+import { boundUser } from './links';
 import {
   clampEmbed,
   ephemeralReply,
+  GREY,
   formatDelta,
   joinUrl,
   LIMITS,
@@ -33,8 +35,7 @@ import {
 } from './render';
 import type { BotContext, BotEmbed, BotReply, DiscordUserRef } from './types';
 
-/** A revoked verdict: no longer bad news. */
-export const GREY = 0x8b8579;
+export { GREY } from './render';
 
 const NAME_MAX = 64;
 const HEADLINE_MAX = 200;
