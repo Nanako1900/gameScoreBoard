@@ -70,7 +70,10 @@ export async function requireParticipant(db: D1Database, id: string): Promise<Us
 export async function getLeaderboard(db: D1Database): Promise<PublicUser[]> {
   const rows = await db
     .prepare(
-      'SELECT * FROM users WHERE is_participant = 1 ORDER BY score DESC, COALESCE(display_name, username) ASC',
+      // created_at, id: a total order. Without it, ties came back in D1's
+      // incidental insertion order and in no defined order at all on PostgreSQL.
+      `SELECT * FROM users WHERE is_participant = 1
+        ORDER BY score DESC, COALESCE(display_name, username) ASC, created_at ASC, id ASC`,
     )
     .all<UserRow>();
   return rows.results.map(toPublicUser);
