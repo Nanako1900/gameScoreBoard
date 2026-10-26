@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+.git
+.github
+.wrangler
+.omc
+.claude
+.dev.vars
+.env
+.env.*
+coverage
+docs
+tests
+*.md

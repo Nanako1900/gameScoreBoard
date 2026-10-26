@@ -189,6 +189,12 @@ npm run dev:web
 │   ├── report.ts          #   周报统计（全部 SQL 算）+ 按周幂等生成
 │   └── ai/                #   归类 / 量刑 / 周报三套调用，输入消毒 + 输出夹取
 ├── src/                   # React + Vite 前端源码
+├── server/                # Node 后端（Coolify / Docker Compose），npm workspace
+│   ├── src/app.ts         #   按 Host 分流：discord.* → 分享页（P3a 起 api.* → API）
+│   ├── src/share/         #   Discord 分享页，移植自 discord-share（poller + linkedom）
+│   ├── share-public/      #   分享页静态文件（原 discord-share/public）
+│   └── test/              #   Node 端测试
+├── Dockerfile, compose.yaml # 镜像与 Coolify stack，见 docs/DEPLOY-COOLIFY.md
 ├── tests/unit/            # 纯逻辑单测（Node）
 ├── tests/worker/          # 真实 D1 集成测试（Miniflare）
 ├── .dev.vars.example      # 本地环境变量示例（复制为 .dev.vars）
@@ -208,6 +214,9 @@ npm run dev:web
 | `npm test` | 跑全部测试（单测 + D1 集成测试） |
 | `npm run test:unit` | 只跑纯逻辑单测（快） |
 | `npm run test:worker` | 只跑 D1 集成测试（Miniflare） |
+| `npm run test:server` | 只跑 Node 后端测试（`server/`） |
+| `npm run build -w server` | 打包 Node 后端到 `server/dist`（esbuild） |
+| `npm run dev -w server` | 本地跑 Node 后端（tsx watch） |
 | `npm run db:local` | 在本地 D1 上执行 `schema.sql` 建表 |
 | `npm run db:remote` | 在远程 D1（生产）上执行 `schema.sql` 建表 |
 | `npm run db:migrate:local` | 在本地 D1 上执行 v1 → v2 迁移 |
@@ -248,4 +257,5 @@ npm run dev:web
 ## 部署
 
 - **一体化部署**（前后端都在 Cloudflare Worker）：见 [DEPLOY.md](./DEPLOY.md)。
+- **Node 后端（Coolify + Docker Compose）**：目前承载 Discord 分享页 `discord.nanako.org`，见 [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md)。
 - **拆分部署**（前端 → 腾讯 EdgeOne Pages，后端 → Cloudflare Worker）：见 [DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md)，内含跨域会话 Cookie 的处理与三种架构方案（推荐 EdgeOne 边缘函数反代，保持单源、Safari 安全、无需自定义域名）。

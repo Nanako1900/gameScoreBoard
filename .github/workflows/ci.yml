@@ -30,4 +30,7 @@ jobs:
       - run: npm run test:dom
       # Miniflare-backed D1 integration tests.
       - run: npm run test:worker
+      # Node backend (server/): share page, host routing.
+      - run: npm run test:server
       - run: npm run build
+      - run: npm run build --workspace server

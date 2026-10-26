@@ -1,0 +1,25 @@
+{
+  "name": "@edg/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node backend for EDG 信誉分 on Coolify (Docker Compose). Serves the Discord share page; the API moves here in P3a.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --sourcemap --outfile=dist/main.js",
+    "start": "node --enable-source-maps dist/main.js",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.12.27",
+    "linkedom": "^0.18.14"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "tsx": "^4.23.15"
+  }
+}
