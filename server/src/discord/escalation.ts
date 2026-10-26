@@ -72,20 +72,35 @@ export function renderEscalationDm(record: RecordItem, frontendUrl: string): Cha
   );
 }
 
+export type EscalationOutcome = 'escalated' | 'retyped' | 'kept' | 'withdrawn' | 'judged';
+
+const OUTCOMES: ReadonlySet<string> = new Set(['escalated', 'retyped', 'kept', 'withdrawn', 'judged']);
+
+/** What became of the hint: as the event recorded it, else read off the case now. */
+function outcomeOf(record: RecordItem, recorded?: { outcome?: unknown; type?: unknown }): { outcome: EscalationOutcome; type: string } {
+  const type = typeof recorded?.type === 'string' ? recorded.type : record.type;
+  if (typeof recorded?.outcome === 'string' && OUTCOMES.has(recorded.outcome)) {
+    return { outcome: recorded.outcome as EscalationOutcome, type };
+  }
+  if (record.status === 'withdrawn') return { outcome: 'withdrawn', type };
+  if (record.status !== 'awaiting_statement') return { outcome: 'judged', type };
+  return { outcome: record.type === ESCALATION_ONLY ? 'escalated' : 'kept', type };
+}
+
 /** The same DM once the hint is settled: what became of it, no buttons. */
-export function renderEscalationClosed(record: RecordItem): ChannelMessage {
-  const outcome =
-    record.status === 'withdrawn'
-      ? '案件已撤回。'
-      : record.status !== 'awaiting_statement'
-        ? '已进入裁决，升级建议不再适用；要改判请找管理员。'
-        : record.type === ESCALATION_ONLY
-          ? `已升级为 ${violationLabel(ESCALATION_ONLY)}。`
-          : `维持原案由：${violationLabel(record.type)}。`;
+export function renderEscalationClosed(record: RecordItem, recorded?: { outcome?: unknown; type?: unknown }): ChannelMessage {
+  const { outcome, type } = outcomeOf(record, recorded);
+  const text: Record<EscalationOutcome, string> = {
+    escalated: `已升级为 ${violationLabel(ESCALATION_ONLY)}。`,
+    retyped: `案由改成了 ${violationLabel(type)}。`,
+    kept: `维持原案由：${violationLabel(type)}。`,
+    withdrawn: '案件已撤回。',
+    judged: '已进入裁决，升级建议不再适用；要改判请找管理员。',
+  };
   return dmMessage(
     {
       title: '🧨 升级建议已处理',
-      description: `${safeLine(record.subject.username, NAME_MAX)} 的案件：${outcome}`,
+      description: `${safeLine(record.subject.username, NAME_MAX)} 的案件：${text[outcome]}`,
       color: GREY,
     },
     [],

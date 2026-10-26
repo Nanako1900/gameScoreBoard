@@ -56,7 +56,19 @@ BEGIN
   IF is_open AND NOT was_open THEN
     PERFORM outbox_emit('dm.escalation', 'user', NEW.reporter_id, 'dm:case:' || rid || ':esc', ref, now());
   ELSIF was_open AND NOT is_open THEN
-    PERFORM outbox_emit('dm.escalation.closed', 'user', NEW.reporter_id, 'dm:case:' || rid || ':esc:closed', ref, NULL);
+    -- What happened, as of this change (the DM is rewritten later, by when
+    -- the case may have moved on).
+    PERFORM outbox_emit('dm.escalation.closed', 'user', NEW.reporter_id, 'dm:case:' || rid || ':esc:closed',
+                        ref || jsonb_build_object(
+                          'outcome', CASE
+                            WHEN NEW.status = 'withdrawn' THEN 'withdrawn'
+                            WHEN NEW.status <> 'awaiting_statement' THEN 'judged'
+                            WHEN NEW.type IS DISTINCT FROM OLD.type AND NEW.type = 'no_show_group' THEN 'escalated'
+                            WHEN NEW.type IS DISTINCT FROM OLD.type THEN 'retyped'
+                            ELSE 'kept'
+                          END,
+                          'type', NEW.type),
+                        NULL);
   ELSE
     RETURN NULL;
   END IF;

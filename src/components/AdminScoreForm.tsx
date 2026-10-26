@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MAX_SCORE, MIN_SCORE } from '@shared/scoring';
 
 interface AdminScoreFormProps {
@@ -16,6 +16,19 @@ interface AdminScoreFormProps {
 export function AdminScoreForm({ username, score, busy, onSubmit }: AdminScoreFormProps): JSX.Element {
   const [value, setValue] = useState(String(score));
   const [confirming, setConfirming] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  const stepped = useRef(false);
+  // Keyboard users stay where they were: on 确认改分 when asked, back on the
+  // number when they cancel (the element they pressed is gone either way).
+  useEffect(() => {
+    if (confirming) {
+      stepped.current = true;
+      confirmButton.current?.focus();
+    } else if (stepped.current) {
+      input.current?.focus();
+    }
+  }, [confirming]);
   const next = Number(value);
   const valid = value.trim() !== '' && Number.isInteger(next) && next >= MIN_SCORE && next <= MAX_SCORE;
   const changed = valid && next !== score;
@@ -23,11 +36,12 @@ export function AdminScoreForm({ username, score, busy, onSubmit }: AdminScoreFo
   if (confirming && changed) {
     return (
       <div className="pd__score-form" role="group" aria-label="确认调整分数">
-        <p className="pd__score-confirm">
+        <p className="pd__score-confirm" aria-live="polite">
           把 {username} 的信誉分从 <strong className="tabular">{score}</strong> 改成{' '}
           <strong className="tabular">{next}</strong>？已绑定 Discord 的话会私信通知本人。
         </p>
         <button
+          ref={confirmButton}
           type="button"
           className="btn btn--danger btn--sm"
           disabled={busy}
@@ -56,6 +70,7 @@ export function AdminScoreForm({ username, score, busy, onSubmit }: AdminScoreFo
       <label className="pd__score-label">
         调整分数
         <input
+          ref={input}
           className="pd__score-input tabular"
           type="number"
           inputMode="numeric"

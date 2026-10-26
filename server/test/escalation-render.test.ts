@@ -57,3 +57,14 @@ describe('parseEscalationButton', () => {
     }
   });
 });
+
+describe('renderEscalationClosed, from what was recorded', () => {
+  it('says what was done then, not what the case is now', () => {
+    const now = record({ status: 'judging', escalation_suggested: false });
+    expect(JSON.stringify(renderEscalationClosed(now, { outcome: 'kept', type: 'no_show' }))).toContain('维持原案由');
+    expect(JSON.stringify(renderEscalationClosed(record(), { outcome: 'retyped', type: 'late_major' }))).toContain('案由改成了');
+    expect(JSON.stringify(renderEscalationClosed(record(), { outcome: 'escalated', type: 'no_show_group' }))).toContain('已升级');
+    // An event from before outcomes were recorded: read off the case.
+    expect(JSON.stringify(renderEscalationClosed(now, {}))).toContain('已进入裁决');
+  });
+});

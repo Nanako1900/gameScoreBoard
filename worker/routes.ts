@@ -218,15 +218,14 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       c.executionCtx.waitUntil(
         weeklyHeal(c.env.DB, offset).catch((err) => console.error('lazy weekly heal failed', err)),
       );
-      c.executionCtx.waitUntil(
-        sweepDueCases(c.env.DB, c.env).catch((err) => console.error('case sweep failed', err)),
-      );
       // Third lazy job, same idempotency contract: weekly_reports' primary key is
       // the week, so a Monday-morning rush produces one narrative, not one each.
+      // After the sweep: a case it judges belongs in the report.
       c.executionCtx.waitUntil(
-        ensureWeeklyReport(c.env.DB, c.env, offset).catch((err) =>
-          console.error('weekly report failed', err),
-        ),
+        sweepDueCases(c.env.DB, c.env)
+          .catch((err) => console.error('case sweep failed', err))
+          .then(() => ensureWeeklyReport(c.env.DB, c.env, offset))
+          .catch((err) => console.error('weekly report failed', err)),
       );
     }
     const cfg = await loadAiConfig(c.env.DB, c.env);

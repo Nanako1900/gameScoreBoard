@@ -65,16 +65,18 @@ export function canReadPrivate(
   );
 }
 
-/** The case as `viewer` may see it — a new object; the input is left as it is. */
+/**
+ * The case as `viewer` may see it — a new object; the input is left as it is.
+ * A bonus's 'manual' verdict is only its label (no statement was ever read for
+ * it), so it stays.
+ */
 export function redactRecord(record: RecordItem, viewer: User | null): RecordView {
   if (canReadPrivate(record, viewer)) return { ...record, redacted: false };
-  return {
-    ...record,
-    statement: null,
-    appeal_reason: null,
-    verdict: record.verdict ? { ...record.verdict, headline: '', reasoning: '', factors: [] } : null,
-    redacted: true,
-  };
+  const verdict =
+    record.verdict && record.verdict.source !== 'manual'
+      ? { ...record.verdict, headline: '', reasoning: '', factors: [] }
+      : record.verdict;
+  return { ...record, statement: null, appeal_reason: null, verdict, redacted: true };
 }
 
 export function redactRecords(records: readonly RecordItem[], viewer: User | null): RecordView[] {

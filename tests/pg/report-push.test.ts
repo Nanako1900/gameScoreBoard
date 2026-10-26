@@ -6,13 +6,13 @@ import { ensureWeeklyReport, previousWeekStart, regenerateReport } from '../../w
 import { importD1 } from '../../server/src/import-d1';
 import { createDispatcher, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import type { ChannelMessage } from '../../server/src/discord/verdict';
-import { noAiEnv, OFFSET_HOURS, seedUser } from '../worker/helpers';
+import { inThisWeek, noAiEnv, OFFSET_HOURS, seedUser } from '../worker/helpers';
 import { env, pool } from './cloudflare-test';
 
 const CHANNEL = '200000000000000009';
 const FRONTEND = 'https://score.example';
-/** Some Wednesday noon at UTC+8: past the report's Monday 10:30. */
-const DUE = Date.parse('2026-10-28T04:00:00Z');
+/** Wednesday noon this week: past the report's Monday 10:30. */
+const DUE = inThisWeek(2 * 24 + 12);
 const quiet = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
 function fakeDiscord() {
@@ -208,21 +208,20 @@ describe('the report post', () => {
     expect(discord.sent).toEqual([]);
   });
 
-  it('only for the latest week, and only once it is over', async () => {
+  it('only for the latest week: an old week re-rolled is not posted', async () => {
     await lastWeekActivity();
     await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, DUE);
     const last = previousWeekStart(OFFSET_HOURS);
     const lastMs = Date.parse(`${last}T00:00:00Z`);
     const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-    // An admin re-rolls a week long ago, and the week still running.
-    await regenerateReport(env.DB, noAiEnv(), day(lastMs - 14 * 86_400_000), OFFSET_HOURS);
     await env.DB.prepare('DELETE FROM outbox').run();
     await regenerateReport(env.DB, noAiEnv(), day(lastMs - 21 * 86_400_000), OFFSET_HOURS);
-    await regenerateReport(env.DB, noAiEnv(), day(lastMs + 7 * 86_400_000), OFFSET_HOURS);
     await due();
     const discord = fakeDiscord();
     await dispatcher(discord.api).runOnce();
     expect(discord.sent).toEqual([]);
-    expect((await reportEvents()).map((r) => r.last_error).sort()).toEqual(['not the latest week', 'the week is not over']);
+    expect((await reportEvents()).map((r) => r.last_error)).toEqual(['not the latest week']);
+    // A week still running cannot be written at all (it would stand in for the real one).
+    await expect(regenerateReport(env.DB, noAiEnv(), day(lastMs + 7 * 86_400_000), OFFSET_HOURS)).rejects.toMatchObject({ status: 400 });
   });
 });

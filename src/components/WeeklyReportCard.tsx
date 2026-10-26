@@ -7,6 +7,8 @@ interface WeeklyReportCardProps {
   /** Admin only — re-roll the narrative if it landed flat. */
   onRegenerate?: () => void;
   regenerating?: boolean;
+  /** Older than last week: last week's is not out yet (Monday 10:30). */
+  stale?: boolean;
 }
 
 const DISMISS_KEY = 'edg.report.dismissed';
@@ -50,6 +52,7 @@ export function WeeklyReportCard({
   report,
   onRegenerate,
   regenerating = false,
+  stale = false,
 }: WeeklyReportCardProps): JSX.Element | null {
   const [hidden, setHidden] = useState(() => isDismissed(report.week_start));
   if (hidden) return null;
@@ -64,7 +67,7 @@ export function WeeklyReportCard({
     <section className="wr" aria-labelledby="wr-title">
       <header className="wr__head">
         <h2 id="wr-title" className="wr__title">
-          <span aria-hidden="true">📮</span> 上周战报
+          <span aria-hidden="true">📮</span> {stale ? '往期战报' : '上周战报'}
           <span className="wr__range tabular">
             {shortDate(s.weekStart)} – {shortDate(s.weekEnd)}
           </span>
@@ -86,6 +89,7 @@ export function WeeklyReportCard({
           </button>
         </div>
       </header>
+      {stale && <p className="wr__note">上周的战报周一 10:30 之后发布。</p>}
 
       <p className="wr__narrative">{report.narrative}</p>
 

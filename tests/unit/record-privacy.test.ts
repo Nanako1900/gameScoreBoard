@@ -70,6 +70,11 @@ describe('redactRecord', () => {
     expect(without).toEqual(withReason);
   });
 
+  it('keeps a bonus’s manual verdict: it is only its label', () => {
+    const bonus = { ...record, verdict: { source: 'manual' as const, headline: '守约', reasoning: '', factors: [] } };
+    expect(redactRecord(bonus, null).verdict).toEqual(bonus.verdict);
+  });
+
   it('leaves everything for those who may read it', () => {
     expect(redactRecord(record, user('s'))).toEqual({ ...record, redacted: false });
   });

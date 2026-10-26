@@ -140,3 +140,14 @@ export function toDateTimeLocalValue(ms: number): string {
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
+
+/**
+ * The board's last week — the one a fresh report is about — as its local
+ * Monday (YYYY-MM-DD), from the next weekly reset (a local Monday 00:00). Noon
+ * of that Monday is still Monday for any board offset within ±12 h.
+ */
+export function lastWeekStartOf(nextResetAt: string): string | null {
+  const ms = Date.parse(nextResetAt);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms + 12 * 3_600_000 - 14 * 86_400_000).toISOString().slice(0, 10);
+}

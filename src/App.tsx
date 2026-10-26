@@ -20,7 +20,7 @@ import {
   logout as apiLogout,
   regenerateReport,
 } from './api';
-import { parseTimestamp } from './lib/time';
+import { lastWeekStartOf, parseTimestamp } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
 import { Header } from './components/Header';
 import { RedBlackBoard } from './components/RedBlackBoard';
@@ -137,6 +137,9 @@ export function App(): JSX.Element {
   // ?case= / ?session= (links from Discord): read once, opened once data is in.
   const [deepLink] = useState(() => readDeepLink(window.location.search));
   const deepLinkDone = useRef(false);
+  // Set by the effects that open the first-run dialog (state they set is not
+  // visible to an effect in the same commit): the link waits for it to close.
+  const onboardingAsked = useRef(false);
   const [focusCaseId, setFocusCaseId] = useState<number | null>(null);
   const [linkMissing, setLinkMissing] = useState<string | null>(null);
 
@@ -178,6 +181,7 @@ export function App(): JSX.Element {
     }
     const params = new URLSearchParams(window.location.search);
     if (params.get('onboarding') === '1') {
+      onboardingAsked.current = true;
       setOnboardingOpen(true);
       params.delete('onboarding');
       const qs = params.toString();
@@ -197,13 +201,16 @@ export function App(): JSX.Element {
     const me = ready?.me;
     if (!discordLinked || !me || askedAfterLink.current) return;
     askedAfterLink.current = true;
-    if (!me.is_participant && !me.is_judge) setOnboardingOpen(true);
+    if (!me.is_participant && !me.is_judge) {
+      onboardingAsked.current = true;
+      setOnboardingOpen(true);
+    }
   }, [discordLinked, ready?.me]);
 
   // Open what the link points at, once: a case in its subject's page, or a
   // session. Through the same reads as clicking there — so the same rules.
   useEffect(() => {
-    if (!ready || !deepLink || deepLinkDone.current || onboardingOpen) return;
+    if (!ready || !deepLink || deepLinkDone.current || onboardingOpen || onboardingAsked.current) return;
     deepLinkDone.current = true;
     if (deepLink.kind === 'session') {
       setSessionId(deepLink.id);
@@ -322,6 +329,10 @@ export function App(): JSX.Element {
         {report && (
           <WeeklyReportCard
             report={report}
+            stale={(() => {
+              const lastWeek = lastWeekStartOf(config.nextResetAt);
+              return lastWeek !== null && report.week_start < lastWeek;
+            })()}
             regenerating={regenerating}
             onRegenerate={
               me?.is_admin === true
@@ -400,7 +411,10 @@ export function App(): JSX.Element {
       {me && (
         <OnboardingDialog
           open={onboardingOpen}
-          onClose={() => setOnboardingOpen(false)}
+          onClose={() => {
+            onboardingAsked.current = false;
+            setOnboardingOpen(false);
+          }}
           me={me}
           onSaved={handleMeUpdated}
         />
@@ -441,6 +455,7 @@ export function App(): JSX.Element {
           }}
           onOpenStatement={(record) => {
             setSelectedUserId(null);
+            setFocusCaseId(null);
             setStatementCase(record);
           }}
           onChanged={handleChanged}

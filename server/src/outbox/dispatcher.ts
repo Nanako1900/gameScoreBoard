@@ -461,7 +461,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
-    if (row.kind === SCORE_KIND) return deliverScoreAdjusted(row, { pool, config, recipient, sendDm });
+    if (row.kind === SCORE_KIND) return deliverScoreAdjusted(row, { config, recipient, sendDm });
     if (row.kind === 'dm.recharged' || ESCALATION_KINDS.has(row.kind)) {
       const tools = { pool, db, config, recipient, sendDm, rewrite, messageFor, rememberDm };
       return row.kind === 'dm.recharged' ? deliverRecharged(row, tools) : deliverEscalation(row, tools);

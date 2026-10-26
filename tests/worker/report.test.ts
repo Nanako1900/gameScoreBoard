@@ -10,7 +10,7 @@ import {
   regenerateReport,
   reportDue,
 } from '../../worker/report';
-import { OFFSET_HOURS, noAiEnv, seedUser } from './helpers';
+import { OFFSET_HOURS, inThisWeek, noAiEnv, seedUser } from './helpers';
 
 /** A sqlite-datetime inside last week, offset days from its local Monday. */
 function inLastWeek(dayOffset = 1, hour = 12): string {
@@ -245,8 +245,8 @@ describe('fallbackNarrative', () => {
   });
 });
 
-/** Some Wednesday noon at UTC+8: past the report's Monday 10:30, whatever the real time. */
-const REPORT_DUE = Date.parse('2026-10-28T04:00:00Z');
+/** Wednesday noon this week: past the report's Monday 10:30, whatever the real time. */
+const REPORT_DUE = inThisWeek(2 * 24 + 12);
 
 describe('reportDue — Monday 10:30, board time', () => {
   it('opens at 10:30 on Monday and stays open all week', () => {
@@ -268,9 +268,23 @@ describe('ensureWeeklyReport — idempotent per week', () => {
 
   it('waits for Monday 10:30', async () => {
     await seedActivity();
-    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, Date.parse('2026-10-26T02:00:00Z'))).toBeNull();
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(10))).toBeNull();
     const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM weekly_reports').first<{ n: number }>();
     expect(rows?.n).toBe(0);
+  });
+
+  it('waits for last week’s cases to be judged — but not for ever', async () => {
+    await seedActivity();
+    // Filed late on Sunday, still waiting for its statement on Monday morning.
+    await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, claim, status, deadline_at, created_at)
+       VALUES ('ra', 'rjudge', 'no_show', 0, '周日晚上没来', 'awaiting_statement', ?, ?)`,
+    )
+      .bind(inLastWeek(6, 23), inLastWeek(6, 23))
+      .run();
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(11))).toBeNull();
+    // A statement window (12 h) past the week's end, plus an hour: written anyway.
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(13.5))).not.toBeNull();
   });
 
   it('skips a week in which nothing happened — no card beats an empty card', async () => {
@@ -320,6 +334,17 @@ describe('ensureWeeklyReport — idempotent per week', () => {
     const direct = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
     // The card renders `stats`; it must equal what SQL says, not a paraphrase.
     expect(report?.stats).toEqual(direct);
+  });
+});
+
+describe('regenerateReport — only a finished week', () => {
+  it('refuses a day that is not a Monday, and a week still running', async () => {
+    const last = previousWeekStart(OFFSET_HOURS);
+    const tuesday = new Date(Date.parse(`${last}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const thisWeek = new Date(Date.parse(`${last}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+    await expect(regenerateReport(env.DB, noAiEnv(), tuesday, OFFSET_HOURS)).rejects.toMatchObject({ status: 400 });
+    await expect(regenerateReport(env.DB, noAiEnv(), thisWeek, OFFSET_HOURS)).rejects.toMatchObject({ status: 400 });
+    await expect(regenerateReport(env.DB, noAiEnv(), last, OFFSET_HOURS)).resolves.toMatchObject({ week_start: last });
   });
 });
 

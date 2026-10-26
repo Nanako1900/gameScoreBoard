@@ -42,6 +42,9 @@ export function VerdictCard({
   const voided = status === 'revoked' || status === 'withdrawn';
   const badge = verdict ? SOURCE_BADGE[verdict.source] : null;
   const hidden = record.redacted === true;
+  // Only a trial's verdict has words to hide; a bonus's is just its label.
+  const wordsHidden = hidden && verdict !== null && verdict.source !== 'manual';
+  const trial = def?.kind === 'penalty';
 
   return (
     <article id={`case-${record.id}`} tabIndex={-1} className={`vc vc--${status}${focused ? ' vc--focus' : ''}`}>
@@ -90,12 +93,12 @@ export function VerdictCard({
           <span className="vc__quote-who">{record.subject.username} 的说明</span>
           <p>{record.statement}</p>
         </blockquote>
-      ) : hidden && record.statement_at ? (
+      ) : hidden && trial && record.statement_at ? (
         <p className="vc__hidden">
           <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
         </p>
       ) : (
-        !pending && (
+        !pending && trial && (
           <p className="vc__absent">该选手没有在期限内说明情况，按缺席裁决。</p>
         )
       )}
@@ -112,7 +115,7 @@ export function VerdictCard({
       {verdict && (
         <div className="vc__verdict">
           <div className="vc__verdict-head">
-            {hidden ? (
+            {wordsHidden ? (
               <p className="vc__hidden">
                 <span aria-hidden="true">🔒</span> 判词{PRIVATE_TO}
               </p>
@@ -121,8 +124,8 @@ export function VerdictCard({
             )}
             {badge && <span className={`vc__source vc__source--${badge.tone}`}>{badge.label}</span>}
           </div>
-          {!hidden && verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
-          {!hidden && verdict.factors.length > 0 && (
+          {!wordsHidden && verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
+          {!wordsHidden && verdict.factors.length > 0 && (
             <ul className="vc__factors">
               {verdict.factors.map((f, i) => (
                 <li

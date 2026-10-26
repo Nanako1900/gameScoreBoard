@@ -156,3 +156,41 @@ describe('PlayerDetail — setting a score by hand', () => {
   });
 });
 
+describe('PlayerDetail — the score form, at its edges', () => {
+  for (const [what, typed] of [
+    ['an empty box (it would read as 0)', ''],
+    ['a score below 0', '-1'],
+    ['a fractional score', '75.5'],
+  ] as const) {
+    it(`refuses ${what}`, async () => {
+      stubBackend(false);
+      const user = userEvent.setup();
+      render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+      const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+      await user.clear(input);
+      if (typed) await user.type(input, typed);
+      expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    });
+  }
+
+  it('is not for a judge who is not an admin', async () => {
+    stubBackend(false);
+    render(<PlayerDetail userId="p" me={{ ...ME, is_admin: false, is_judge: true }} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('spinbutton', { name: '调整分数' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the keyboard where it was: on 确认改分, back on the number after 取消', async () => {
+    stubBackend(false);
+    const user = userEvent.setup();
+    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    await user.clear(input);
+    await user.type(input, '75');
+    await user.click(screen.getByRole('button', { name: '改分' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '确认改分' }));
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    expect(document.activeElement).toBe(screen.getByRole('spinbutton', { name: '调整分数' }));
+  });
+});
+

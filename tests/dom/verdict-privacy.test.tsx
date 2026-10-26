@@ -55,8 +55,9 @@ describe('VerdictCard, for a viewer who may not read the private parts', () => {
     expect(screen.getByText(/按缺席裁决/)).toBeInTheDocument();
   });
 
-  it('shows no appeal reason, but still that it was appealed', () => {
-    render(<VerdictCard record={hidden({ status: 'appealed' })} />);
+  it('shows no appeal reason (even one that slipped through), but still that it was appealed', () => {
+    render(<VerdictCard record={hidden({ status: 'appealed', appeal_reason: 'LEAKEDREASON' })} />);
+    expect(screen.queryByText('LEAKEDREASON')).not.toBeInTheDocument();
     expect(screen.queryByText('申诉理由')).not.toBeInTheDocument();
     expect(screen.getByText(/该选手已申诉/)).toBeInTheDocument();
   });
@@ -73,6 +74,23 @@ describe('VerdictCard, for those who may read it', () => {
   it('treats a record from an older API (no flag) as not hidden', () => {
     render(<VerdictCard record={record()} />);
     expect(screen.getByText('家里有事')).toBeInTheDocument();
+    expect(screen.getByText('情有可原，从轻')).toBeInTheDocument();
+    expect(screen.getByText('提前打了招呼')).toBeInTheDocument();
     expect(screen.queryByText(/写了说明/)).not.toBeInTheDocument();
+  });
+});
+
+describe('VerdictCard, a bonus', () => {
+  it('has no words to hide and no statement to miss', () => {
+    const bonus = hidden({
+      type: 'on_time_bonus',
+      delta: 2,
+      statement_at: null,
+      verdict: { source: 'manual', headline: '守约', reasoning: '', factors: [] },
+    });
+    render(<VerdictCard record={bonus} />);
+    expect(screen.getByText('守约')).toBeInTheDocument();
+    expect(screen.queryByText(/判词只有/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/按缺席裁决/)).not.toBeInTheDocument();
   });
 });

@@ -32,7 +32,7 @@ export interface ReportDeliveryDeps {
 const skipped = (note: string): Outcome => ({ result: 'skipped', note });
 
 /** Has the board-local week starting on this Monday ended? */
-function weekOver(weekStart: string, offsetHours: number, now = Date.now()): boolean {
+export function weekOver(weekStart: string, offsetHours: number, now = Date.now()): boolean {
   const start = Date.parse(`${weekStart}T00:00:00Z`) - offsetHours * 3_600_000;
   return Number.isFinite(start) && start + 7 * DAY_MS <= now;
 }

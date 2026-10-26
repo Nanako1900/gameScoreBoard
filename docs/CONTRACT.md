@@ -166,7 +166,8 @@ interface RecordItem {
   // statement / appeal_reason null, headline / reasoning '' and factors [] —
   // and sets `redacted: true` (whatever was there, so it never tells whether
   // an appeal reason exists). The verdict's words are covered because the AI
-  // writes them after reading the statement and often quotes it.
+  // writes them after reading the statement and often quotes it — except a
+  // bonus's 'manual' verdict, which is only its label and stays.
   redacted: boolean;
 }
 
@@ -337,15 +338,21 @@ fields) and answer `Cache-Control: private, no-store`.
   claimed with the deterministic fallback text BEFORE the AI call, so a
   Monday-morning rush produces one narrative rather than one per visitor.
 - Last week's report is written from **Monday 10:30** board time on (not at
-  midnight), so a case filed late on Sunday is judged within its week.
-  本周之星 / 鸽王 count neither the weekly heal nor an admin's direct corrections.
+  midnight), and once every case filed that week has been judged — waiting at
+  most one statement window past the week's end, plus an hour — so a case
+  filed late on Sunday is counted (cases filed, total penalty) in its week. On
+  the Worker the lazy job runs after the overdue-case sweep for that reason.
+  本周之星 / 鸽王 count score movement within the week (a case judged on Monday
+  moves next week's), and neither the weekly heal nor an admin's corrections.
+  Until last week's report is out, `/api/report/latest` is the one before.
 - On the Node backend, a newly written report is posted to the Discord verdict
   channel (once per week, the latest finished week only) and a rewrite edits
   that post.
 
 ### Admin (is_admin)
 - `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative
-  for `YYYY-MM-DD` (a local Monday); recomputes the stats too.
+  for `YYYY-MM-DD` (a local Monday); recomputes the stats too. Only a finished
+  week: a non-Monday or a week still running is a 400.
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
   `score` sets it by hand (clamped to 0–100, logged as `admin_adjust`); on the
   Node backend a real change DMs the player if they are bound (old → new). The
@@ -401,7 +408,9 @@ reaches `decided` rather than stranding a player's score.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them): `/?case=<id>` opens
-  that case in its subject's page, scrolled to and focused; `/?session=<id>`
+  that case in its subject's page, scrolled to and focused (if it is among the
+  200 most recent cases the page shows; else the page opens unscrolled);
+  `/?session=<id>`
   opens the session. Only a positive integer id is read (anything else is
   ignored), the parameter is stripped at once, and the link only picks which
   ordinary view opens — what it shows and which controls come from the API and

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRsvpButton, sessionCard, sessionDmRelevant, slotIso } from '../src/discord/sessions';
+import { parseRsvpButton, renderSessionDm, sessionCard, sessionDmRelevant, slotIso } from '../src/discord/sessions';
 import type { SessionDetail } from '../../worker/types';
 
 const EVIL = '[报名](https://evil.example) @everyone <@123456789012345678>';
@@ -100,3 +100,12 @@ describe('RSVP buttons', () => {
     }
   });
 });
+
+describe('session DMs', () => {
+  it('link to the session itself', () => {
+    for (const kind of ['dm.session.invited', 'dm.session.changed', 'dm.session.cancelled', 'dm.session.starting', 'dm.session.rollcall'] as const) {
+      expect(JSON.stringify(renderSessionDm(kind, session(), 'https://score.example')), kind).toContain('https://score.example/?session=3');
+    }
+  });
+});
+

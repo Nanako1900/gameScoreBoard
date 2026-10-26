@@ -93,7 +93,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     description: '最近 5 次判决（只有你自己看得到）',
     options: [userOption('要查谁，不填就是自己')],
   },
-  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述和待回应的约局' },
+  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述、待回应的约局（管理员还有待复核的申诉）' },
   { type: CHAT_INPUT, name: 'report', description: '最新一期周报' },
   {
     type: CHAT_INPUT,
@@ -313,13 +313,19 @@ function appealLine(r: RecordItem, frontendUrl: string): string {
 
 const APPEALS_SHOWN = 10;
 
+/** The appeals that have waited longest (the list is newest first). */
+async function oldestAppeals(ctx: BotContext): Promise<RecordItem[]> {
+  const appealed = await listRecords(ctx.db, { status: 'appealed', limit: 200 });
+  return appealed.slice(-APPEALS_SHOWN).reverse();
+}
+
 async function handleTodo(input: CommandInput, ctx: BotContext): Promise<BotReply> {
   const user = await boundUser(ctx.db, input.caller.id);
   if (!user) return ephemeralReply(NOT_LINKED);
   const [pending, invites, appeals, counts] = await Promise.all([
     listRecords(ctx.db, { pendingFor: user.id }),
     listMyInvites(ctx.db, user.id),
-    user.is_admin ? listRecords(ctx.db, { status: 'appealed', limit: APPEALS_SHOWN }) : Promise.resolve([]),
+    user.is_admin ? oldestAppeals(ctx) : Promise.resolve([]),
     pendingCounts(ctx.db, user),
   ]);
   if (pending.length === 0 && invites.length === 0 && appeals.length === 0) return ephemeralReply('没有待办，清清爽爽 ✨');

@@ -48,7 +48,7 @@ export async function deliverEscalation(row: OutboxRow, tools: EscalationTools):
     if (!posted) return skipped('no escalation DM to rewrite');
     const record = await getRecordItemById(tools.db, recordId);
     if (!record) return skipped('record is gone');
-    const done = await tools.rewrite(row.entity_id, [posted], renderEscalationClosed(record));
+    const done = await tools.rewrite(row.entity_id, [posted], renderEscalationClosed(record, row.payload));
     if (typeof done !== 'number') return done;
     return done > 0 ? { result: 'sent', note: null } : skipped('the escalation DM is gone');
   }

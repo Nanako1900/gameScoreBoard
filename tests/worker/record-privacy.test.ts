@@ -124,3 +124,31 @@ describe('a case’s private parts on the web', () => {
     }
   });
 });
+
+describe('cases returned by writes', () => {
+  async function post(path: string, as: string, body: unknown) {
+    const headers = new Headers({ 'Content-Type': 'application/json', Cookie: `${SESSION_COOKIE}=${await signSession({ sub: as }, SECRET)}` });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}${path}`, { method: 'POST', headers, body: JSON.stringify(body) }),
+      noAiEnv({ SESSION_SECRET: SECRET }) as Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return JSON.parse(await res.text()) as Record<string, unknown>;
+  }
+
+  it('carry redacted: false for those who may read them (batch filing, an appeal)', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    await seedUser({ id: 'p' });
+    const filed = await post('/api/records', 'judge', { subject_ids: ['p'], claim: '说好八点五排结果没来也没说一声' });
+    expect((filed.records as Array<Record<string, unknown>>)[0].redacted).toBe(false);
+    await env.DB.prepare(
+      "INSERT INTO records (subject_id, reporter_id, type, delta, claim, status, verdict_source) VALUES ('p', 'judge', 'no_show', -15, '没来', 'decided', 'ai')",
+    ).run();
+    const id = Number((await env.DB.prepare("SELECT id FROM records WHERE status = 'decided'").first<{ id: number }>())?.id);
+    const appealed = await post(`/api/records/${id}/appeal`, 'p', { reason: '不服' });
+    expect((appealed.record as Record<string, unknown>).redacted).toBe(false);
+  });
+});
+

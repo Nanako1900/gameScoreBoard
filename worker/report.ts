@@ -11,14 +11,15 @@ import { ApiError } from './errors';
 import { loadAiConfig } from './ai/config';
 import { fallbackNarrative, writeNarrative, type ReportStats } from './ai/report';
 import { weekStartLocal, weekStartUtcSql } from './time';
+import { statementWindowHours } from './case-limits';
 
 const DAY_MS = 86_400_000;
 
 /**
  * Last week's report is written from Monday 10:30 on (board time), not at
- * midnight: a case filed late on Sunday has had the morning to be answered and
- * judged, so it counts in the week it belongs to — and a report pushed to the
- * channel (P8) does not wake anyone up.
+ * midnight — so a report pushed to the channel (P8) does not wake anyone up —
+ * and once last week's cases are judged (see lastWeekStillOpen), so a case
+ * filed late on Sunday is counted in the week it was filed.
  */
 export const REPORT_DUE_AFTER_MS = (10 * 60 + 30) * 60_000;
 
@@ -47,8 +48,8 @@ interface ReportRow {
 }
 
 /** Local Monday of the week BEFORE the current one — the week being reported on. */
-export function previousWeekStart(offsetHours: number): string {
-  const current = weekStartLocal(offsetHours);
+export function previousWeekStart(offsetHours: number, now = Date.now()): string {
+  const current = weekStartLocal(offsetHours, now);
   const ms = Date.parse(`${current}T00:00:00Z`) - 7 * DAY_MS;
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -248,6 +249,31 @@ export async function getLatestReport(db: D1Database): Promise<WeeklyReport | nu
 }
 
 /**
+ * Is a case filed that week still waiting for its statement, or being judged?
+ * The report waits for it — but no longer than one statement window past the
+ * week's end, plus an hour, so a stuck case cannot hold the report off.
+ */
+async function lastWeekStillOpen(
+  db: D1Database,
+  env: Env,
+  weekStart: string,
+  offsetHours: number,
+  now: number,
+): Promise<boolean> {
+  const { from, to } = weekBounds(weekStart, offsetHours);
+  const giveUpAt = Date.parse(`${to.replace(' ', 'T')}Z`) + (statementWindowHours(env) + 1) * 3_600_000;
+  if (now >= giveUpAt) return false;
+  const open = await db
+    .prepare(
+      `SELECT 1 AS open FROM records
+        WHERE created_at >= ? AND created_at < ? AND status IN ('awaiting_statement', 'judging') LIMIT 1`,
+    )
+    .bind(from, to)
+    .first<{ open: number }>();
+  return open !== null;
+}
+
+/**
  * Generate last week's report if it does not exist yet — once it is due
  * (Monday 10:30, see REPORT_DUE_AFTER_MS).
  *
@@ -262,10 +288,11 @@ export async function ensureWeeklyReport(
   offsetHours: number,
   now = Date.now(),
 ): Promise<WeeklyReport | null> {
-  const weekStart = previousWeekStart(offsetHours);
+  const weekStart = previousWeekStart(offsetHours, now);
   const existing = await getReport(db, weekStart);
   if (existing) return existing;
   if (!reportDue(offsetHours, now)) return null;
+  if (await lastWeekStillOpen(db, env, weekStart, offsetHours, now)) return null;
 
   const stats = await computeStats(db, weekStart, offsetHours);
   // Nothing happened at all — a card full of zeros is worse than no card, and on
@@ -309,6 +336,15 @@ export async function regenerateReport(
 ): Promise<WeeklyReport> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
     throw new ApiError(400, '周起始日格式应为 YYYY-MM-DD');
+  }
+  // A finished week, starting on a Monday: a week still running (or to come)
+  // would become "the latest report" and stand in for the real one.
+  const monday = new Date(`${weekStart}T00:00:00Z`);
+  if (Number.isNaN(monday.getTime()) || monday.getUTCDay() !== 1) {
+    throw new ApiError(400, '周起始日应为周一');
+  }
+  if (weekStart > previousWeekStart(offsetHours)) {
+    throw new ApiError(400, '只能重新生成已经结束的周');
   }
   const stats = await computeStats(db, weekStart, offsetHours);
   const cfg = await loadAiConfig(db, env);
