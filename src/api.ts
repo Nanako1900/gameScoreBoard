@@ -313,3 +313,38 @@ export function testAiConfig(input: {
 export function logout(): Promise<{ ok: true }> {
   return post<{ ok: true }>('/auth/logout');
 }
+
+// --- Discord binding (Node backend only) -----------------------------------
+
+/** What the SPA may know about the caller's own binding — never the Discord id. */
+export interface DiscordLinkInfo {
+  discord_username: string;
+  linked_at: string;
+}
+
+/**
+ * URL that starts binding. A top-level navigation (not a fetch): the API sends
+ * the browser through Discord's consent page and back to `/?linked=discord`.
+ */
+export const DISCORD_LINK_URL = `${API_BASE}/link/discord`;
+
+/**
+ * The caller's Discord binding, or null when unbound. Resolves `undefined` when
+ * the backend has no Discord support at all — the old Worker answers 404 here —
+ * so the UI can hide itself instead of offering a button that leads nowhere.
+ */
+export async function getDiscordLink(): Promise<DiscordLinkInfo | null | undefined> {
+  try {
+    const { link } = await request<{ link: DiscordLinkInfo | null }>('/api/me/discord');
+    // `undefined` is reserved for "unsupported"; an answer always means bound or not.
+    return link ?? null;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
+  }
+}
+
+/** Remove the caller's binding. The response body carries nothing the UI needs. */
+export async function unlinkDiscord(): Promise<void> {
+  await post<unknown>('/api/me/discord/unlink');
+}

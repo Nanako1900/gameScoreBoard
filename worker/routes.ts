@@ -78,13 +78,16 @@ import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
   cookieNames,
+  buildClearNextCookie,
   buildClearSessionCookie,
   buildClearStateCookie,
+  buildNextCookie,
   buildSessionCookie,
   buildStateCookie,
   getCookie,
   makeSignedState,
   readSignedState,
+  safeNextPath,
   signSession,
   verifySession,
 } from './session';
@@ -546,6 +549,10 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const { state, cookieValue } = await makeSignedState(env.SESSION_SECRET);
     c.header('Set-Cookie', buildStateCookie(cookieValue, cookieConfig(env)), { append: true });
+    // ?next=/link/... — come back to a binding page (the Discord bot's link)
+    // instead of the SPA. Only this host's /link/ paths are accepted.
+    const next = safeNextPath(c.req.query('next'));
+    if (next) c.header('Set-Cookie', buildNextCookie(next, cookieConfig(env)), { append: true });
     return c.redirect(buildAuthorizeUrl(env, redirectUri, state), 302);
   });
 
@@ -580,6 +587,10 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const cfg = cookieConfig(env);
     c.header('Set-Cookie', buildSessionCookie(session, cfg), { append: true });
     c.header('Set-Cookie', buildClearStateCookie(cfg), { append: true });
+    const nextRaw = getCookie(c.req.raw, cookieNames(cfg).next);
+    const next = safeNextPath(nextRaw ? decodeURIComponent(nextRaw) : null);
+    if (nextRaw) c.header('Set-Cookie', buildClearNextCookie(cfg), { append: true });
+    if (next) return c.redirect(next, 302);
     // For a split deploy, FRONTEND_URL sends the browser back to the SPA origin;
     // unset → relative path (single-origin: unified Worker or EdgeOne proxy).
     const frontend = env.FRONTEND_URL ? env.FRONTEND_URL.replace(/\/$/, '') : '';

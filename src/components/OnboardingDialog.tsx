@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { User } from '../types';
 import { ApiError, updateDisplayName, updateRoles } from '../api';
+import { DiscordLinkCard } from './DiscordLinkCard';
 import { Modal } from './Modal';
 import './onboarding-dialog.css';
 
@@ -155,6 +156,9 @@ export function OnboardingDialog({
           ))}
         </div>
       </div>
+
+      {/* Renders nothing on a backend without Discord support. */}
+      <DiscordLinkCard />
 
       {error && (
         <p className="ob__error" role="alert">

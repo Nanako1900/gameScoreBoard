@@ -8,13 +8,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "esbuild src/main.ts src/migrate-main.ts src/import-d1-main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --sourcemap --outdir=dist",
+    "build": "esbuild src/main.ts src/migrate-main.ts src/import-d1-main.ts src/bot-main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --sourcemap --outdir=dist",
     "start": "node --enable-source-maps dist/main.js",
     "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
+    "discord.js": "^14.27.0",
     "hono": "^4.12.27",
     "linkedom": "^0.18.14",
     "pg": "^8.23.1"
