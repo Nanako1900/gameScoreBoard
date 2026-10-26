@@ -10,7 +10,7 @@
 
 | 命令 | 作用 | 谁看得到 |
 |---|---|---|
-| `/link` | 给一个按钮，跳到 `https://api.nanako.org/link/discord` 绑定账号 | 只有自己 |
+| `/link` | 给一个按钮，跳到 `https://capi.nanako.org/link/discord` 绑定账号 | 只有自己 |
 | `/unlink` | 解除绑定 | 只有自己 |
 | `/score [user]` | 信誉分（查自己时带段位和待办） | 只有自己 |
 | `/top` | 排行榜前 10 | 频道里所有人（不 @ 任何人） |
@@ -44,7 +44,7 @@ Discord 里**没有任何管理操作**，改判、撤销、改分都只在网�
      bot 只用 `Guilds` intent，不读任何消息。
 4. **OAuth2**：
    - Reset Secret → 复制，就是 `DISCORD_CLIENT_SECRET`；
-   - Redirects 加 `https://api.nanako.org/link/discord/callback`。必须和 `APP_URL` 加
+   - Redirects 加 `https://capi.nanako.org/link/discord/callback`。必须和 `APP_URL` 加
      `/link/discord/callback` **一字不差**，否则 Discord 会拒绝授权。
 
 ## 2. 把 bot 拉进服务器
@@ -201,9 +201,9 @@ bot 启动时会检查其余变量，缺了或格式不对就直接退出，日�
    - `gateway session starts left today: 9xx/1000`
    - `gateway ready as <bot 名字>`
    - `registered 9 slash commands in guild 1114391825336250432`
-2. 在服务器里输入 `/`，能看到上面 7 个命令（服务器命令是即时生效的）。
+2. 在服务器里输入 `/`，能看到上面 9 个命令（服务器命令是即时生效的）。
 3. `/link` → 点按钮 → 网页登录 Nanako → Discord 授权页 → 确认页点「确认绑定」→ 跳回
-   `https://score.nanako.org/?linked=discord`。
+   `https://community.nanako.org/?linked=discord`。
 4. `/score`：只有自己看得到的分数卡片；`/top`：频道里所有人都看得到的榜，没有人被 @。
 5. 想看 Gateway 状态：Coolify 里打开 `bot` 的终端，执行
    `wget -qO- http://127.0.0.1:8788/status`，正常是 `{"gateway":"ready"}`（未连上时返回 503）。

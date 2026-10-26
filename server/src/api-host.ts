@@ -1,4 +1,4 @@
-// The API host (api.nanako.org): the Worker app, plus the Node-only Discord
+// The API host (capi.nanako.org): the Worker app, plus the Node-only Discord
 // binding routes (link-routes.ts) in front of it for their own paths.
 
 import type { Hono } from 'hono';

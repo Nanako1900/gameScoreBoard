@@ -291,7 +291,7 @@ export interface BotConfig {
   appId: string;
   guildId: string;
   databaseUrl: string;
-  /** Origin without a trailing slash, e.g. https://api.nanako.org. */
+  /** Origin without a trailing slash, e.g. https://capi.nanako.org. */
   appUrl: string;
   frontendUrl: string;
   /** Where verdicts are posted (P5); null leaves the broadcast off. */

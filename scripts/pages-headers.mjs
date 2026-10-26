@@ -5,7 +5,7 @@
 // image proxy), which only exists as VITE_API_BASE at build time — so this file
 // is generated after `vite build` instead of living in public/.
 //
-// Usage: VITE_API_BASE=https://api.nanako.org node scripts/pages-headers.mjs [dist]
+// Usage: VITE_API_BASE=https://capi.nanako.org node scripts/pages-headers.mjs [dist]
 
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';

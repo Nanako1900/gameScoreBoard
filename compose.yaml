@@ -77,9 +77,9 @@ services:
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
       # Timer for heal, overdue judging and the weekly report (1/true/yes).
       JOBS_ENABLED: ${JOBS_ENABLED:-false}
-      APP_URL: ${APP_URL:-https://api.nanako.org}
-      FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://score.nanako.org}
+      APP_URL: ${APP_URL:-https://capi.nanako.org}
+      FRONTEND_URL: ${FRONTEND_URL:-https://community.nanako.org}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://community.nanako.org}
       HOST_ONLY_COOKIES: ${HOST_ONLY_COOKIES:-1}
       RESET_TZ_OFFSET: ${RESET_TZ_OFFSET:-8}
       OAUTH_BASE_URL: ${OAUTH_BASE_URL:-https://nanako.org}
@@ -135,8 +135,8 @@ services:
       DISCORD_APP_ID: ${DISCORD_APP_ID:-}
       GUILD_ID: ${GUILD_ID:-1114391825336250432}
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
-      APP_URL: ${APP_URL:-https://api.nanako.org}
-      FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
+      APP_URL: ${APP_URL:-https://capi.nanako.org}
+      FRONTEND_URL: ${FRONTEND_URL:-https://community.nanako.org}
       # Same switch as the app's: /unlink refuses while it is on.
       READ_ONLY: ${READ_ONLY:-}
       # P5: the private channel verdicts are posted to (#edg-信誉分). Empty:
