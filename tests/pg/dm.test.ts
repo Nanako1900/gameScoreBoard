@@ -881,23 +881,70 @@ describe('refusals, kept and counted right', () => {
     ]);
   });
 
-  it('a refused reminder moved in place stays refused: behind fresh events, at its own retry time', async () => {
+  it('a reminder moved before it went out starts over: a failed try or a refusal holds nothing up', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    const key = `dm:case:${filed.id}:deadline`;
+    // It failed once and was refused once, and waits to be tried again.
+    await pool.query(
+      "UPDATE outbox SET attempts = 7, refused_since = now() - interval '1 hour', available_at = now() + interval '5 minutes' WHERE dedupe_key = $1",
+      [key],
+    );
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+2 days') WHERE id = ?").bind(filed.id).run();
+    const [row] = (await pool.query(
+      "SELECT attempts, refused_since, available_at > now() + interval '1 day' AS later FROM outbox WHERE dedupe_key = $1",
+      [key],
+    )).rows;
+    expect(row).toEqual({ attempts: 0, refused_since: null, later: true });
+    // A new case's filing DM to the same person is not held up behind it.
+    await file(judge, subject, 'late_major');
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'dm.filed'");
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    expect(discord.sent.filter((m) => text(m.message).includes('有人给你立案了'))).toHaveLength(2);
+  });
+
+  it('a reminder left claimed by a dispatcher that died is simply moved, not sent twice', async () => {
     const { judge, subject } = await people();
     const filed = await file(judge, subject);
     const key = `dm:case:${filed.id}:deadline`;
     await pool.query(
-      "UPDATE outbox SET refused_since = now() - interval '1 hour', available_at = now() + interval '5 minutes' WHERE dedupe_key = $1",
+      "UPDATE outbox SET claim_token = gen_random_uuid(), claimed_at = now() - interval '10 minutes', attempts = 1 WHERE dedupe_key = $1",
       [key],
     );
-    // Cut to under 2 hours: the reminder would be due at once.
-    await env.DB.prepare("UPDATE records SET created_at = datetime('now', '-1 hour'), deadline_at = datetime('now', '+90 minutes') WHERE id = ?")
-      .bind(filed.id)
-      .run();
-    const [row] = (await pool.query(
-      'SELECT refused_since IS NOT NULL AS refused, available_at > now() + interval \'4 minutes\' AS waits FROM outbox WHERE dedupe_key = $1',
-      [key],
-    )).rows;
-    expect(row).toEqual({ refused: true, waits: true });
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+1 day') WHERE id = ?").bind(filed.id).run();
+    const rows = (await pool.query("SELECT dedupe_key = $1 AS current, claim_token IS NULL AS free FROM outbox WHERE kind = 'dm.deadline'", [key])).rows;
+    expect(rows).toEqual([{ current: true, free: true }]);
+  });
+
+  it('a dispatcher claiming the reminder while it is being moved: the move waits, then makes a new one', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    const key = `dm:case:${filed.id}:deadline`;
+    const claimer = await pool.connect();
+    try {
+      await claimer.query('BEGIN');
+      await claimer.query('UPDATE outbox SET claim_token = gen_random_uuid(), claimed_at = now(), attempts = attempts + 1 WHERE dedupe_key = $1', [key]);
+      const move = env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+1 day') WHERE id = ?").bind(filed.id).run();
+      move.catch(() => undefined);
+      // The move is waiting on the claim's lock.
+      for (let i = 0; i < 500; i += 1) {
+        const waiting = await pool.query(
+          "SELECT COUNT(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        );
+        if (waiting.rows[0].n > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await claimer.query('COMMIT');
+      await move;
+    } finally {
+      claimer.release();
+    }
+    const rows = (await pool.query("SELECT dedupe_key = $1 AS current, claim_token IS NOT NULL AS claimed FROM outbox WHERE kind = 'dm.deadline' ORDER BY id", [key])).rows;
+    expect(rows).toEqual([
+      { current: false, claimed: true },
+      { current: true, claimed: false },
+    ]);
   });
 
   it('a reminder re-armed after a refusal starts afresh, and holds nothing up', async () => {
