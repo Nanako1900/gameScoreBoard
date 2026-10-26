@@ -19,6 +19,8 @@ import { defFor, getRecordRow, loadRecordItem } from './case-reads';
 import {
   assertRateLimits,
   assertWeeklyBonusCap,
+  BonusCapReached,
+  bonusCapGuard,
   normalizeNarrative,
   normalizeNote,
   statementWindowHours,
@@ -144,11 +146,17 @@ export async function fileCase(
 
     const reason = `record:${recordId}`;
     const applied = appliedDeltaSql(subject.id, reason);
-    await db.batch([
-      ...scoreMutation(db, subject.id, def.base, reason),
+    const results = await db.batch([
+      // The cap once more, inside the write (see bonusCapGuard).
+      ...scoreMutation(db, subject.id, def.base, reason, bonusCapGuard(subject.id, def.base, opts.offsetHours)),
       // What actually landed after clamping, read back from the event just written.
       db.prepare(`UPDATE records SET delta = ${applied.sql} WHERE id = ?`).bind(...applied.binds, recordId),
     ]);
+    if ((results[1]?.meta?.changes ?? 0) === 0) {
+      // Another bonus for this player took the week's last points meanwhile.
+      await db.prepare('DELETE FROM records WHERE id = ?').bind(recordId).run();
+      throw new BonusCapReached();
+    }
     return loadRecordItem(db, recordId);
   }
 

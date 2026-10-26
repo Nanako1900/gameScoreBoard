@@ -110,6 +110,18 @@ function caseGuard(recordId: number, status: CaseStatus, delta?: number): RowGua
       };
 }
 
+/**
+ * Lock the case row for the rest of the batch (PostgreSQL; a no-op on D1,
+ * whose batches never interleave). Unconditional and first — before the user
+ * row — so every guard after it sees one state of the case: an appeal,
+ * withdrawal or reclassification queues behind this batch instead of landing
+ * between its statements, where it would leave the score moved but the record
+ * not (and a retry would apply it twice).
+ */
+function lockCase(db: D1Database, recordId: number): D1PreparedStatement {
+  return db.prepare('UPDATE records SET status = status WHERE id = ?').bind(recordId);
+}
+
 // --- Statement ---------------------------------------------------------------
 
 /**
@@ -239,11 +251,37 @@ export async function judgeAndDecide(db: D1Database, env: Env, id: number): Prom
   const reason = `record:${id}`;
   const applied = appliedDeltaSql(subject.id, reason);
 
-  // Score first, record second: the guard reads the status the record-UPDATE is
-  // about to change. The AI call above is seconds long, so a stale-reclaiming
-  // sweep really can be running the same case concurrently.
+  // Case lock, then score, then audit, then record: the guard reads the status
+  // the record-UPDATE is about to change. The AI call above is seconds long, so
+  // a stale-reclaiming sweep really can be running the same case concurrently;
+  // the loser changes nothing, not even the audit trail.
+  const guard = caseGuard(id, 'judging');
   await db.batch([
-    ...scoreMutation(db, subject.id, verdictDelta, reason, caseGuard(id, 'judging')),
+    lockCase(db, id),
+    ...scoreMutation(db, subject.id, verdictDelta, reason, guard),
+    db
+      .prepare(
+        `INSERT INTO ai_verdicts
+           (record_id, kind, provider, model, prompt_version, raw_response, parsed_delta,
+            applied_delta, clamped, confidence, latency_ms, error)
+         SELECT CAST(? AS INTEGER), 'sentence', ?, ?, ?, ?, CAST(? AS INTEGER), ${applied.sql},
+                CAST(? AS INTEGER), CAST(? AS DOUBLE PRECISION), CAST(? AS INTEGER), ?
+          WHERE ${guard.sql}`,
+      )
+      .bind(
+        id,
+        outcome.audit.provider,
+        outcome.audit.model,
+        outcome.audit.promptVersion,
+        outcome.audit.rawResponse,
+        outcome.audit.parsedDelta,
+        ...applied.binds,
+        outcome.audit.clamped ? 1 : 0,
+        outcome.audit.confidence,
+        outcome.audit.latencyMs,
+        outcome.audit.error,
+        ...guard.binds,
+      ),
     db
       .prepare(
         `UPDATE records
@@ -259,26 +297,6 @@ export async function judgeAndDecide(db: D1Database, env: Env, id: number): Prom
         outcome.reasoning,
         JSON.stringify(outcome.factors),
         id,
-      ),
-    db
-      .prepare(
-        `INSERT INTO ai_verdicts
-           (record_id, kind, provider, model, prompt_version, raw_response, parsed_delta,
-            applied_delta, clamped, confidence, latency_ms, error)
-         VALUES (?, 'sentence', ?, ?, ?, ?, ?, ${applied.sql}, ?, ?, ?, ?)`,
-      )
-      .bind(
-        id,
-        outcome.audit.provider,
-        outcome.audit.model,
-        outcome.audit.promptVersion,
-        outcome.audit.rawResponse,
-        outcome.audit.parsedDelta,
-        ...applied.binds,
-        outcome.audit.clamped ? 1 : 0,
-        outcome.audit.confidence,
-        outcome.audit.latencyMs,
-        outcome.audit.error,
       ),
   ]);
 }
@@ -407,12 +425,16 @@ export async function revokeCase(
   const subject = await getUserById(db, rec.subject_id);
   if (!subject) throw new ApiError(404, '选手不存在');
 
-  // Guarded + score-first, so a double-submitted revoke refunds only once.
+  // Guarded + score-first, so a double-submitted revoke refunds only once. The
+  // guard includes the delta read above: an override landing in between moves
+  // what the case is worth, and refunding the old amount would be wrong.
+  const guard = caseGuard(id, rec.status as CaseStatus, rec.delta);
   const results = await db.batch([
-    ...scoreMutation(db, subject.id, -rec.delta, `revoke:${id}`, caseGuard(id, rec.status as CaseStatus)),
+    lockCase(db, id),
+    ...scoreMutation(db, subject.id, -rec.delta, `revoke:${id}`, guard),
     db
-      .prepare("UPDATE records SET status = 'revoked' WHERE id = ? AND status = ?")
-      .bind(id, rec.status),
+      .prepare("UPDATE records SET status = 'revoked' WHERE id = ? AND status = ? AND delta = ?")
+      .bind(id, rec.status, rec.delta),
   ]);
   if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
     throw new ApiError(409, '记录状态已变化，请刷新后重试');
@@ -449,6 +471,7 @@ export async function overrideCase(
   const guard = caseGuard(id, rec.status as CaseStatus, rec.delta);
   const applied = appliedDeltaSql(subject.id, event);
   const results = await db.batch([
+    lockCase(db, id),
     ...scoreMutation(db, subject.id, target - rec.delta, event, guard),
     db
       .prepare(

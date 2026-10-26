@@ -5,14 +5,55 @@
 // user's score is where the last one ended. A lost update breaks the chain.
 
 import { describe, expect, it } from 'vitest';
-import { overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
-import { createSession, setRsvp } from '../../worker/sessions';
+import { appealCase, judgeAndDecide, overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
+import { cancelSession, createSession, setRsvp } from '../../worker/sessions';
 import { fileCase } from '../../worker/case-filing';
 import { scoreMutation, weeklyHeal } from '../../worker/db';
+import { WEEKLY_BONUS_CAP } from '../../shared/scoring';
 import { seedUser } from '../worker/helpers';
-import { env } from './cloudflare-test';
+import { env, pool } from './cloudflare-test';
 
 const OFFSET_HOURS = 8;
+
+/** Until `n` backends in this database are waiting on a lock (or 5 s pass). */
+async function lockWaiters(n: number): Promise<void> {
+  const until = Date.now() + 5_000;
+  while (Date.now() < until) {
+    const res = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    );
+    if (res.rows[0].n >= n) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`expected ${n} lock waiters`);
+}
+
+/**
+ * Make an interleaving happen on purpose: hold a row lock, start each
+ * contender in turn and wait until it is queued on that lock, then let go.
+ * PostgreSQL hands the lock out in queue order, so the contenders run in the
+ * order given — after every one of them has already read the old state.
+ */
+async function queuedBehind<T>(lockSql: string, params: unknown[], contenders: Array<() => Promise<T>>) {
+  const holder = await pool.connect();
+  try {
+    await holder.query('BEGIN');
+    await holder.query(lockSql, params);
+    const started: Promise<T>[] = [];
+    for (const run of contenders) {
+      const p = run();
+      p.catch(() => undefined);
+      started.push(p);
+      await lockWaiters(started.length);
+    }
+    await holder.query('COMMIT');
+    return await Promise.allSettled(started);
+  } finally {
+    holder.release();
+  }
+}
+
+const lockRecord = 'UPDATE records SET status = status WHERE id = $1';
 
 interface Event {
   delta: number;
@@ -106,10 +147,47 @@ describe('concurrent score changes on PostgreSQL', () => {
   it('refunds a revoked case once, however many revokes race', async () => {
     const admin = await seedUser({ id: 'admin', admin: true });
     await seedUser({ id: 'subject' });
-    const id = await decidedCase('subject', 'admin', -15, 85);
-    const settled = await Promise.allSettled(Array.from({ length: 4 }, () => revokeCase(env.DB, admin, id)));
+    // Starting at 60, so a second refund would show (85 + 15 would hide behind the 100 cap).
+    const id = await decidedCase('subject', 'admin', -15, 60);
+    const settled = await queuedBehind(lockRecord, [id], Array.from({ length: 4 }, () => () => revokeCase(env.DB, admin, id)));
     expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect((await chainOf('subject', 85)).score).toBe(100);
+    const { score, events } = await chainOf('subject', 60);
+    expect(score).toBe(75);
+    expect(events).toHaveLength(1);
+  });
+
+  it('a revoke and an appeal of the same case: exactly one of them happens, wholly', async () => {
+    const admin = await seedUser({ id: 'admin', admin: true });
+    const subject = await seedUser({ id: 'subject' });
+    const id = await decidedCase('subject', 'admin', -15, 60);
+    // The appeal gets the case first; the revoke, having read 'decided', comes second.
+    const [appeal, revoke] = await queuedBehind(lockRecord, [id], [
+      () => appealCase(env.DB, subject, id, '我那天在医院'),
+      () => revokeCase(env.DB, admin, id),
+    ]);
+    expect(appeal.status).toBe('fulfilled');
+    expect(revoke).toMatchObject({ status: 'rejected', reason: { status: 409 } });
+    // No refund without the revoke: the score and its events agree, at 60.
+    const { score, events } = await chainOf('subject', 60);
+    expect(events).toEqual([]);
+    expect(score).toBe(60);
+    const rec = await env.DB.prepare('SELECT status FROM records WHERE id = ?').bind(id).first<{ status: string }>();
+    expect(rec?.status).toBe('appealed');
+  });
+
+  it('a revoke that read the case before an override refunds nothing, not the old amount', async () => {
+    const admin = await seedUser({ id: 'admin', admin: true });
+    await seedUser({ id: 'subject' });
+    const id = await decidedCase('subject', 'admin', -15, 60);
+    const [override, revoke] = await queuedBehind(lockRecord, [id], [
+      () => overrideCase(env.DB, admin, id, -8, '情有可原'),
+      () => revokeCase(env.DB, admin, id),
+    ]);
+    expect(override.status).toBe('fulfilled');
+    expect(revoke).toMatchObject({ status: 'rejected', reason: { status: 409 } });
+    expect((await chainOf('subject', 60)).score).toBe(67);
+    const rec = await env.DB.prepare('SELECT status, delta FROM records WHERE id = ?').bind(id).first();
+    expect(rec).toEqual({ status: 'decided', delta: -8 });
   });
 
   it('applies simultaneous bonuses filed for the same player without losing any', async () => {
@@ -136,8 +214,12 @@ describe('concurrent score changes on PostgreSQL', () => {
       { starts_at: new Date(Date.now() + 3_600_000).toISOString(), capacity: 2 },
       OFFSET_HOURS,
     );
-    // The organizer holds one seat; one is left.
-    const settled = await Promise.allSettled(players.map((p) => setRsvp(env.DB, p, session.id, 'going')));
+    // The organizer holds one seat; one is left. All four read "1 going" first.
+    const settled = await queuedBehind(
+      'UPDATE game_sessions SET status = status WHERE id = $1',
+      [session.id],
+      players.map((p) => () => setRsvp(env.DB, p, session.id, 'going')),
+    );
     expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const going = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM session_players WHERE session_id = ? AND rsvp = 'going'",
@@ -157,9 +239,69 @@ describe('concurrent score changes on PostgreSQL', () => {
       { offsetHours: OFFSET_HOURS, skipRateLimit: true },
       env as never,
     );
-    const settled = await Promise.allSettled([withdrawCase(env.DB, judge, rec.id), withdrawCase(env.DB, judge, rec.id)]);
-    expect(settled.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
-    const rejected = settled.find((r) => r.status === 'rejected') as PromiseRejectedResult;
-    expect(rejected.reason).toMatchObject({ status: expect.any(Number) });
+    // Both read 'awaiting_statement' before either writes.
+    const settled = await queuedBehind(lockRecord, [rec.id], [
+      () => withdrawCase(env.DB, judge, rec.id),
+      () => withdrawCase(env.DB, judge, rec.id),
+    ]);
+    expect(settled[0].status).toBe('fulfilled');
+    expect(settled[1]).toMatchObject({ status: 'rejected', reason: { status: 409 } });
+  });
+
+  it('holds the weekly bonus cap when bonuses for one player are filed at once', async () => {
+    const judge = await seedUser({ id: 'judge', judge: true });
+    await seedUser({ id: 'p', score: 50 });
+    const settled = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        fileCase(env.DB, judge, { subject_id: 'p', type: 'on_time_bonus' }, { offsetHours: OFFSET_HOURS, skipRateLimit: true }, env as never),
+      ),
+    );
+    const won = settled.filter((r) => r.status === 'fulfilled').length;
+    const { score } = await chainOf('p', 50);
+    expect(score - 50).toBeLessThanOrEqual(WEEKLY_BONUS_CAP);
+    expect(score - 50).toBe(won * 2);
+    // A lost race leaves no half-made record behind.
+    const recs = await env.DB.prepare("SELECT COUNT(*) AS n FROM records WHERE subject_id = 'p'").first<{ n: number }>();
+    expect(recs?.n).toBe(won);
+  });
+
+  it('two judges racing for one case: one verdict, one score change, one audit row', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    await seedUser({ id: 'subject', score: 80 });
+    const row = await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, claim, status, judging_started_at)
+       VALUES ('subject', 'judge', 'no_show', '说好八点开黑结果没来', 'judging', datetime('now'))`,
+    ).run();
+    const id = Number(row.meta.last_row_id);
+    const noAi = { ...env, AI_ENABLED: 'false' } as never;
+    const settled = await queuedBehind(lockRecord, [id], [() => judgeAndDecide(env.DB, noAi, id), () => judgeAndDecide(env.DB, noAi, id)]);
+    expect(settled.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    const { events } = await chainOf('subject', 80);
+    expect(events).toHaveLength(1);
+    const audits = await env.DB.prepare("SELECT COUNT(*) AS n FROM ai_verdicts WHERE record_id = ? AND kind = 'sentence'")
+      .bind(id)
+      .first<{ n: number }>();
+    expect(audits?.n).toBe(1);
+  });
+
+  it('an RSVP that read the session before it was cancelled is refused, not written', async () => {
+    const organizer = await seedUser({ id: 'org' });
+    const player = await seedUser({ id: 'p1' });
+    const session = await createSession(
+      env.DB,
+      organizer,
+      { starts_at: new Date(Date.now() + 3_600_000).toISOString() },
+      OFFSET_HOURS,
+    );
+    const [cancel, rsvp] = await queuedBehind('UPDATE game_sessions SET status = status WHERE id = $1', [session.id], [
+      () => cancelSession(env.DB, organizer, session.id),
+      () => setRsvp(env.DB, player, session.id, 'going'),
+    ]);
+    expect(cancel.status).toBe('fulfilled');
+    expect(rsvp).toMatchObject({ status: 'rejected', reason: { status: 400 } });
+    const row = await env.DB.prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = 'p1'")
+      .bind(session.id)
+      .first();
+    expect(row).toBeNull();
   });
 });
