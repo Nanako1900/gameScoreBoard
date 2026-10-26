@@ -11,6 +11,8 @@ import {
   rollCall,
   setRsvp,
   settleSession,
+  MAX_OPEN_SESSIONS,
+  MAX_SESSIONS_PER_DAY,
 } from '../../worker/sessions';
 import type { SessionDetail, User } from '../../worker/types';
 import { OFFSET_HOURS, noAiEnv, scoreEventCount, scoreOf, seedUser } from './helpers';
@@ -89,6 +91,26 @@ describe('createSession', () => {
     await expect(
       createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE, duration_min: 5 }, OFFSET_HOURS),
     ).rejects.toThrow(/时长/);
+  });
+});
+
+describe('organizer limits', () => {
+  it(`allows ${MAX_OPEN_SESSIONS} open sessions at once, and ${MAX_SESSIONS_PER_DAY} a day`, async () => {
+    const { organizer } = await cast();
+    const made = [];
+    for (let i = 0; i < MAX_OPEN_SESSIONS; i += 1) {
+      made.push(await createSession(env.DB, organizer, { title: `局${i}`, starts_at: FUTURE }, OFFSET_HOURS));
+    }
+    await expect(createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS)).rejects.toMatchObject({
+      status: 429,
+    });
+    // Cancelling frees a slot — but not the day's count.
+    for (let i = MAX_OPEN_SESSIONS; i < MAX_SESSIONS_PER_DAY; i += 1) {
+      await cancelSession(env.DB, organizer, made[i - MAX_OPEN_SESSIONS].id);
+      made.push(await createSession(env.DB, organizer, { title: `局${i}`, starts_at: FUTURE }, OFFSET_HOURS));
+    }
+    await cancelSession(env.DB, organizer, made[MAX_SESSIONS_PER_DAY - MAX_OPEN_SESSIONS].id);
+    await expect(createSession(env.DB, organizer, { title: 'y', starts_at: FUTURE }, OFFSET_HOURS)).rejects.toThrow(/24 小时内/);
   });
 });
 

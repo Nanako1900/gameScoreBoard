@@ -147,6 +147,7 @@ function main(): void {
     frontendUrl: config.frontendUrl,
     readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
     offsetHours: resetOffsetHours(process.env.RESET_TZ_OFFSET),
+    sessionCards: config.sessionChannelId !== null,
   };
   // The Worker's Env for the domain calls that need one: a statement sent from
   // Discord is judged right away, with the same AI settings as the web.

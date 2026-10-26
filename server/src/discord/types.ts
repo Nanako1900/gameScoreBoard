@@ -34,6 +34,8 @@ export interface BotContext {
   readOnly?: boolean;
   /** The board's time zone (RESET_TZ_OFFSET), for /yue's "今晚 20:00". */
   offsetHours?: number;
+  /** A session channel is configured, so new sessions get a card there. */
+  sessionCards?: boolean;
 }
 
 export interface BotEmbedField {

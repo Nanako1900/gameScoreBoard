@@ -3,12 +3,14 @@
 // and /yue (discord/sessions.ts). Discord is a fake ChannelApi.
 
 import { describe, expect, it } from 'vitest';
-import { cancelSession, createSession, setRsvp, updateSession } from '../../worker/sessions';
+import { cancelSession, createSession, rollCall, setRsvp, settleSession, updateSession } from '../../worker/sessions';
+import { adminUpdateUser } from '../../worker/db';
+import { noAiEnv } from '../worker/helpers';
 import { importD1 } from '../../server/src/import-d1';
 import { linkAccounts } from '../../server/src/discord/links';
 import { handleCommand } from '../../server/src/discord/commands';
 import { handleRsvpButton } from '../../server/src/discord/sessions';
-import { createDispatcher, type ChannelApi } from '../../server/src/outbox/dispatcher';
+import { createDispatcher, SESSION_DM_BUDGET, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import type { ChannelMessage } from '../../server/src/discord/verdict';
 import type { User } from '../../worker/types';
 import { OFFSET_HOURS, seedUser } from '../worker/helpers';
@@ -36,6 +38,7 @@ function fakeDiscord() {
   const sent: Array<{ channelId: string; message: ChannelMessage }> = [];
   const edits: Array<{ channelId: string; messageId: string; message: ChannelMessage }> = [];
   let next = 0;
+  const removed: string[] = [];
   const api: ChannelApi = {
     async send(channelId, message) {
       sent.push({ channelId, message });
@@ -45,12 +48,14 @@ function fakeDiscord() {
     async edit(channelId, messageId, message) {
       edits.push({ channelId, messageId, message });
     },
-    async remove() {},
+    async remove(_channelId, messageId) {
+      removed.push(messageId);
+    },
     async openDm(id) {
       return `dm-${id}`;
     },
   };
-  return { api, sent, edits };
+  return { api, sent, edits, removed };
 }
 
 const quiet = { log: () => undefined, warn: () => undefined, error: () => undefined };
@@ -274,5 +279,175 @@ describe('RSVP buttons and /yue', () => {
     expect((await handleCommand({ commandName: 'yue', caller: dc(8), targetUser: null, when: 'dayafter20' }, ctx)).content).toContain(
       '/link',
     );
+  });
+});
+
+describe('timed session events, moved and re-armed', () => {
+  async function scheduled(kind: string) {
+    return (
+      await pool.query(
+        `SELECT processed_at, result, round(extract(epoch FROM available_at - now()) / 60) AS in_minutes
+           FROM outbox WHERE kind = $1 ORDER BY id`,
+        [kind],
+      )
+    ).rows;
+  }
+
+  it('moving a session re-arms the reminder already sent, and the roll call moves with it', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), duration_min: 60 }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
+    await d.runOnce();
+    await d.runOnce();
+    const reminders = () => discord.sent.filter((m) => text(m.message).includes('15 分钟后开局')).length;
+    expect(reminders()).toBe(2); // org + a
+
+    await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    const [starting] = await scheduled('session.starting');
+    expect(starting).toMatchObject({ processed_at: null, in_minutes: 165 });
+    expect((await scheduled('dm.session.rollcall'))[0]).toMatchObject({ processed_at: null, in_minutes: 240 });
+    // When it comes round again, everyone going hears about it again — once.
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
+    await d.runOnce();
+    await d.runOnce();
+    await d.runOnce();
+    expect(reminders()).toBe(4);
+  });
+
+  it('a new length moves the roll-call reminder', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), duration_min: 60 }, OFFSET_HOURS);
+    await updateSession(env.DB, org, session.id, { duration_min: 240 });
+    expect((await scheduled('dm.session.rollcall'))[0]).toMatchObject({ in_minutes: 360 });
+  });
+
+  it('moved to start within 15 minutes: the stale reminder is dropped, not sent at the wrong time', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await updateSession(env.DB, org, session.id, { starts_at: new Date(Date.now() + 10 * 60_000).toISOString() });
+    expect((await scheduled('session.starting'))[0]).toMatchObject({ result: 'skipped' });
+  });
+
+  it('the card loses its buttons by itself when the session starts', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    expect(discord.sent[0].message.components).not.toEqual([]);
+    // It is now the start time.
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 60_000).toISOString(), session.id)
+      .run();
+    await pool.query("UPDATE outbox SET available_at = now() WHERE dedupe_key LIKE '%:card:start'");
+    await d.runOnce();
+    const last = discord.edits[discord.edits.length - 1].message;
+    expect(last.components).toEqual([]);
+    expect(text(last)).toContain('已开局');
+  });
+
+  it('a settled session shows as over, without buttons', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 3_600_000).toISOString(), session.id)
+      .run();
+    await rollCall(env.DB, org, session.id, [{ user_id: 'a', attendance: 'on_time' }, { user_id: 'org', attendance: 'on_time' }], OFFSET_HOURS);
+    await settleSession(env.DB, org, session.id, [], true, noAiEnv(), OFFSET_HOURS);
+    await d.runOnce();
+    const last = discord.edits[discord.edits.length - 1].message;
+    expect(text(last)).toContain('已结束');
+    expect(last.components).toEqual([]);
+  });
+
+  it('a changed answer (maybe → going) refreshes the card once', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'maybe');
+    await pool.query('DELETE FROM outbox');
+    await setRsvp(env.DB, a, session.id, 'going');
+    expect((await events()).map((e) => e.kind)).toEqual(['session.card']);
+  });
+
+  it('deleting the organizer takes the card down', async () => {
+    const { org } = await cast();
+    await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await adminUpdateUser(env.DB, 'org', { delete: true });
+    await d.runOnce();
+    expect(discord.removed).toEqual(['910000000000000001']);
+    expect((await pool.query("SELECT 1 FROM discord_messages WHERE entity = 'session'")).rowCount).toBe(0);
+  });
+
+  it('nobody gets the 15-minute DM twice, and a maybe gets none', async () => {
+    const { org, a, b } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
+    for (let i = 0; i < 3; i += 1) await d.runOnce();
+    // A second fan-out of the same start time adds nothing.
+    await pool.query("UPDATE outbox SET processed_at = NULL, result = NULL, available_at = now() WHERE kind = 'session.starting'");
+    for (let i = 0; i < 2; i += 1) await d.runOnce();
+    const to = discord.sent.filter((m) => text(m.message).includes('15 分钟后开局')).map((m) => m.channelId).sort();
+    expect(to).toEqual([`dm-${dc(1).id}`, `dm-${dc(2).id}`]);
+  });
+
+  it(`session DMs have their own daily allowance (${SESSION_DM_BUDGET}) and never use up a case's`, async () => {
+    await cast();
+    // Organizers can each run 5 sessions at once: enough of them to flood one invitee.
+    const organizers = 3;
+    for (let o = 0; o < organizers; o += 1) {
+      const organizer = await seedUser({ id: `o${o}` });
+      for (let i = 0; i < 5; i += 1) {
+        await createSession(env.DB, organizer, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+      }
+    }
+    const judge = await seedUser({ id: 'judge', judge: true });
+    const { fileCase } = await import('../../worker/cases');
+    await fileCase(env.DB, judge, { subject_id: 'a', type: 'afk', claim: '说好八点开黑结果没来也没说一声' }, { offsetHours: OFFSET_HOURS, skipRateLimit: true }, noAiEnv());
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind IN ('dm.filed', 'dm.deadline')");
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce();
+    const toA = discord.sent.filter((m) => m.channelId === `dm-${dc(2).id}`).map((m) => text(m.message));
+    expect(toA.filter((t) => t.includes('约你'))).toHaveLength(SESSION_DM_BUDGET);
+    expect(toA.some((t) => t.includes('有人给你立案了'))).toBe(true);
+  });
+});
+
+describe('/yue, more', () => {
+  it('refuses a slot that has already passed today', async () => {
+    await cast();
+    // Pick the board offset at which it is now 23:xx locally: tonight 20:00 is gone.
+    const utcHour = new Date().getUTCHours();
+    const offsetHours = (23 - utcHour + 24) % 24;
+    const reply = await handleCommand(
+      { commandName: 'yue', caller: dc(1), targetUser: null, when: 'tonight20' },
+      { ...ctx, offsetHours },
+    );
+    expect(reply.content).toContain('已经过了');
+    expect((await pool.query('SELECT 1 FROM game_sessions')).rowCount).toBe(0);
+  });
+
+  it('says where the card goes only when there is a session channel', async () => {
+    await cast();
+    const without = await handleCommand({ commandName: 'yue', caller: dc(1), targetUser: null, when: 'dayafter20' }, ctx);
+    expect(without.content).toContain('网页');
+    const withCards = await handleCommand(
+      { commandName: 'yue', caller: dc(1), targetUser: null, when: 'tomorrow20' },
+      { ...ctx, sessionCards: true },
+    );
+    expect(withCards.content).toContain('约局频道');
   });
 });

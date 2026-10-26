@@ -6,6 +6,10 @@
 -- Same outbox as 0003/0004. Card events are per session (entity 'session');
 -- DMs per recipient (entity 'user'). 'session.starting' is delivered by
 -- fanning out to whoever is going at that moment.
+--
+-- Notifications skip the organizer on the assumption that they made the
+-- change; when an admin cancels or moves someone else's session, the organizer
+-- sees it on the card and the web instead.
 
 /** A stored ISO 8601 instant (starts_at) as timestamptz; NULL if it is not one. */
 CREATE OR REPLACE FUNCTION outbox_iso(value text) RETURNS timestamptz
@@ -17,7 +21,11 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
-/** The starting and roll-call reminders of a session, (re)scheduled from its time. */
+/**
+ * The timed events of a session, (re)scheduled from its time and length: the
+ * 15-minute reminder, the card's own refresh at the start (its RSVP buttons go
+ * then), and the organizer's roll-call reminder at the end.
+ */
 CREATE OR REPLACE FUNCTION outbox_session_reminders(s game_sessions) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -31,6 +39,13 @@ BEGIN
   IF starts - interval '15 minutes' > now() THEN
     PERFORM outbox_schedule('session.starting', 'session', sid, 'session:' || sid || ':starting', ref,
                             starts - interval '15 minutes');
+  ELSE
+    -- Moved to start within 15 minutes: an older reminder would now be wrong.
+    UPDATE outbox SET processed_at = now(), result = 'skipped', last_error = 'start moved too close'
+     WHERE dedupe_key = 'session:' || sid || ':starting' AND processed_at IS NULL;
+  END IF;
+  IF starts > now() THEN
+    PERFORM outbox_schedule('session.card', 'session', sid, 'session:' || sid || ':card:start', ref, starts);
   END IF;
   PERFORM outbox_schedule('dm.session.rollcall', 'user', s.organizer_id, 'dm:session:' || sid || ':rollcall', ref,
                           starts + make_interval(mins => COALESCE(s.duration_min, 120)::int));
@@ -77,6 +92,9 @@ BEGIN
         FROM session_players sp
        WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
       ON CONFLICT (dedupe_key) DO NOTHING;
+      PERFORM outbox_session_reminders(NEW);
+    ELSIF NEW.status = 'open' AND NEW.duration_min IS DISTINCT FROM OLD.duration_min THEN
+      -- A longer or shorter session: the roll-call reminder moves with its end.
       PERFORM outbox_session_reminders(NEW);
     END IF;
   END IF;

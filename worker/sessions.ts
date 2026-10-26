@@ -42,7 +42,7 @@ import { ApiError } from './errors';
 import { appliedDeltaSql, getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
 import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limits';
-import { parseSqlUtc } from './time';
+import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 
 const MAX_ROLLCALL_ENTRIES = 50;
@@ -254,6 +254,30 @@ export interface CreateSessionInput {
 }
 
 export const MAX_INVITES = 20;
+/**
+ * Per organizer: sessions open at once, and sessions created per 24 hours.
+ * Every session invites, posts a card and DMs reminders (Discord, P7), so
+ * creating them must not be free.
+ */
+export const MAX_OPEN_SESSIONS = 5;
+export const MAX_SESSIONS_PER_DAY = 10;
+
+async function assertCanOrganize(db: D1Database, organizerId: string): Promise<void> {
+  const open = await db
+    .prepare("SELECT COUNT(*) AS n FROM game_sessions WHERE organizer_id = ? AND status = 'open' AND starts_at > ?")
+    .bind(organizerId, new Date().toISOString())
+    .first<{ n: number }>();
+  if ((open?.n ?? 0) >= MAX_OPEN_SESSIONS) {
+    throw new ApiError(429, `同时最多有 ${MAX_OPEN_SESSIONS} 个还没开的局，先取消一个或等它开完`);
+  }
+  const recent = await db
+    .prepare('SELECT COUNT(*) AS n FROM game_sessions WHERE organizer_id = ? AND created_at >= ?')
+    .bind(organizerId, sqlNowMinusMinutes(24 * 60))
+    .first<{ n: number }>();
+  if ((recent?.n ?? 0) >= MAX_SESSIONS_PER_DAY) {
+    throw new ApiError(429, `24 小时内最多发起 ${MAX_SESSIONS_PER_DAY} 个约局，明天再约`);
+  }
+}
 
 function normalizeInvites(raw: unknown, organizerId: string): string[] {
   if (raw === undefined || raw === null) return [];
@@ -293,6 +317,7 @@ export async function createSession(
   const duration = normalizeInt(input.duration_min, 15, 1440, '时长');
   const capacity = normalizeInt(input.capacity, 2, 50, '人数上限');
   const invites = normalizeInvites(input.invite, organizer.id);
+  await assertCanOrganize(db, organizer.id);
 
   const res = await db
     .prepare(

@@ -251,8 +251,11 @@ export async function handleYue(input: CommandInput, ctx: BotContext & { offsetH
       { starts_at: startsAt, ...(input.capacity ? { capacity: input.capacity } : {}) },
       ctx.offsetHours,
     );
+    const where = ctx.sessionCards
+      ? '卡片会发到约局频道，大家可以直接点按钮报名。'
+      : '在网页上可以看到它、邀请人。';
     return ephemeralReply(
-      `已发起约局：**${safeLine(session.title, TITLE_MAX)}**，${discordTime(session.starts_at, 'F')}。卡片会发到约局频道，大家可以直接点按钮报名。`,
+      `已发起约局：**${safeLine(session.title, TITLE_MAX)}**，${discordTime(session.starts_at, 'F')}。${where}`,
     );
   } catch (error) {
     if (error instanceof ApiError) return ephemeralReply(safeLine(error.message, LIMITS.content));
