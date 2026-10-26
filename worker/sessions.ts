@@ -25,7 +25,6 @@ import {
   MAX_NARRATIVE_LEN,
   MIN_CLAIM_LEN,
   VIOLATION_MAP,
-  WEEKLY_BONUS_CAP,
   type ViolationType,
 } from '../shared/scoring';
 import type {
@@ -41,7 +40,8 @@ import type {
 import { ApiError } from './errors';
 import { getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
-import { parseSqlUtc, weekStartUtcSql } from './time';
+import { fitsWeeklyBonusCap } from './case-limits';
+import { parseSqlUtc } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 
 const MAX_ROLLCALL_ENTRIES = 50;
@@ -588,12 +588,17 @@ function parseSettleEntries(raw: unknown): SettleEntry[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) throw new ApiError(400, 'file 必须是数组');
   if (raw.length > MAX_ROLLCALL_ENTRIES) throw new ApiError(400, '立案条目过多');
+  const seen = new Set<string>();
   return raw.map((item) => {
     if (typeof item !== 'object' || item === null) throw new ApiError(400, '立案条目格式错误');
     const rec = item as Record<string, unknown>;
     if (typeof rec.user_id !== 'string' || rec.user_id.length === 0) {
       throw new ApiError(400, '立案条目缺少 user_id');
     }
+    // One attendance, one case. Settlement skips the per-day rate limits, so a
+    // repeated user_id would otherwise file the same charge once per repeat.
+    if (seen.has(rec.user_id)) throw new ApiError(400, '立案条目里有重复的人');
+    seen.add(rec.user_id);
     return { user_id: rec.user_id, type: rec.type, claim: rec.claim };
   });
 }
@@ -606,6 +611,62 @@ export interface SettleResult {
   session: SessionDetail;
   created: number;
   skipped: number;
+}
+
+interface PlannedFiling {
+  player: SessionPlayer;
+  type: ViolationType;
+  claim: string;
+}
+
+/**
+ * Turn the ticked drafts into concrete filings, or throw. Pure: no writes.
+ *
+ * Runs before anything is filed. Every input error has to surface here: a throw
+ * halfway through filing leaves only the entries above it filed, and the retry
+ * is refused as already settled. That includes the claim text, which is
+ * normalised exactly as fileCase will check it.
+ */
+function planFilings(
+  entries: SettleEntry[],
+  players: Map<string, SessionPlayer>,
+  row: SessionJoinRow,
+  caller: User,
+  label: string,
+): PlannedFiling[] {
+  const planned: PlannedFiling[] = [];
+  for (const entry of entries) {
+    const player = players.get(entry.user_id);
+    if (!player) throw new ApiError(400, '只能给报名过这个约局的人立案');
+    if (player.attendance === null) throw new ApiError(400, '请先完成点名');
+    if (player.record_id !== null) continue; // already filed in a previous attempt
+    if (!player.is_participant) continue;
+    if (player.user.id === caller.id) continue; // never file against yourself
+    // Matches buildDrafts: the organizer is never a defendant in their own roll
+    // call, so an admin settling someone else's session cannot file against them
+    // either — the draft list never offered it.
+    if (player.user.id === row.organizer_id) continue;
+
+    const derived = violationForAttendance(player.attendance, player.late_minutes);
+    if (derived === null) continue;
+    const requested =
+      typeof entry.type === 'string' && entry.type.length > 0
+        ? (entry.type as ViolationType)
+        : derived;
+    if (!isAllowedTypeOverride(derived, requested)) {
+      throw new ApiError(400, '不允许把点名结果改判成其他类型');
+    }
+
+    const suggested = draftClaim(row.title, label, player.attendance, player.late_minutes);
+    // Trim, cut to length, trim again — the same text fileCase's
+    // normalizeNarrative will see — so a claim that is mostly whitespace falls
+    // back to the draft here instead of failing over there.
+    const typed =
+      typeof entry.claim === 'string' ? entry.claim.trim().slice(0, MAX_NARRATIVE_LEN).trim() : '';
+    const claim = typed.length >= MIN_CLAIM_LEN ? typed : suggested.slice(0, MAX_NARRATIVE_LEN);
+    planned.push({ player, type: requested, claim });
+  }
+  return planned;
 }
 
 /**
@@ -651,46 +712,47 @@ export async function settleSession(
     .run();
   if ((claimed.meta?.changes ?? 0) === 0) throw new ApiError(409, '该约局已经结算过了');
 
+  // Read the roster after the claim, so a roll call that landed just before it
+  // still counts.
   const players = await db.prepare(PLAYER_SELECT).bind(id).all<SessionPlayerJoinRow>();
   const byId = new Map(players.results.map((p) => [p.user_id, toSessionPlayer(p)]));
   const label = localLabel(row.starts_at, offsetHours);
+  let planned: PlannedFiling[];
+  try {
+    planned = planFilings(entries, byId, row, caller, label);
+  } catch (err) {
+    // Nothing has been filed yet, so handing the session back is safe — and it
+    // is what lets the organizer fix the entry and retry.
+    await db
+      .prepare(
+        `UPDATE game_sessions SET status = 'open', settled_at = NULL, settled_by = NULL
+          WHERE id = ? AND status = 'settled' AND settled_by = ?`,
+      )
+      .bind(id, caller.id)
+      .run();
+    throw err;
+  }
 
   let created = 0;
-  for (const entry of entries) {
-    const player = byId.get(entry.user_id);
-    if (!player) throw new ApiError(400, '只能给报名过这个约局的人立案');
-    if (player.attendance === null) throw new ApiError(400, '请先完成点名');
-    if (player.record_id !== null) continue; // already filed in a previous attempt
-    if (!player.is_participant) continue;
-    if (player.user.id === caller.id) continue; // never file against yourself
-    // Matches buildDrafts: the organizer is never a defendant in their own roll
-    // call, so an admin settling someone else's session cannot file against them
-    // either — the draft list never offered it.
-    if (player.user.id === row.organizer_id) continue;
-
-    const derived = violationForAttendance(player.attendance, player.late_minutes);
-    if (derived === null) continue;
-    const requested =
-      typeof entry.type === 'string' && entry.type.length > 0
-        ? (entry.type as ViolationType)
-        : derived;
-    if (!isAllowedTypeOverride(derived, requested)) {
-      throw new ApiError(400, '不允许把点名结果改判成其他类型');
+  for (const { player, type, claim } of planned) {
+    // A capped 守约 bonus is skipped, not thrown: the organizer cannot fix it,
+    // and throwing here would strand every filing after it. Same rule as
+    // awardOrganizerBonus below.
+    const def = VIOLATION_MAP[type];
+    if (
+      def?.kind === 'bonus' &&
+      !(await fitsWeeklyBonusCap(db, player.user.id, def.base, offsetHours))
+    ) {
+      continue;
     }
-
-    const suggested = draftClaim(row.title, label, player.attendance, player.late_minutes);
-    const claimRaw =
-      typeof entry.claim === 'string' && entry.claim.trim().length >= MIN_CLAIM_LEN
-        ? entry.claim
-        : suggested;
 
     const record = await fileCase(
       db,
       caller,
       {
         subject_id: player.user.id,
-        type: requested,
-        claim: claimRaw.slice(0, MAX_NARRATIVE_LEN),
+        type,
+        claim,
         session_id: id,
       },
       // The organizer is the only person who witnessed the session, so they may
@@ -744,16 +806,8 @@ async function awardOrganizerBonus(
   const organizer = await getUserById(db, row.organizer_id);
   if (!organizer || organizer.is_participant !== 1) return;
 
-  const since = weekStartUtcSql(offsetHours);
-  const agg = await db
-    .prepare(
-      `SELECT COALESCE(SUM(delta), 0) AS total FROM records
-        WHERE subject_id = ? AND delta > 0 AND status IN ('decided', 'appealed')
-          AND created_at >= ?`,
-    )
-    .bind(organizer.id, since)
-    .first<{ total: number }>();
-  if ((agg?.total ?? 0) + def.base > WEEKLY_BONUS_CAP) return; // cap reached, silently skip
+  // Cap reached: silently skip.
+  if (!(await fitsWeeklyBonusCap(db, organizer.id, def.base, offsetHours))) return;
 
   const insert = await db
     .prepare(

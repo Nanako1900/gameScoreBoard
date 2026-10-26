@@ -5,18 +5,22 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/** SQLite `datetime('now')` shape: UTC, but with no `T` and no zone marker. */
+const SQLITE_DATETIME = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/;
+
 /**
  * Parse a SQLite `datetime('now')` value (`YYYY-MM-DD HH:MM:SS`, UTC) or an ISO
  * string into epoch milliseconds. Returns NaN when unparseable.
  */
 export function parseTimestamp(value: string): number {
-  const direct = Date.parse(value);
-  if (!Number.isNaN(direct)) {
-    return direct;
+  // Must be matched BEFORE Date.parse: V8 accepts the space-separated form but
+  // reads it as LOCAL time, which shifted every server timestamp by the
+  // viewer's UTC offset (8h in Beijing).
+  const sqlite = SQLITE_DATETIME.exec(value.trim());
+  if (sqlite) {
+    return Date.parse(`${sqlite[1]}T${sqlite[2]}Z`);
   }
-  // SQLite datetime lacks the `T` and `Z` — treat it as UTC.
-  const normalized = `${value.replace(' ', 'T')}Z`;
-  return Date.parse(normalized);
+  return Date.parse(value);
 }
 
 /** '刚刚 / x分钟前 / x小时前 / x天前', or a date for anything older than ~30 days. */

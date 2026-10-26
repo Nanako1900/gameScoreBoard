@@ -318,6 +318,148 @@ describe('settleSession', () => {
         OFFSET_HOURS,
       ),
     ).rejects.toThrow(/改判成其他类型/);
+    // Rejected before anything moved, so the session is still open for a retry.
+    expect((await getSessionDetail(env.DB, session.id, organizer.id)).status).toBe('open');
+  });
+
+  it('hands the session back when any entry is invalid', async () => {
+    const { organizer, a, session } = await rolled();
+    // A good entry first, then one for someone who never signed up.
+    await expect(
+      settleSession(
+        env.DB,
+        organizer,
+        session.id,
+        [{ user_id: a.id }, { user_id: 'stranger' }],
+        false,
+        noAiEnv(),
+        OFFSET_HOURS,
+      ),
+    ).rejects.toThrow(/报名过/);
+
+    // Nothing moved: still open, nothing filed, and the corrected retry goes
+    // through instead of bouncing off 「已经结算过了」.
+    expect((await getSessionDetail(env.DB, session.id, organizer.id)).status).toBe('open');
+    expect(await listRecords(env.DB, { session: session.id })).toHaveLength(0);
+    const retry = await settleSession(
+      env.DB,
+      organizer,
+      session.id,
+      [{ user_id: a.id }],
+      false,
+      noAiEnv(),
+      OFFSET_HOURS,
+    );
+    expect(retry.created).toBe(1);
+  });
+
+  it('refuses the same player twice in one settlement', async () => {
+    const { organizer, a, session } = await rolled();
+    // Settlement skips the per-day rate limits, so a repeat would file the same
+    // charge again for every copy.
+    await expect(
+      settleSession(
+        env.DB,
+        organizer,
+        session.id,
+        [{ user_id: a.id }, { user_id: a.id }],
+        false,
+        noAiEnv(),
+        OFFSET_HOURS,
+      ),
+    ).rejects.toThrow(/重复/);
+    expect((await getSessionDetail(env.DB, session.id, organizer.id)).status).toBe('open');
+    expect(await listRecords(env.DB, { session: session.id })).toHaveLength(0);
+  });
+
+  it('normalises a whitespace-padded claim the way fileCase will check it', async () => {
+    const { organizer, a, b, c } = await cast();
+    const session = await startedSession(organizer, [a, b, c]);
+    await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: a.id, attendance: 'no_show' },
+        { user_id: b.id, attendance: 'no_show' },
+        { user_id: c.id, attendance: 'late', late_minutes: 20 },
+      ],
+      OFFSET_HOURS,
+    );
+
+    const res = await settleSession(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        // Leading padding used to eat the whole 1000-char budget, so fileCase
+        // saw ~5 real characters and threw after the session was settled.
+        { user_id: a.id, claim: `${' '.repeat(995)}这个人迟到了二十分钟左右呢` },
+        // Long enough before trimming the cut, too short after: falls back to the draft.
+        { user_id: b.id, claim: `x${' '.repeat(999)}后面的字被截掉了不算数` },
+        { user_id: c.id },
+      ],
+      false,
+      noAiEnv(),
+      OFFSET_HOURS,
+    );
+
+    expect(res.created).toBe(3);
+    const records = await listRecords(env.DB, { session: session.id });
+    expect(records.find((r) => r.subject.id === a.id)?.claim).toBe('这个人迟到了二十分钟左右呢');
+    const bClaim = records.find((r) => r.subject.id === b.id)?.claim ?? '';
+    expect(bClaim.startsWith('x')).toBe(false);
+    expect(bClaim.length).toBeGreaterThanOrEqual(10);
+    expect(records.find((r) => r.subject.id === c.id)?.type).toBe('late_major');
+  });
+
+  it('skips a capped 守约 bonus instead of abandoning the rest of the settlement', async () => {
+    const { organizer, a, b, c } = await cast();
+    await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
+    await env.DB.prepare('UPDATE users SET score = 90 WHERE id = ?').bind(b.id).run();
+    // b has already banked this week's whole bonus allowance.
+    await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, status)
+       VALUES (?, ?, 'on_time_bonus', ?, 'decided')`,
+    )
+      .bind(b.id, organizer.id, WEEKLY_BONUS_CAP)
+      .run();
+
+    const session = await startedSession(organizer, [a, b, c]);
+    await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: b.id, attendance: 'on_time' },
+        { user_id: a.id, attendance: 'no_show' },
+        { user_id: c.id, attendance: 'late', late_minutes: 20 },
+        { user_id: organizer.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+
+    // b's capped bonus comes FIRST: the cap used to throw here, after the
+    // session was already marked settled, so a and c were never filed.
+    const res = await settleSession(
+      env.DB,
+      organizer,
+      session.id,
+      [{ user_id: b.id }, { user_id: a.id }, { user_id: c.id }],
+      false,
+      noAiEnv(),
+      OFFSET_HOURS,
+    );
+
+    expect(res.created).toBe(2);
+    expect(res.session.status).toBe('settled');
+    const records = await listRecords(env.DB, { session: session.id });
+    expect(records.find((r) => r.subject.id === a.id)?.type).toBe('no_show');
+    expect(records.find((r) => r.subject.id === c.id)?.type).toBe('late_major');
+    expect(records.some((r) => r.subject.id === b.id)).toBe(false);
+    expect(await scoreOf(b.id)).toBe(90);
+    // The organizer bonus is awarded after the loop, so it used to be lost too.
+    expect(await scoreOf(organizer.id)).toBe(80 + VIOLATION_MAP.organizer_bonus.base);
   });
 
   it('allows the one legitimate escalation: no-show → group wipe', async () => {
