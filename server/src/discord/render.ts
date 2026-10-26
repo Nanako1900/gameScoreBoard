@@ -1,6 +1,6 @@
 // Text for Discord. Everything a user or the AI wrote — display names, session
 // titles, claims, the weekly narrative — goes through safeText()/safeLine()
-// before it is put into a reply (design doc §4.6). Discord renders markdown,
+// before it is put into a reply. Discord renders markdown,
 // masked links, auto-linked URLs and mention syntax inside message content and
 // embeds alike, so a display name like "[写陈述](https://evil)" or "@everyone"
 // must arrive as inert text.

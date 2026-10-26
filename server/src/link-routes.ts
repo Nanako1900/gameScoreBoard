@@ -1,4 +1,4 @@
-// Discord ↔ Nanako binding, web side (docs/DESIGN-v4-discord-coolify.md §5).
+// Discord ↔ Nanako binding, web side (docs/DEPLOY-DISCORD.md).
 // Served on the API host next to the Worker app (api-host.ts), Node only.
 //
 //   GET  /link/discord           needs a fresh Nanako session → Discord consent
@@ -35,7 +35,7 @@ export interface LinkRouteDeps {
 
 const LOGIN_PATH = '/auth/login?next=/link/discord';
 const START_PATH = '/link/discord';
-/** Binding must start within this long of logging in (design §5 step 2). */
+/** Binding must start within this long of logging in. */
 const REAUTH_SEC = 600;
 const STATE_TTL_SEC = 600;
 const CONFIRM_TTL_SEC = 300;
@@ -104,6 +104,8 @@ async function unseal(prefix: string, token: string, secret: string): Promise<Re
 interface LinkState {
   nonce: string;
   userId: string;
+  /** A first login brought the user here: the SPA still owes them onboarding. */
+  onboarding: boolean;
 }
 
 /** What the confirm page's form carries back: the binding the user is shown. */
@@ -111,6 +113,7 @@ interface PendingLink {
   discordId: string;
   discordUsername: string;
   userId: string;
+  onboarding: boolean;
 }
 
 // --- HTML ---------------------------------------------------------------------
@@ -202,15 +205,15 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     const raw = getCookie(req, stateCookie().name);
     const payload = raw ? await unseal(STATE_PREFIX, raw, env.SESSION_SECRET) : null;
     if (!payload || typeof payload.n !== 'string' || typeof payload.u !== 'string') return null;
-    return { nonce: payload.n, userId: payload.u };
+    return { nonce: payload.n, userId: payload.u, onboarding: payload.o === 1 };
   }
 
   async function readPending(raw: string): Promise<PendingLink | null> {
     const payload = raw ? await unseal(CONFIRM_PREFIX, raw, env.SESSION_SECRET) : null;
     if (!payload) return null;
-    const { d, name, u } = payload;
+    const { d, name, u, o } = payload;
     if (typeof d !== 'string' || typeof name !== 'string' || typeof u !== 'string') return null;
-    return { discordId: d, discordUsername: name, userId: u };
+    return { discordId: d, discordUsername: name, userId: u, onboarding: o === 1 };
   }
 
   function page(c: Context, status: number, heading: string, body: string): Response {
@@ -260,7 +263,7 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     if (!session) throw new ApiError(401, '未登录');
     const link = await linkByUserId(db, session.user.id);
     c.header('Cache-Control', 'no-store');
-    // Never the Discord id: the SPA has no use for it (design §4.6).
+    // Never the Discord id: the SPA has no use for it.
     return c.json({ link: link ? { discord_username: link.discord_username, linked_at: link.linked_at } : null });
   });
 
@@ -279,7 +282,9 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     // account: ask for a login made just now.
     if (!session || nowSec() - session.issuedAt > REAUTH_SEC) return c.redirect(LOGIN_PATH, 302);
     const nonce = toB64url(crypto.getRandomValues(new Uint8Array(16)));
-    const state = { n: nonce, u: session.user.id, exp: nowSec() + STATE_TTL_SEC };
+    // ?onboarding=1 comes from /auth/callback after a first login (worker/routes.ts).
+    const onboarding = c.req.query('onboarding') === '1' ? 1 : 0;
+    const state = { n: nonce, u: session.user.id, o: onboarding, exp: nowSec() + STATE_TTL_SEC };
     const value = await seal(STATE_PREFIX, state, env.SESSION_SECRET);
     const cookie = stateCookie();
     c.header('Set-Cookie', `${cookie.name}=${value}; ${cookie.attrs}; Max-Age=${STATE_TTL_SEC}`);
@@ -327,7 +332,13 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
 
     const pending = await seal(
       CONFIRM_PREFIX,
-      { d: identity.id, name: identity.username, u: session.user.id, exp: nowSec() + CONFIRM_TTL_SEC },
+      {
+        d: identity.id,
+        name: identity.username,
+        u: session.user.id,
+        o: state.onboarding ? 1 : 0,
+        exp: nowSec() + CONFIRM_TTL_SEC,
+      },
       env.SESSION_SECRET,
     );
     const lines: string[] = [];
@@ -381,7 +392,7 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
       case 'relinked':
       case 'unchanged':
         c.header('Cache-Control', 'no-store');
-        return c.redirect(successUrl, 302);
+        return c.redirect(pending.onboarding ? `${successUrl}&onboarding=1` : successUrl, 302);
       case 'taken':
         return takenPage(c, pending.discordUsername);
       case 'needs_replace':

@@ -299,6 +299,19 @@ describe('the happy path', () => {
     expect(await audit()).toEqual([{ action: 'link', via: 'web', user_id: 'a', discord_user_id: ALICE_ID }]);
   });
 
+  it('hands a first login’s onboarding back to the SPA once bound', async () => {
+    // /auth/callback sends a brand-new user to /link/discord?onboarding=1.
+    await seedUser({ id: 'a' });
+    const { host } = makeHost();
+    const sess = await session('a');
+    const res = await host(new Request(`${API}/link/discord?onboarding=1`, { headers: { Cookie: sess } }));
+    const state = new URL(res.headers.get('Location') ?? '').searchParams.get('state') ?? '';
+    const linkCookie = `edg_link=${cookieValue(res, 'edg_link')}`;
+    const page = await callback(host, { session: sess, linkCookie, code: 'alice', state });
+    const done = await confirm(host, { session: sess, payload: payloadOf(await page.text()) });
+    expect(done.headers.get('Location')).toBe(`${SPA}/?linked=discord&onboarding=1`);
+  });
+
   it('escapes every value it puts on the page', async () => {
     await seedUser({ id: 'a', username: `<b onmouseover="x">A&'</b>` });
     const { host } = makeHost();

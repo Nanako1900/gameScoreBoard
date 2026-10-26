@@ -2,7 +2,7 @@
 // BotContext in, a BotReply out — no discord.js here, so every command is
 // tested against PostgreSQL without Discord (tests/pg/bot-commands.test.ts).
 //
-// Privacy first (design doc §4.6):
+// Privacy first:
 //   * anything about one person (tier, to-dos, verdicts) is ephemeral;
 //   * only the leaderboard and the weekly report are posted in the channel,
 //     with names as plain text — never a mention;

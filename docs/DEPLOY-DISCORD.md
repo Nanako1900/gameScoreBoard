@@ -1,9 +1,12 @@
 # 部署 Discord bot（P4）
 
 > P4 起 `compose.yaml` 多了一个 `bot` 服务：和 `app` 同一个镜像，只连 Discord Gateway（出站），
-> 不开端口、Tunnel 里也不用加任何东西。整体方案见
-> [DESIGN-v4-discord-coolify.md](DESIGN-v4-discord-coolify.md) §4–§5，Coolify 本身见
-> [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)。
+> 不开端口、Tunnel 里也不用加任何东西。Coolify 本身见 [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)。
+> 绑定页和 bot 都读 PostgreSQL，所以要等 API 切到 Coolify（[DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)）之后才有意义。
+>
+> **合并本期 PR 不会改变线上行为**：`DISCORD_TOKEN` 留空时 `bot` 空闲（不连 Discord，健康检查照常绿）；
+> `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` 留空时 `/link/discord` 和 `/api/me/discord` 都是 404，
+> 网页上的 Discord 卡片自动隐藏。
 
 | 命令 | 作用 | 谁看得到 |
 |---|---|---|
@@ -67,12 +70,20 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
 | `DISCORD_CLIENT_SECRET` | app | 第 1 步 OAuth2 页的 secret |
 | `GUILD_ID` / `APP_URL` / `FRONTEND_URL` | app + bot | 默认值就是线上配置，一般不用改。bot 只把命令注册到 `GUILD_ID` 这一个服务器 |
 
-`DATABASE_URL` 由 `compose.yaml` 拼好，不用填。bot 启动时会检查以上变量，缺了或格式不对就直接退出，
-日志里会列出每一项问题（不会打印 token）。
+`DATABASE_URL` 由 `compose.yaml` 拼好，不用填。`DISCORD_TOKEN` 留空时 bot 只是空闲；填了之后
+bot 启动时会检查其余变量，缺了或格式不对就直接退出，日志里会列出每一项问题（不会打印 token）。
+`app` 没有 `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` 时日志里有一行 `Discord binding disabled`。
 
 改完变量后重新部署整个 stack。
 
-## 4. 验证
+## 4. 谁能用哪些命令
+
+`/score @某人`、`/verdicts @某人` 能把一个 Discord 账号对上他的信誉分账号、分数和扣分记录。
+默认服务器里**所有人**都能用这些命令。只想给选手用的话：服务器设置 → 集成 → 这个 bot →
+在 `/score`、`/verdicts`（以及想限制的其它命令）上把 `@everyone` 关掉、只允许 `@EDG 选手`，
+也可以限制到 `#edg-信誉分` 频道。这是 Discord 自己的权限，bot 不需要改。
+
+## 5. 验证
 
 1. Coolify → `bot` 的日志里依次看到：
    - `gateway session starts left today: 9xx/1000`
@@ -86,7 +97,7 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
    `wget -qO- http://127.0.0.1:8788/status`，正常是 `{"gateway":"ready"}`（未连上时返回 503）。
    容器健康检查只看 `/healthz`（进程活着就是 200），Discord 断线不会让容器被重启。
 
-## 5. bot 挂了会怎样
+## 6. bot 挂了会怎样
 
 - **网页完全不受影响。** `bot` 是独立容器，`app` 不依赖它；网页上的绑定入口
   （`/link/discord`）由 `app` 提供，照常能用。只是 Discord 里的命令会显示「该应用程序未响应」。
@@ -102,6 +113,6 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
   （`/healthz` 仍是 200，`/status` 是 503），按上一条换 token 后重新部署。
 - token 泄露：立刻在 Bot 页 Reset Token，旧 token 当场失效，再按上一条更新。
 
-## 6. 停用
+## 7. 停用
 
 在 Coolify 里停掉 `bot` 服务即可，其他服务不受影响。要连命令一起去掉，在服务器设置 → 集成里把 bot 移出服务器。

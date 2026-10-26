@@ -155,12 +155,24 @@ describe('login ?next= (back to a binding page after login)', () => {
   }
 
   it('remembers a /link/ path and returns there after the callback', async () => {
+    await seedUser({ id: 'sub-next' });
     const login = await call('/auth/login?next=/link/discord');
     const setCookie = login.headers.get('Set-Cookie') ?? '';
     expect(setCookie).toContain(`edg_login_next=${encodeURIComponent('/link/discord')}`);
     const res = await callbackWith(encodeURIComponent('/link/discord'));
     expect(res.status).toBe(302);
     expect(res.headers.get('Location')).toBe('/link/discord');
+  });
+
+  it('carries a first login’s onboarding along to the binding page', async () => {
+    const res = await callbackWith(encodeURIComponent('/link/discord'));
+    expect(res.headers.get('Location')).toBe('/link/discord?onboarding=1');
+  });
+
+  it('shrugs off a malformed cookie instead of failing the login', async () => {
+    const res = await callbackWith('%E0%A4%A');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/?onboarding=1');
   });
 
   it('ignores anything that is not one of this host’s /link/ pages', async () => {

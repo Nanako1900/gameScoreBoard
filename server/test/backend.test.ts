@@ -88,6 +88,26 @@ describe('createBackend', () => {
     }
   });
 
+  it('serves the Discord binding pages once the bot’s OAuth client is configured', async () => {
+    const { createPool } = fakePool();
+    const backend = createBackend(
+      { ...API_ENV, DISCORD_CLIENT_ID: '1234567890123456789', DISCORD_CLIENT_SECRET: 'discord-secret' },
+      { createPool, log: quietLog() },
+    );
+    // No session yet: the binding page sends the browser to log in first.
+    const res = await backend!.part.fetch(new Request('https://api.example.com/link/discord'));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/auth/login?next=/link/discord');
+  });
+
+  it('leaves the binding paths to the Worker (404) without it', async () => {
+    const log = quietLog();
+    const { createPool } = fakePool();
+    const backend = createBackend({ ...API_ENV, DISCORD_CLIENT_SECRET: '' }, { createPool, log });
+    expect((await backend!.part.fetch(new Request('https://api.example.com/link/discord'))).status).toBe(404);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('Discord binding disabled'));
+  });
+
   it('gives the pool a connection timeout and the configured size', () => {
     const { createPool } = fakePool();
     createBackend({ ...API_ENV, PG_POOL_MAX: '4' }, { createPool, log: quietLog() });

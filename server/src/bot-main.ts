@@ -18,6 +18,7 @@ import {
 } from './discord/client';
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
+import { envInt } from './env';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -27,7 +28,7 @@ const IN_FLIGHT_GRACE_MS = 5_000;
 // slow enough that a bad token never piles up failed requests at Discord.
 const RETRY_LATER_MS = 5 * 60_000;
 
-type GatewayState = 'ready' | 'connecting';
+type GatewayState = 'ready' | 'connecting' | 'disabled';
 
 function createHealthServer(gateway: () => GatewayState): http.Server {
   return http.createServer((req, res) => {
@@ -88,7 +89,26 @@ async function registerCommands(client: Client<true>, config: BotConfig): Promis
   }
 }
 
+/**
+ * No DISCORD_TOKEN yet (the Developer Portal steps in docs/DEPLOY-DISCORD.md
+ * are not done): stay up and quiet instead of crash-looping on every deploy.
+ */
+function idle(): void {
+  console.log('DISCORD_TOKEN is not set: the bot is disabled (see docs/DEPLOY-DISCORD.md)');
+  const health = createHealthServer(() => 'disabled');
+  health.listen(HEALTH_PORT, '0.0.0.0');
+  const stop = (): void => {
+    health.close(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+}
+
 function main(): void {
+  if (!(process.env.DISCORD_TOKEN ?? '').trim()) {
+    idle();
+    return;
+  }
   let config: BotConfig;
   try {
     config = readBotConfig(process.env);
@@ -100,7 +120,8 @@ function main(): void {
   installTypeParsers();
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
-    max: Number(process.env.PG_POOL_MAX ?? 5),
+    max: envInt(process.env.PG_POOL_MAX, 5, { name: 'PG_POOL_MAX', min: 1 }),
+    connectionTimeoutMillis: 10_000,
     // The Worker's SQL binds zone-less 'YYYY-MM-DD HH:MM:SS' strings meant as UTC.
     options: '-c TimeZone=UTC -c statement_timeout=30000',
   });

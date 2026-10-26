@@ -1,5 +1,6 @@
 // The scoreboard API as the container runs it: the PostgreSQL pool, the Worker
-// app on top of it (api.ts) and the job timer.
+// app on top of it (api.ts), the Discord binding routes beside it (P4) and the
+// job timer.
 //
 // The share page has been live on this container since P1, so the API must
 // never be able to take it down:
@@ -9,11 +10,14 @@
 //     /status says so, while the share page keeps serving.
 
 import pg from 'pg';
+import type { Env } from '../../worker/types';
 import { buildEnv, ConfigError, createApi } from './api';
+import { createApiHost } from './api-host';
 import type { HostedApp } from './app';
 import { asD1, installTypeParsers, PgD1Database } from './db/d1';
 import { envFlag, envInt, MAX_TIMER_MS } from './env';
 import { hostSet } from './hosts';
+import { createLinkRoutes } from './link-routes';
 
 const DEFAULT_JOBS_INTERVAL_MS = 60_000;
 const MIN_JOBS_INTERVAL_MS = 5_000;
@@ -61,14 +65,17 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   });
   pool.on('error', (error) => log.error('idle PostgreSQL client error', error));
 
+  let env: Env;
   let api: ReturnType<typeof createApi>;
   try {
-    api = createApi(buildEnv(processEnv, asD1(new PgD1Database(pool))));
+    env = buildEnv(processEnv, asD1(new PgD1Database(pool)));
+    api = createApi(env);
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     void pool.end().catch(() => undefined);
     return misconfigured(hosts, error.message, log);
   }
+  const fetch = withDiscordBinding(processEnv, env, api.fetch, log);
 
   const jobsEnabled = envFlag(processEnv.JOBS_ENABLED, false, 'JOBS_ENABLED', warn);
   const interval = envInt(
@@ -80,7 +87,7 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   let timer: ReturnType<typeof setInterval> | null = null;
 
   return {
-    part: { hosts, fetch: api.fetch },
+    part: { hosts, fetch },
     async status() {
       try {
         await pool.query('SELECT 1');
@@ -105,6 +112,28 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
       await pool.end().catch(() => undefined);
     },
   };
+}
+
+/**
+ * The Discord binding routes (/link/discord/*, /api/me/discord*, link-routes.ts)
+ * in front of the Worker app — once the bot's OAuth client is configured.
+ * Without it those paths fall through to the Worker, which answers 404, and
+ * the SPA simply hides its Discord card.
+ */
+function withDiscordBinding(
+  processEnv: NodeJS.ProcessEnv,
+  env: Env,
+  workerFetch: (request: Request) => Promise<Response>,
+  log: Pick<Console, 'warn'>,
+): (request: Request) => Promise<Response> {
+  const clientId = (processEnv.DISCORD_CLIENT_ID ?? '').trim();
+  const clientSecret = (processEnv.DISCORD_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) {
+    log.warn('Discord binding disabled: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET not set');
+    return workerFetch;
+  }
+  const linkRoutes = createLinkRoutes({ env, db: env.DB, discord: { clientId, clientSecret } });
+  return createApiHost({ linkRoutes, workerFetch });
 }
 
 function misconfigured(hosts: ReadonlySet<string>, problem: string, log: Pick<Console, 'error'>): Backend {

@@ -128,9 +128,11 @@ services:
     environment:
       NODE_ENV: production
       TZ: UTC
-      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      # Empty until the Developer Portal steps are done: the bot then idles
+      # (healthy, /status says "disabled") instead of crash-looping.
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
       # The Application ID — the same number as DISCORD_CLIENT_ID.
-      DISCORD_APP_ID: ${DISCORD_APP_ID}
+      DISCORD_APP_ID: ${DISCORD_APP_ID:-}
       GUILD_ID: ${GUILD_ID:-1114391825336250432}
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
       APP_URL: ${APP_URL:-https://api.nanako.org}

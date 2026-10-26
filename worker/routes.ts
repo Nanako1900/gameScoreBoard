@@ -121,6 +121,15 @@ import {
   statementWindowHours,
 } from './http';
 
+/** A cookie written with encodeURIComponent; null if it was tampered into a malformed escape. */
+function decodeCookieValue(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function registerRoutes(app: Hono<AppEnv>): void {
   // --- CORS: active only when FRONTEND_ORIGIN is set (split-origin deploys).
   // For single-origin (unified Worker or EdgeOne edge-function proxy) this is a
@@ -588,9 +597,11 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     c.header('Set-Cookie', buildSessionCookie(session, cfg), { append: true });
     c.header('Set-Cookie', buildClearStateCookie(cfg), { append: true });
     const nextRaw = getCookie(c.req.raw, cookieNames(cfg).next);
-    const next = safeNextPath(nextRaw ? decodeURIComponent(nextRaw) : null);
+    const next = safeNextPath(nextRaw ? decodeCookieValue(nextRaw) : null);
     if (nextRaw) c.header('Set-Cookie', buildClearNextCookie(cfg), { append: true });
-    if (next) return c.redirect(next, 302);
+    // A first login on the way to a binding page still owes the onboarding
+    // dialog; the binding flow hands the flag back to the SPA when it is done.
+    if (next) return c.redirect(isNew ? `${next}?onboarding=1` : next, 302);
     // For a split deploy, FRONTEND_URL sends the browser back to the SPA origin;
     // unset → relative path (single-origin: unified Worker or EdgeOne proxy).
     const frontend = env.FRONTEND_URL ? env.FRONTEND_URL.replace(/\/$/, '') : '';

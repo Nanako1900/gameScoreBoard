@@ -1,6 +1,6 @@
 // The Discord slash-command handlers against PostgreSQL: seeded users, cases,
 // sessions, bindings and a weekly report in, BotReply out. Besides each
-// command's happy and unbound paths, the privacy rules of design doc §4.6 are
+// command's happy and unbound paths, the privacy rules are
 // checked directly: what is ephemeral, that /verdicts never shows a word a
 // person or the AI wrote, and that public replies cannot ping anyone.
 
