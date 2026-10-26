@@ -304,13 +304,16 @@ export async function createSession(
       .bind(id, organizer.id),
   ];
   for (const userId of invites) {
-    // INSERT OR IGNORE + a subquery guard: an unknown user id must not create a
-    // dangling row, and must not fail the whole creation either.
+    // ON CONFLICT DO NOTHING + a subquery guard: an unknown user id must not
+    // create a dangling row, and must not fail the whole creation either.
+    // (Portable: SQLite and PostgreSQL both accept this form; SQLite needs the
+    // SELECT's WHERE to tell the upsert's ON apart from a join constraint.)
     statements.push(
       db
         .prepare(
-          `INSERT OR IGNORE INTO session_players (session_id, user_id, rsvp)
-           SELECT ?, id, 'invited' FROM users WHERE id = ?`,
+          `INSERT INTO session_players (session_id, user_id, rsvp)
+           SELECT ?, id, 'invited' FROM users WHERE id = ?
+           ON CONFLICT (session_id, user_id) DO NOTHING`,
         )
         .bind(id, userId),
     );

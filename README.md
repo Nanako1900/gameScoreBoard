@@ -190,7 +190,10 @@ npm run dev:web
 │   └── ai/                #   归类 / 量刑 / 周报三套调用，输入消毒 + 输出夹取
 ├── src/                   # React + Vite 前端源码
 ├── server/                # Node 后端（Coolify / Docker Compose），npm workspace
-│   ├── src/app.ts         #   按 Host 分流：discord.* → 分享页（P3a 起 api.* → API）
+│   ├── src/app.ts         #   按 Host 分流：discord.* → 分享页，api.* → API
+│   ├── src/api.ts         #   在 Node 上运行 Worker 原封不动的代码（Env、waitUntil、定时任务）
+│   ├── src/db/d1.ts       #   PostgreSQL 上的 D1 兼容适配层
+│   ├── migrations/        #   PostgreSQL 表结构（schema.sql 的忠实移植）
 │   ├── src/share/         #   Discord 分享页，移植自 discord-share（poller + linkedom）
 │   ├── share-public/      #   分享页静态文件（原 discord-share/public）
 │   └── test/              #   Node 端测试
@@ -216,6 +219,9 @@ npm run dev:web
 | `npm run test:unit` | 只跑纯逻辑单测（快） |
 | `npm run test:worker` | 只跑 D1 集成测试（Miniflare） |
 | `npm run test:server` | 只跑 Node 后端测试（`server/`） |
+| `npm run test:pg` | 把 worker 集成测试在 **PostgreSQL** 上再跑一遍（经 D1 兼容适配层；本地自动起嵌入式 PG，CI 用 `TEST_DATABASE_URL`） |
+| `node scripts/d1-export.mjs <dir>` | 导出 D1 全部表为 JSON（切换用，只读） |
+| `node scripts/compare-api.mjs <old> <new>` | 逐个对比两套部署的公开 API（切换 go/no-go 用） |
 | `npm run build -w server` | 打包 Node 后端到 `server/dist`（esbuild） |
 | `npm run dev -w server` | 本地跑 Node 后端（tsx watch） |
 | `npm run db:local` | 在本地 D1 上执行 `schema.sql` 建表 |
@@ -260,5 +266,5 @@ npm run dev:web
 
 - **一体化部署**（前后端都在 Cloudflare Worker）：见 [DEPLOY.md](./DEPLOY.md)。
 - **SPA → Cloudflare Pages，Worker 只做 API**（`score.` + `api.` 子域）：见 [docs/DEPLOY-PAGES.md](./docs/DEPLOY-PAGES.md)。
-- **Node 后端（Coolify + Docker Compose）**：目前承载 Discord 分享页 `discord.nanako.org`，见 [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md)。
+- **Node 后端（Coolify + Docker Compose）**：Discord 分享页 `discord.nanako.org`，以及（P3a 起）跑在 PostgreSQL 上的 API。见 [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md)；API 从 Worker 切过去的步骤见 [docs/DEPLOY-CUTOVER.md](./docs/DEPLOY-CUTOVER.md)。
 - **拆分部署**（前端 → 腾讯 EdgeOne Pages，后端 → Cloudflare Worker）：见 [DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md)，内含跨域会话 Cookie 的处理与三种架构方案（推荐 EdgeOne 边缘函数反代，保持单源、Safari 安全、无需自定义域名）。

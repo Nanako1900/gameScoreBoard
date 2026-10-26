@@ -17,7 +17,7 @@ function bytesToB64url(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function b64urlToBytes(s: string): Uint8Array {
+function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   const norm = s.replace(/-/g, '+').replace(/_/g, '/');
   const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4));
   const bin = atob(norm + pad);

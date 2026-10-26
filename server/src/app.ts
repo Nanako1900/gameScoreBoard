@@ -1,17 +1,23 @@
 // The one HTTP app the Node process serves, split by Host header. Cloudflare
 // Tunnel forwards every public hostname to the same container port and keeps the
-// original Host, so the hostname is what tells the share page (discord.*) apart
-// from the API (api.*, from P3a).
+// original Host, so the hostname is what tells the Discord share page
+// (discord.*) apart from the scoreboard API (api.*).
 
 import { Hono } from 'hono';
 
+export interface HostedApp {
+  /** Lowercased hostnames this app answers. */
+  hosts: ReadonlySet<string>;
+  fetch: (request: Request) => Response | Promise<Response>;
+}
+
 export interface AppParts {
-  /**
-   * Hostnames that serve the Discord share page, lowercased — e.g.
-   * discord.nanako.org, plus discord-next.nanako.org while verifying a cutover.
-   */
-  shareHosts: ReadonlySet<string>;
-  share: Hono | null;
+  /** The Discord share page — discord.nanako.org (+ a -next host during a cutover). */
+  share: HostedApp | null;
+  /** The scoreboard API (the Worker app on PostgreSQL) — api.nanako.org. */
+  api: HostedApp | null;
+  /** Dependency health for external monitoring; /healthz deliberately has none. */
+  status?: () => Promise<Record<string, unknown>>;
 }
 
 function hostnameOf(hostHeader: string | undefined): string {
@@ -22,14 +28,22 @@ export function createApp(parts: AppParts): Hono {
   const app = new Hono();
 
   // Before host routing: Docker and Coolify probe with Host: localhost. Liveness
-  // only — it must not depend on Discord, or a Discord outage would get the
-  // container restarted for nothing.
+  // only — it must not depend on Discord or PostgreSQL, or an outage of either
+  // would get the container restarted for nothing.
   app.get('/healthz', (c) => c.text('ok'));
+
+  // For an external monitor (keyword check on "ok": true). Never used as the
+  // container healthcheck, for the same reason.
+  app.get('/status', async (c) => {
+    if (!parts.status) return c.json({ ok: true });
+    const report = await parts.status();
+    return c.json(report, report.ok === true ? 200 : 503);
+  });
 
   app.all('*', (c) => {
     const host = hostnameOf(c.req.header('host'));
-    if (parts.share && parts.shareHosts.has(host)) {
-      return parts.share.fetch(c.req.raw);
+    for (const part of [parts.api, parts.share]) {
+      if (part && part.hosts.has(host)) return part.fetch(c.req.raw);
     }
     return c.json({ error: 'Not found' }, 404);
   });

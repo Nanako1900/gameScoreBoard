@@ -53,6 +53,9 @@ export async function writeSetting(
   value: string,
   updatedBy: string,
 ): Promise<void> {
+  // PostgreSQL text cannot hold U+0000. Dropping it here, on every engine,
+  // keeps the stored prompt identical whether the board runs on D1 or PG.
+  const stored = value.replace(/\u0000/g, '');
   await db
     .prepare(
       `INSERT INTO app_settings (key, value, updated_by, updated_at)
@@ -60,7 +63,7 @@ export async function writeSetting(
        ON CONFLICT(key) DO UPDATE SET
          value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
     )
-    .bind(key, value, updatedBy)
+    .bind(key, stored, updatedBy)
     .run();
 }
 

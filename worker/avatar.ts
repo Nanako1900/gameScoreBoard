@@ -51,7 +51,7 @@ function assertSafeHop(url: URL, policy: AvatarPolicy): void {
   }
 }
 
-async function readCapped(body: ReadableStream<Uint8Array>, max: number): Promise<Uint8Array> {
+async function readCapped(body: ReadableStream<Uint8Array>, max: number): Promise<Uint8Array<ArrayBuffer>> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -65,7 +65,7 @@ async function readCapped(body: ReadableStream<Uint8Array>, max: number): Promis
     }
     chunks.push(value);
   }
-  const out = new Uint8Array(total);
+  const out = new Uint8Array(new ArrayBuffer(total));
   let offset = 0;
   for (const chunk of chunks) {
     out.set(chunk, offset);

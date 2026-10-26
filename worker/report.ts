@@ -109,8 +109,8 @@ export async function computeStats(
       `SELECT COALESCE(u.display_name, u.username) AS name, SUM(e.delta) AS delta
          FROM score_events e JOIN users u ON u.id = e.user_id
         WHERE e.created_at >= ? AND e.created_at < ? AND e.reason != 'weekly_heal'
-        GROUP BY e.user_id HAVING SUM(e.delta) != 0
-        ORDER BY delta DESC`,
+        GROUP BY u.id HAVING SUM(e.delta) != 0
+        ORDER BY delta DESC, u.id ASC`,
     )
     .bind(from, to)
     .all<NamedDelta>();
@@ -153,7 +153,7 @@ export async function computeStats(
     `SELECT COALESCE(u.display_name, u.username) AS name, COUNT(*) AS count
        FROM game_sessions g JOIN users u ON u.id = g.organizer_id
       WHERE g.status = 'settled' AND g.starts_at >= ? AND g.starts_at < ?
-      GROUP BY g.organizer_id ORDER BY count DESC, name ASC LIMIT 1`,
+      GROUP BY u.id ORDER BY count DESC, name ASC, u.id ASC LIMIT 1`,
     [new Date(Date.parse(from + 'Z')).toISOString(), new Date(Date.parse(to + 'Z')).toISOString()],
   );
 
@@ -234,7 +234,7 @@ export async function getLatestReport(db: D1Database): Promise<WeeklyReport | nu
  * Generate last week's report if it does not exist yet.
  *
  * Idempotent the same way `weeklyHeal` is: `week_start` is the primary key, and
- * the row is claimed with `INSERT OR IGNORE` BEFORE the AI call. Claiming first
+ * the row is claimed with `INSERT … ON CONFLICT DO NOTHING` BEFORE the AI call. Claiming first
  * means a burst of Monday-morning visitors produces exactly one narrative
  * request, not one per visitor.
  */
@@ -257,8 +257,9 @@ export async function ensureWeeklyReport(
   // to it, changes = 0 and we skip the AI call entirely.
   const claimed = await db
     .prepare(
-      `INSERT OR IGNORE INTO weekly_reports (week_start, stats_json, narrative, source)
-       VALUES (?, ?, ?, 'fallback')`,
+      `INSERT INTO weekly_reports (week_start, stats_json, narrative, source)
+       VALUES (?, ?, ?, 'fallback')
+       ON CONFLICT (week_start) DO NOTHING`,
     )
     .bind(weekStart, JSON.stringify(stats), fallbackNarrative(stats))
     .run();
