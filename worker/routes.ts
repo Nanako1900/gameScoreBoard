@@ -511,6 +511,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       caller,
       parseId(c.req.param('id'), '约局'),
       body.rsvp,
+      body.starts_at,
     );
     return c.json({ session });
   });

@@ -62,6 +62,8 @@ export function SessionDetailDialog({
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '操作失败');
+      // Moved since it loaded: show the new time to answer to.
+      if (err instanceof ApiError && err.status === 409) await load();
     } finally {
       setBusy(false);
     }
@@ -125,7 +127,7 @@ export function SessionDetailDialog({
                     }`}
                     disabled={busy}
                     aria-pressed={session.my_rsvp === r}
-                    onClick={() => void mutate(() => setRsvp(session.id, r))}
+                    onClick={() => void mutate(() => setRsvp(session.id, r, session.starts_at))}
                   >
                     {RSVP_LABEL[r]}
                   </button>

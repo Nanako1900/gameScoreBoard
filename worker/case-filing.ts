@@ -14,6 +14,7 @@ import {
 } from '../shared/scoring';
 import type { Env, RecordItem, User } from './types';
 import { ApiError } from './errors';
+import { isAllowedTypeOverride } from '../shared/attendance';
 import { appliedDeltaSql, requireParticipant, scoreMutation } from './db';
 import { defFor, getRecordRow, loadRecordItem } from './case-reads';
 import {
@@ -309,13 +310,6 @@ export async function fileCases(
 }
 
 /**
- * The judge co-signs the group-wipe charge the AI only hinted at.
- *
- * Allowed while the case is still pre-verdict: re-sentencing after the fact would
- * mean re-running the trial, and the subject argued their case against the lesser
- * charge. Post-verdict escalation is an admin override instead.
- */
-/**
  * An admin, or the judge who filed the case. Being its reporter is not enough:
  * a session organizer files roll-call cases without being a judge, and must not
  * then re-type them (a 小迟到 into a 团灭级放鸽) past the roll call's own rules.
@@ -324,6 +318,13 @@ function isFilingJudge(caller: User, reporterId: string): boolean {
   return caller.is_admin || (caller.is_judge && reporterId === caller.id);
 }
 
+/**
+ * The judge co-signs the group-wipe charge the AI only hinted at.
+ *
+ * Allowed while the case is still pre-verdict: re-sentencing after the fact would
+ * mean re-running the trial, and the subject argued their case against the lesser
+ * charge. Post-verdict escalation is an admin override instead.
+ */
 export async function confirmEscalation(
   db: D1Database,
   caller: User,
@@ -388,6 +389,18 @@ export async function reclassifyCase(
   if (!isValidViolationType(type)) throw new ApiError(400, '无效的记录类型');
   const def = defFor(type);
   if (def.kind !== 'penalty') throw new ApiError(400, '不能把违约改成加分');
+  // A roll-call case's charge follows from the roll call (the minutes late,
+  // or absent). Its organizer may be a judge too, and must not re-type it past
+  // what settling allowed — only between 放鸽子 and 团灭级放鸽.
+  const fromRollCall = rec.classified_by === 'derived' || rec.session_id !== null;
+  if (
+    fromRollCall &&
+    !caller.is_admin &&
+    !isAllowedTypeOverride(rec.type as ViolationType, def.type) &&
+    !isAllowedTypeOverride(def.type, rec.type as ViolationType)
+  ) {
+    throw new ApiError(400, '点名立的案，案由跟着点名结果走（只能在放鸽子和团灭级放鸽之间改）');
+  }
 
   const res = await db
     .prepare(

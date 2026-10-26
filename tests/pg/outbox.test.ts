@@ -217,7 +217,7 @@ describe('dispatcher', () => {
     const { channelId, message } = discord.sent[0];
     expect(channelId).toBe(CHANNEL);
     // Retried sends are deduplicated by Discord through the nonce.
-    expect(message.nonce).toMatch(/^ob\d+$/);
+    expect(message.nonce).toMatch(/^ob\d+\.[0-9a-z]+$/);
     expect(message.allowed_mentions).toEqual({ parse: [] });
     const text = textOf(message);
     for (const secret of Object.values(SECRET)) expect(text).not.toContain(secret);

@@ -278,10 +278,18 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   **synthesised server-side** from the time (a client cannot inject one). Everyone
   in `invite` (max 20) lands in `rsvp='invited'`; unknown ids are dropped rather
   than failing creation. The organizer is auto-RSVP'd `going`.
-- `PATCH /api/sessions/:id` → `{ session }`. Organizer/admin, `open` only.
+  `starts_at` may not be in the past (5 minutes' grace) nor more than 90 days ahead.
+- `PATCH /api/sessions/:id` → `{ session }`. Organizer/admin, `open` only, and only
+  before it starts (400 afterwards). A new `starts_at` (a different instant, not
+  just another spelling) puts every other player — yes, maybe or no — back to
+  `invited`: they answer again for the new time.
 - `POST /api/sessions/:id/cancel` → `{ session }`.
-- `POST /api/sessions/:id/rsvp` `{ rsvp }` → `{ session }`. Self only, and only
+- `POST /api/sessions/:id/rsvp` `{ rsvp, starts_at? }` → `{ session }`. Self only, and only
   `going | maybe | out` — `invited` is organizer-assigned and rejected here.
+  `starts_at` is the start time the client showed: for `going` / `maybe`, **409**
+  if the session has moved since (nothing is written; reload and answer again).
+  Omitted, the answer is to the current time (but still 409 if a move lands
+  between the read and the write).
   Blocked once the session started, is full, or is not `open`. The organizer
   cannot RSVP out. **Only `going` consumes a capacity slot**, so over-inviting is
   intentional and safe.

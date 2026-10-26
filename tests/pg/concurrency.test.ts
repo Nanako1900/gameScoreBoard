@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { appealCase, judgeAndDecide, overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
-import { cancelSession, createSession, setRsvp } from '../../worker/sessions';
+import { cancelSession, createSession, setRsvp, updateSession } from '../../worker/sessions';
 import { fileCase } from '../../worker/case-filing';
 import { scoreMutation, weeklyHeal } from '../../worker/db';
 import { WEEKLY_BONUS_CAP } from '../../shared/scoring';
@@ -303,5 +303,27 @@ describe('concurrent score changes on PostgreSQL', () => {
       .bind(session.id)
       .first();
     expect(row).toBeNull();
+  });
+
+  it('a yes that read the old time before a move landed is refused, not written for the new time', async () => {
+    const organizer = await seedUser({ id: 'org' });
+    const player = await seedUser({ id: 'p1' });
+    const session = await createSession(
+      env.DB,
+      organizer,
+      { starts_at: new Date(Date.now() + 3_600_000).toISOString(), invite: ['p1'] },
+      OFFSET_HOURS,
+    );
+    const later = new Date(Date.now() + 5 * 3_600_000).toISOString();
+    const [move, rsvp] = await queuedBehind('UPDATE game_sessions SET status = status WHERE id = $1', [session.id], [
+      () => updateSession(env.DB, organizer, session.id, { starts_at: later }),
+      () => setRsvp(env.DB, player, session.id, 'going', session.starts_at),
+    ]);
+    expect(move.status).toBe('fulfilled');
+    expect(rsvp).toMatchObject({ status: 'rejected', reason: { status: 409 } });
+    const row = await env.DB.prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = 'p1'")
+      .bind(session.id)
+      .first<{ rsvp: string }>();
+    expect(row?.rsvp).toBe('invited');
   });
 });

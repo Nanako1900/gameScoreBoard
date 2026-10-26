@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlayerDetail } from '../../src/components/PlayerDetail';
-import type { User } from '../../src/types';
+import type { RecordItem, User } from '../../src/types';
 
 const ME: User = {
   id: 'admin',
@@ -60,3 +60,52 @@ describe('PlayerDetail — appointing judges', () => {
     expect(screen.queryByRole('button', { name: '设为裁判' })).not.toBeInTheDocument();
   });
 });
+
+describe('PlayerDetail — the escalation buttons', () => {
+  const REPORTER: User = { ...ME, id: 'j', username: '裁判', is_admin: false, is_judge: true };
+  const record: RecordItem = {
+    id: 7,
+    subject: { id: 'p', username: '选手', avatar_url: null },
+    reporter: { id: 'j', username: '裁判', avatar_url: null },
+    type: 'no_show',
+    delta: 0,
+    note: null,
+    claim: '说好八点五排结果没来',
+    claim_summary: null,
+    classified_by: 'ai',
+    escalation_suggested: true,
+    session_id: null,
+    statement: null,
+    statement_at: null,
+    appeal_reason: null,
+    deadline_at: '2026-10-27 12:00:00',
+    status: 'awaiting_statement',
+    verdict: null,
+    range: { min: -20, max: -10, base: -15 },
+    created_at: '2026-10-26 12:00:00',
+  };
+
+  function stubCase(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const user = { id: 'p', username: '选手', avatar_url: null, is_participant: true, is_judge: false, score: 90, created_at: 'x' };
+        return { ok: true, status: 200, text: async () => JSON.stringify({ user, records: [record], history: [] }) };
+      }),
+    );
+  }
+
+  it('are for the judge who filed it', async () => {
+    stubCase();
+    render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} />);
+    expect(await screen.findByRole('button', { name: '确认是团灭级' })).toBeInTheDocument();
+  });
+
+  it('are not for a reporter who is no judge (any more): the server would refuse', async () => {
+    stubCase();
+    render(<PlayerDetail userId="p" me={{ ...REPORTER, is_judge: false }} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('button', { name: '确认是团灭级' })).not.toBeInTheDocument();
+  });
+});
+

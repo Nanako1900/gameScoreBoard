@@ -382,8 +382,49 @@ describe('reclassify needs a judge', () => {
     ).run();
     const id = Number(row.meta.last_row_id);
     await expect(reclassifyCase(env.DB, organizer, id, 'no_show_group')).rejects.toMatchObject({ status: 403 });
-    const judge = await seedUser({ id: 'j', judge: true });
-    await env.DB.prepare("UPDATE records SET reporter_id = 'j' WHERE id = ?").bind(id).run();
-    await expect(reclassifyCase(env.DB, judge, id, 'late_major')).resolves.toMatchObject({ type: 'late_major' });
+  });
+
+  it('an organizer who is a judge still cannot re-type a roll-call case past the roll call', async () => {
+    const organizer = await seedUser({ id: 'org', judge: true });
+    const admin = await seedUser({ id: 'adm', admin: true });
+    await seedUser({ id: 'v' });
+    const late = await rollCallCase('late_minor');
+    await expect(reclassifyCase(env.DB, organizer, late, 'no_show_group')).rejects.toThrow(/点名/);
+    await expect(reclassifyCase(env.DB, organizer, late, 'late_major')).rejects.toThrow(/点名/);
+    // Between 放鸽子 and 团灭级放鸽 — what settling allows — it can.
+    const absent = await rollCallCase('no_show');
+    await expect(reclassifyCase(env.DB, organizer, absent, 'no_show_group')).resolves.toMatchObject({ type: 'no_show_group' });
+    await expect(reclassifyCase(env.DB, organizer, absent, 'no_show')).resolves.toMatchObject({ type: 'no_show' });
+    // An admin is not bound by it.
+    await expect(reclassifyCase(env.DB, admin, late, 'late_major')).resolves.toMatchObject({ type: 'late_major' });
+  });
+
+  it('only the judge who filed it: another judge cannot re-type it', async () => {
+    const { judge, players } = await judgeAnd(1);
+    const other = await seedUser({ id: 'j2', judge: true });
+    const filed = await fileCase(env.DB, judge, { subject_id: players[0].id, type: 'late_minor', claim: CLAIM }, OPTS, noAiEnv());
+    await expect(reclassifyCase(env.DB, other, filed.id, 'late_major')).rejects.toMatchObject({ status: 403 });
+    await expect(reclassifyCase(env.DB, judge, filed.id, 'late_major')).resolves.toMatchObject({ type: 'late_major' });
+  });
+
+  it('a judge who has stepped down can no longer confirm or dismiss an escalation', async () => {
+    const { judge, players } = await judgeAnd(1);
+    const filed = await fileCase(env.DB, judge, { subject_id: players[0].id, type: 'no_show', claim: CLAIM }, OPTS, noAiEnv());
+    await env.DB.prepare('UPDATE records SET escalation_suggested = 1 WHERE id = ?').bind(filed.id).run();
+    const former = { ...judge, is_judge: false };
+    await expect(confirmEscalation(env.DB, former, filed.id)).rejects.toMatchObject({ status: 403 });
+    await expect(dismissEscalation(env.DB, former, filed.id)).rejects.toMatchObject({ status: 403 });
+    await expect(dismissEscalation(env.DB, judge, filed.id)).resolves.toMatchObject({ escalation_suggested: false });
   });
 });
+
+/** A case as a roll call files it: by the organizer, its charge derived from the roll call. */
+async function rollCallCase(type: string): Promise<number> {
+  const row = await env.DB.prepare(
+    `INSERT INTO records (subject_id, reporter_id, type, claim, status, classified_by, deadline_at)
+     VALUES ('v', 'org', ?, '点名记的迟到点名记的迟到', 'awaiting_statement', 'derived', datetime('now', '+1 day'))`,
+  )
+    .bind(type)
+    .run();
+  return Number(row.meta.last_row_id);
+}

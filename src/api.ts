@@ -242,11 +242,13 @@ export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
   return post<{ session: SessionDetail }>(`/api/sessions/${id}/cancel`);
 }
 
+/** `startsAt`: the start time the player is looking at — a move since is a 409. */
 export function setRsvp(
   id: number,
   rsvp: SelfRsvp,
+  startsAt: string,
 ): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp });
+  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp, starts_at: startsAt });
 }
 
 /** Record attendance. Produces drafts; changes nobody's score. */

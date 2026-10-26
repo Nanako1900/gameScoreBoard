@@ -103,9 +103,11 @@ BEGIN
 
   ELSIF NEW.status = 'awaiting_statement' AND NEW.deadline_at IS DISTINCT FROM OLD.deadline_at THEN
     -- The deadline moved (e.g. extended over an outage): move the reminder too
-    -- — at once, if the new deadline is already less than 2 hours away.
+    -- — at once, if the new deadline is already less than 2 hours away; but
+    -- never before the filing DM (and its grace for a withdrawal straight away).
     IF outbox_utc(NEW.deadline_at) > now() THEN
-      remind := GREATEST(outbox_utc(NEW.deadline_at) - interval '2 hours', now());
+      remind := GREATEST(outbox_utc(NEW.deadline_at) - interval '2 hours', now(),
+                         outbox_utc(NEW.created_at) + interval '3 minutes');
       PERFORM outbox_schedule('dm.deadline', 'user', NEW.subject_id, 'dm:case:' || rid || ':deadline', dm, remind);
     END IF;
 

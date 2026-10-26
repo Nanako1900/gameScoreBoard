@@ -192,8 +192,9 @@ export function PlayerDetail({
                     record={r}
                     escalation={
                       // Only the filing judge (or an admin) may co-sign the -25
-                      // charge, so only they get the buttons.
-                      me !== null && (me.is_admin || r.reporter.id === me.id) ? (
+                      // charge, so only they get the buttons — a reporter who is
+                      // no judge (any more) does not.
+                      me !== null && (me.is_admin || (me.is_judge && r.reporter.id === me.id)) ? (
                         <>
                           <button
                             type="button"

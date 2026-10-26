@@ -118,6 +118,16 @@ function errorCode(error: unknown): number | null {
   return typeof code === 'number' ? code : null;
 }
 
+/**
+ * Discord returns the first message instead of a second one for a repeated
+ * nonce (a send retried after a crash between sending and recording it). An
+ * event re-armed for later (a reminder whose deadline moved) is a new send:
+ * re-arming resets created_at, so the nonce changes with it. At most 25 chars.
+ */
+function nonceFor(row: OutboxRow): string {
+  return `ob${row.id}.${row.created_at.getTime().toString(36)}`;
+}
+
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { pool, db, api, config } = deps;
   const log = deps.log ?? console;
@@ -149,7 +159,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
                 WHERE e.entity = o.entity AND e.entity_id = o.entity_id
                   AND e.processed_at IS NULL AND e.id < o.id
                   AND (e.available_at <= now() OR e.attempts > 0 OR e.refused_since IS NOT NULL))
-           ORDER BY o.id
+           -- Fresh events before retries of refused ones: a channel the bot may
+           -- not post in must not keep everything else waiting.
+           ORDER BY (o.refused_since IS NOT NULL), o.id
            LIMIT 1
            FOR UPDATE SKIP LOCKED)
       RETURNING id, kind, entity, entity_id, payload, claim_token, attempts, created_at, refused_since`,
@@ -166,8 +178,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       // An unhandled event waits a day from its creation for a newer bot.
       const since = outcome.refused ? (row.refused_since ?? new Date()) : row.created_at;
       const keep = outcome.refused && row.entity === 'record' && RECORD_KINDS.has(row.kind);
-      if (keep || Date.now() - since.getTime() <= STALE_MS) {
-        if (keep && Date.now() - since.getTime() > STALE_MS) {
+      const overdue = Date.now() - since.getTime() > STALE_MS;
+      if (keep || !overdue) {
+        // A correction refused for over a day: someone has to fix the bot's
+        // permissions. Ask hourly from then on (and say so each time).
+        if (overdue) {
           log.error(`outbox ${row.id} (${row.kind} record:${row.entity_id}) refused for over a day: ${outcome.note}`);
         }
         await pool.query(
@@ -175,7 +190,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
                   refused_since = CASE WHEN $5 THEN COALESCE(refused_since, now()) ELSE refused_since END,
                   available_at = now() + make_interval(secs => $3), last_error = $4
             WHERE id = $1 AND claim_token = $2`,
-          [row.id, row.claim_token, REFUSED_RETRY_S, outcome.note, outcome.refused === true],
+          [row.id, row.claim_token, overdue ? MAX_BACKOFF_S : REFUSED_RETRY_S, outcome.note, outcome.refused === true],
         );
         return;
       }
@@ -218,11 +233,14 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   /** What a failed Discord call means for the event. */
-  function outcomeOf(error: unknown): Outcome {
+  function outcomeOf(error: unknown, row: OutboxRow): Outcome {
     const status = errorStatus(error);
     const note = describe(error).slice(0, 500);
     if (status === 401 || status === 403) {
-      noteAuthFailure(status);
+      // Another refusal of something already refused says nothing new about
+      // the bot as a whole: counted, a few stuck corrections would pause all
+      // delivery every time their retry came round.
+      if (status === 401 || row.refused_since === null) noteAuthFailure(status);
       return { result: 'retry', note, refused: true };
     }
     if (errorCode(error) === UNKNOWN_CHANNEL) return { result: 'dead', note: `unknown channel — check DISCORD_VERDICT_CHANNEL_ID: ${note}` };
@@ -301,7 +319,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     // The nonce makes Discord return the first message instead of a second one
     // if a send is repeated after a crash between sending and recording it.
-    const sent = await api.send(channelId, { ...message, nonce: `ob${row.id}`, enforce_nonce: true });
+    const sent = await api.send(channelId, { ...message, nonce: nonceFor(row), enforce_nonce: true });
     await pool.query(
       `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
        VALUES ('record', $1, 'verdict', $2, $3)
@@ -363,7 +381,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
     try {
       const channelId = await api.openDm(to.discord_user_id);
-      const sent = await api.send(channelId, { ...message, nonce: `ob${row.id}`, enforce_nonce: true });
+      const sent = await api.send(channelId, { ...message, nonce: nonceFor(row), enforce_nonce: true });
       return { channelId, messageId: sent.id };
     } catch (error) {
       // Not a refusal of the bot as a whole: this one person's DMs are shut.
@@ -467,20 +485,38 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     const sent = await sendDm(row, to, message);
     if (isOutcome(sent)) return sent;
+    if (!purpose) return { result: 'sent', note: null };
+
+    // Remember it (a withdrawal or a deletion rewrites it) — unless the record
+    // was deleted while this was being sent: then say so in it straight away.
+    const kept = await pool.query(
+      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
+       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5)
+       ON CONFLICT (entity, entity_id, purpose)
+       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
+      [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
+    );
+    if (kept.rowCount === 0) {
+      await tidy(row, sent.channelId, sent.messageId, removedDm(), 'rewrite a DM about a deleted record');
+      return { result: 'sent', note: null };
+    }
     // A reminder sent again (its deadline moved): the earlier one loses its
-    // button, so only the current DM offers 写陈述 (and a withdrawal, which
-    // rewrites the stored one, leaves no live button behind).
-    if (earlier) await rewrite(row.entity_id, [earlier], { ...message, components: [] });
-    if (purpose) {
-      await pool.query(
-        `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
-         VALUES ('record', $1, $2, $3, $4)
-         ON CONFLICT (entity, entity_id, purpose)
-         DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
-        [String(recordId), purpose, sent.channelId, sent.messageId],
-      );
+    // button, so only the current DM offers 写陈述. The new one is sent and
+    // remembered whatever happens to this — so it never decides the outcome.
+    // (The same message, when Discord matched the nonce: leave it be.)
+    if (earlier && earlier.message_id !== sent.messageId) {
+      await tidy(row, earlier.channel_id, earlier.message_id, { ...message, components: [] }, 'take the button off the earlier reminder');
     }
     return { result: 'sent', note: null };
+  }
+
+  /** A best-effort edit after the event's real work is done: a failure is only logged. */
+  async function tidy(row: OutboxRow, channelId: string, messageId: string, message: ChannelMessage, what: string): Promise<void> {
+    try {
+      await api.edit(channelId, messageId, message);
+    } catch (error) {
+      log.warn(`outbox ${row.id}: could not ${what}: ${describe(error)}`);
+    }
   }
 
   /**
@@ -503,7 +539,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             ? await deliverDm(row)
             : unhandled(row);
     } catch (error) {
-      outcome = outcomeOf(error);
+      outcome = outcomeOf(error, row);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);
     }
     await finish(row, outcome);

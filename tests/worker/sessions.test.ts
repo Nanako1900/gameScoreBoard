@@ -627,6 +627,29 @@ describe('organizer bonus', () => {
     expect(await listRecords(env.DB, { session: session.id })).toEqual([]);
   });
 
+  it('a maybe who turns up earns no 守约 bonus, and does not count for the organizer', async () => {
+    const { organizer, a, b } = await cast();
+    await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
+    const session = await startedSession(organizer, [a]);
+    // b only ever said 待定 — no promise, so no penalty could ever reach them.
+    await env.DB.prepare("INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, 'b', 'maybe')").bind(session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: a.id, attendance: 'on_time' },
+        { user_id: b.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    expect(roll.drafts.map((d) => [d.user_id, d.type])).toEqual([['a', 'on_time_bonus']]);
+    await settleSession(env.DB, organizer, session.id, [{ user_id: b.id }], false, noAiEnv(), OFFSET_HOURS);
+    expect((await listRecords(env.DB, { session: session.id })).map((r) => r.subject.id)).toEqual([]);
+    // One who came as promised is not enough for the organizer's bonus.
+    expect(await scoreOf(organizer.id)).toBe(80);
+  });
+
   it('is awarded once the session provably happened', async () => {
     const { organizer, a, b } = await cast();
     await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
