@@ -15,6 +15,7 @@ import {
   withdrawCase,
 } from '../../worker/cases';
 import { ApiError } from '../../worker/errors';
+import { MAX_CASES_PER_SUBJECT_24H } from '../../worker/case-limits';
 import {
   OFFSET_HOURS,
   expireDeadline,
@@ -638,5 +639,18 @@ describe('listRecords and pending counts', () => {
 
     expect((await pendingCounts(env.DB, admin)).appeals).toBe(1);
     expect((await pendingCounts(env.DB, judge)).appeals).toBe(0);
+  });
+});
+
+describe('rate limits', () => {
+  it('counts withdrawn cases — filing and withdrawing is no way around the limit', async () => {
+    const { judge, subject } = await judgeAndSubject();
+    for (let i = 0; i < MAX_CASES_PER_SUBJECT_24H; i += 1) {
+      const filed = await fileCase(env.DB, judge, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv());
+      await withdrawCase(env.DB, judge, filed.id);
+    }
+    await expect(
+      fileCase(env.DB, judge, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv()),
+    ).rejects.toMatchObject({ status: 429 });
   });
 });

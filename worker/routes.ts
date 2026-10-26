@@ -317,9 +317,16 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   app.post('/api/me/roles', async (c) => {
     const caller = requireUser(c.get('user'));
     const body = await readJsonBody(c.req.raw);
+    const isJudge = optBool(body.is_judge);
+    // Judges can file cases, and (with the Discord bot) every case DMs its
+    // subject — so becoming one is an admin's grant, not a self-service
+    // switch. Anyone may still step down, and an admin may still self-grant.
+    if (isJudge === true && !caller.is_judge && !caller.is_admin) {
+      throw new ApiError(403, '裁判资格需要管理员授予');
+    }
     const user = await updateRoles(c.env.DB, caller.id, {
       is_participant: optBool(body.is_participant),
-      is_judge: optBool(body.is_judge),
+      is_judge: isJudge,
     });
     return c.json({ user });
   });
