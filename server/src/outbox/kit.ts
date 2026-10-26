@@ -30,6 +30,11 @@ export interface DispatcherConfig {
   offsetHours?: number;
 }
 
+/** Where a DM goes: the recipient's Discord account. */
+export interface Recipient {
+  discord_user_id: string;
+}
+
 export interface OutboxRow {
   id: number;
   kind: string;

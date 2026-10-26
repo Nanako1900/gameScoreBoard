@@ -272,6 +272,8 @@ fields) and answer `Cache-Control: private, no-store`.
   a flagged case to `no_show_group`. `awaiting_statement` only — after a verdict
   the subject argued against the lesser charge, so re-sentencing is an admin override.
 - `POST /api/records/:id/escalate/dismiss` → `{ record }`. Keep the lesser charge.
+  Same rules as `escalate`: filing judge or admin, a flagged case, `awaiting_statement`
+  only (400 otherwise), 409 if it changed meanwhile.
 - `POST /api/records/:id/reclassify` `{ type }` → `{ record }`. Filing judge or
   admin overrides the AI's category, pre-verdict, penalties only. A roll-call case
   (filed by settling a session) may only move between `no_show` and

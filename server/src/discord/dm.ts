@@ -50,9 +50,22 @@ export function isDmKind(kind: string): kind is DmKind {
   return (DM_KINDS as readonly string[]).includes(kind);
 }
 
-type Button = { label: string; customId: string } | { label: string; url: string };
+/** The DMs of a case that carry a 写陈述 button, and the purpose they are stored under. */
+export const STATEMENT_DMS: Partial<Record<DmKind, string>> = { 'dm.filed': 'dm:filed', 'dm.deadline': 'dm:deadline' };
 
-function message(embed: BotEmbed, buttons: Button[]): ChannelMessage {
+export type DmButton =
+  | { label: string; customId: string; style?: 'primary' | 'secondary' | 'danger' }
+  | { label: string; url: string };
+type Button = DmButton;
+
+const BUTTON_STYLE = {
+  primary: ButtonStyle.Primary,
+  secondary: ButtonStyle.Secondary,
+  danger: ButtonStyle.Danger,
+} as const;
+
+/** A DM: one embed and a row of buttons, pinging nobody. */
+export function dmMessage(embed: BotEmbed, buttons: DmButton[]): ChannelMessage {
   const components: APIActionRowComponent<APIButtonComponent>[] =
     buttons.length === 0
       ? []
@@ -62,14 +75,16 @@ function message(embed: BotEmbed, buttons: Button[]): ChannelMessage {
             components: buttons.map((b) =>
               'url' in b
                 ? { type: ComponentType.Button, style: ButtonStyle.Link, label: b.label, url: b.url }
-                : { type: ComponentType.Button, style: ButtonStyle.Primary, label: b.label, custom_id: b.customId },
+                : { type: ComponentType.Button, style: BUTTON_STYLE[b.style ?? 'primary'], label: b.label, custom_id: b.customId },
             ),
           },
         ];
   return { embeds: [toEmbed(clampEmbed(embed))], components, allowed_mentions: { parse: [] } };
 }
 
-function web(frontendUrl: string, recordId: number): Button {
+const message = dmMessage;
+
+export function web(frontendUrl: string, recordId: number): Button {
   return linkButton('在网页查看', webUrl(frontendUrl, { case: recordId }));
 }
 

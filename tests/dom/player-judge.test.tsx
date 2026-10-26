@@ -102,6 +102,21 @@ describe('PlayerDetail — the escalation buttons', () => {
     expect(await screen.findByRole('button', { name: '确认是团灭级' })).toBeInTheDocument();
   });
 
+  it('are gone once the case went to judgment', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const user = { id: 'p', username: '选手', avatar_url: null, is_participant: true, is_judge: false, score: 90, created_at: 'x' };
+        const decided = { ...record, status: 'decided', delta: -15, verdict: { source: 'ai', headline: '判了', reasoning: '', factors: [] } };
+        return { ok: true, status: 200, text: async () => JSON.stringify({ user, records: [decided], history: [] }) };
+      }),
+    );
+    render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('button', { name: '确认是团灭级' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/够得上「团灭级放鸽」/)).not.toBeInTheDocument();
+  });
+
   it('are not for a reporter who is no judge (any more): the server would refuse', async () => {
     stubCase();
     render(<PlayerDetail userId="p" me={{ ...REPORTER, is_judge: false }} onClose={() => {}} />);

@@ -154,7 +154,7 @@ export function VerdictCard({
       {status === 'revoked' && <p className="vc__flag">这笔记录已被撤销，分数已还原。</p>}
       {status === 'withdrawn' && <p className="vc__flag">裁判已撤案，未产生任何扣分。</p>}
 
-      {record.escalation_suggested && (
+      {record.escalation_suggested && pending && (
         <div className="vc__escalate">
           <p className="vc__escalate-text">
             AI 认为这够得上「团灭级放鸽」。系统先按较轻的案由立案了 —— 要升级得由人确认。

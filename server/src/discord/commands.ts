@@ -98,7 +98,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     type: CHAT_INPUT,
     name: 'notify',
-    description: '私信提醒开关：被立案、快截止、出判决时私信你',
+    description: '私信提醒开关：被立案、快截止、出判决、分数被调整、约局时私信你',
     options: [
       {
         type: STRING_OPTION,
@@ -363,7 +363,7 @@ async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotRe
     .run();
   return ephemeralReply(
     on
-      ? '已打开私信提醒：被立案、陈述快截止、出判决时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
+      ? '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
       : '已关闭私信提醒。网页上仍能看到一切；想重新打开用 /notify 开。',
   );
 }

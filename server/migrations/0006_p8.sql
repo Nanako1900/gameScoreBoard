@@ -36,3 +36,90 @@ DROP TRIGGER IF EXISTS weekly_reports_outbox ON weekly_reports;
 CREATE TRIGGER weekly_reports_outbox
   AFTER INSERT OR UPDATE ON weekly_reports
   FOR EACH ROW EXECUTE FUNCTION weekly_reports_outbox();
+
+-- The AI's escalation hint (escalation_suggested) is the filing judge's to
+-- settle: a DM asks them while it is open (awaiting a statement, flag set),
+-- and is rewritten without its buttons once it is not — confirmed, dismissed,
+-- re-typed, withdrawn, or the case gone to judgment. At once, no grace: the
+-- judge can settle it before the subject's filing DM goes out (+3 min).
+CREATE OR REPLACE FUNCTION records_outbox_escalation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  rid text := NEW.id::text;
+  ref jsonb := jsonb_build_object('record_id', NEW.id);
+  was_open boolean := TG_OP = 'UPDATE' AND OLD.status = 'awaiting_statement' AND OLD.escalation_suggested = 1;
+  is_open boolean := NEW.status = 'awaiting_statement' AND NEW.escalation_suggested = 1;
+BEGIN
+  IF current_setting('edg.importing', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  IF is_open AND NOT was_open THEN
+    PERFORM outbox_emit('dm.escalation', 'user', NEW.reporter_id, 'dm:case:' || rid || ':esc', ref, now());
+  ELSIF was_open AND NOT is_open THEN
+    PERFORM outbox_emit('dm.escalation.closed', 'user', NEW.reporter_id, 'dm:case:' || rid || ':esc:closed', ref, NULL);
+  ELSE
+    RETURN NULL;
+  END IF;
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS records_outbox_escalation ON records;
+CREATE TRIGGER records_outbox_escalation
+  AFTER INSERT OR UPDATE OF status, escalation_suggested ON records
+  FOR EACH ROW EXECUTE FUNCTION records_outbox_escalation();
+
+-- A charge changed before the verdict (an escalation confirmed, a re-type):
+-- the subject's filing DM and reminder say what they are accused of, so they
+-- are rewritten in place — no new DM. One for a burst of changes.
+CREATE OR REPLACE FUNCTION records_outbox_recharged() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('edg.importing', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.type IS NOT DISTINCT FROM OLD.type OR NEW.status <> 'awaiting_statement' THEN
+    RETURN NULL;
+  END IF;
+  PERFORM outbox_schedule('dm.recharged', 'user', NEW.subject_id, 'dm:case:' || NEW.id || ':recharged',
+                          jsonb_build_object('record_id', NEW.id), now() + interval '2 seconds', true);
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS records_outbox_recharged ON records;
+CREATE TRIGGER records_outbox_recharged
+  AFTER UPDATE OF type ON records
+  FOR EACH ROW EXECUTE FUNCTION records_outbox_recharged();
+
+-- As in 0004, plus: the escalation DM went to the reporter, not the subject.
+CREATE OR REPLACE FUNCTION records_outbox_removed() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  posted record;
+BEGIN
+  FOR posted IN
+    SELECT purpose, channel_id, message_id FROM discord_messages
+     WHERE entity = 'record' AND entity_id = OLD.id::text
+  LOOP
+    IF posted.purpose = 'verdict' THEN
+      INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+      VALUES ('case.removed', 'record', OLD.id::text, 'case:' || OLD.id || ':removed',
+              jsonb_build_object('channel_id', posted.channel_id, 'message_id', posted.message_id))
+      ON CONFLICT (dedupe_key) DO NOTHING;
+    ELSE
+      INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+      VALUES ('dm.removed', 'user',
+              CASE WHEN posted.purpose = 'dm:esc' THEN OLD.reporter_id ELSE OLD.subject_id END,
+              'dm:case:' || OLD.id || ':removed:' || posted.purpose,
+              jsonb_build_object('record_id', OLD.id, 'purpose', posted.purpose,
+                                 'channel_id', posted.channel_id, 'message_id', posted.message_id))
+      ON CONFLICT (dedupe_key) DO NOTHING;
+    END IF;
+  END LOOP;
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;

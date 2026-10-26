@@ -85,7 +85,7 @@ function RecordRow({ record, onSelectUser }: RecordRowProps): JSX.Element {
               {statusLabel}
             </span>
           )}
-          {record.escalation_suggested && (
+          {record.escalation_suggested && record.status === 'awaiting_statement' && (
             <span
               className="feed-row__status feed-row__status--escalate"
               title="AI 认为够得上团灭级，等裁判确认"

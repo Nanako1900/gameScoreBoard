@@ -14,7 +14,7 @@
 
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
-import { dmStillRelevant, isDmKind, removedDm, renderDm, type DmKind } from '../discord/dm';
+import { dmStillRelevant, isDmKind, removedDm, renderDm, STATEMENT_DMS, type DmKind } from '../discord/dm';
 import {
   isSessionDmKind,
   isUpcoming,
@@ -37,9 +37,11 @@ import {
   type DispatcherConfig,
   type OutboxRow,
   type Outcome,
+  type Recipient,
 } from './kit';
 
 import { deliverReport, REPORT_KINDS } from './report-delivery';
+import { deliverEscalation, deliverRecharged, ESCALATION_KINDS } from './escalation-delivery';
 
 export { STALE_MS, type ChannelApi, type DispatcherConfig } from './kit';
 
@@ -74,6 +76,11 @@ export const DM_BUDGET = 20;
 export const SESSION_DM_BUDGET = 10;
 /** Invitations from one organizer to one person per 24 h. */
 export const INVITES_PER_ORGANIZER = 3;
+/**
+ * Escalation asks to a judge (P8) have their own allowance: a batch of filings
+ * the AI all flagged must not use up the judge's own statement reminders.
+ */
+export const ESCALATION_DM_BUDGET = 10;
 
 interface Budget {
   kinds: readonly string[];
@@ -82,6 +89,7 @@ interface Budget {
 const BUDGETS: readonly Budget[] = [
   { kinds: ['dm.filed', 'dm.deadline'], limit: DM_BUDGET },
   { kinds: ['dm.session.invited', 'dm.session.changed'], limit: SESSION_DM_BUDGET },
+  { kinds: ['dm.escalation'], limit: ESCALATION_DM_BUDGET },
 ];
 
 function budgetFor(kind: string): Budget | null {
@@ -353,9 +361,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
-  interface Recipient {
-    discord_user_id: string;
-  }
 
   /** The recipient's Discord account if DMs to them are on — else why not. */
   async function recipient(userId: string): Promise<Recipient | Outcome> {
@@ -402,8 +407,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
   }
 
-  /** The DMs of a case that carry a 写陈述 button, by purpose. */
-  const STATEMENT_DMS: Partial<Record<DmKind, string>> = { 'dm.filed': 'dm:filed', 'dm.deadline': 'dm:deadline' };
 
   async function isAdmin(userId: string): Promise<boolean> {
     const res = await pool.query<{ is_admin: number }>('SELECT is_admin FROM users WHERE id = $1', [userId]);
@@ -456,6 +459,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
+    if (row.kind === 'dm.recharged' || ESCALATION_KINDS.has(row.kind)) {
+      const tools = { pool, db, config, recipient, sendDm, rewrite, messageFor, rememberDm };
+      return row.kind === 'dm.recharged' ? deliverRecharged(row, tools) : deliverEscalation(row, tools);
+    }
     if (isSessionDmKind(row.kind)) return deliverSessionDm(row, row.kind);
     if (!isDmKind(row.kind)) return unhandled(row);
     const kind = row.kind;
@@ -498,28 +505,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const sent = await sendDm(row, to, message);
     if (isOutcome(sent)) return sent;
     if (!purpose) return { result: 'sent', note: null };
-
-    // Remember it (a withdrawal or a deletion rewrites it) — unless the record
-    // was deleted while this was being sent. The lock waits out a deletion in
-    // progress (whose trigger saw nothing stored yet); a record that is gone
-    // gets its DM rewritten like any other, as an event, so it is retried.
-    const kept = await pool.query(
-      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
-       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5 FOR KEY SHARE)
-       ON CONFLICT (entity, entity_id, purpose)
-       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
-      [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
-    );
-    if (kept.rowCount === 0) {
-      await pool.query(
-        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
-         VALUES ('dm.removed', 'user', $1, 'dm:case:' || $2 || ':removed:' || $3 || ':' || $4,
-                 jsonb_build_object('record_id', $2::bigint, 'purpose', $3::text, 'channel_id', $5::text, 'message_id', $4::text))
-         ON CONFLICT (dedupe_key) DO NOTHING`,
-        [row.entity_id, recordId, purpose, sent.messageId, sent.channelId],
-      );
-      return { result: 'sent', note: null };
-    }
+    if (!(await rememberDm(row, recordId, purpose, sent))) return { result: 'sent', note: null };
     // A reminder sent again (its deadline moved): the earlier one loses its
     // button, so only the current DM offers 写陈述. The new one is sent and
     // remembered whatever happens to this — so it never decides the outcome.
@@ -528,6 +514,37 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       await tidy(row, earlier.channel_id, earlier.message_id, { ...message, components: [] }, 'take the button off the earlier reminder');
     }
     return { result: 'sent', note: null };
+  }
+
+  /**
+   * Remember a DM about a case (a withdrawal or a deletion rewrites it) —
+   * unless the record was deleted while it was being sent. The lock waits out
+   * a deletion in progress (whose trigger saw nothing stored yet); a record
+   * that is gone gets its DM rewritten like any other, as an event, so it is
+   * retried. False: it was gone.
+   */
+  async function rememberDm(
+    row: OutboxRow,
+    recordId: number,
+    purpose: string,
+    sent: { channelId: string; messageId: string },
+  ): Promise<boolean> {
+    const kept = await pool.query(
+      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
+       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5 FOR KEY SHARE)
+       ON CONFLICT (entity, entity_id, purpose)
+       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
+      [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
+    );
+    if (kept.rowCount !== 0) return true;
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+       VALUES ('dm.removed', 'user', $1, 'dm:case:' || $2 || ':removed:' || $3 || ':' || $4,
+               jsonb_build_object('record_id', $2::bigint, 'purpose', $3::text, 'channel_id', $5::text, 'message_id', $4::text))
+       ON CONFLICT (dedupe_key) DO NOTHING`,
+      [row.entity_id, recordId, purpose, sent.messageId, sent.channelId],
+    );
+    return false;
   }
 
   /** A best-effort edit after the event's real work is done: a failure is only logged. */
