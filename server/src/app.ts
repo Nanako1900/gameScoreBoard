@@ -6,8 +6,11 @@
 import { Hono } from 'hono';
 
 export interface AppParts {
-  /** Hostname that serves the Discord share page, e.g. discord.nanako.org. */
-  shareHost: string | null;
+  /**
+   * Hostnames that serve the Discord share page, lowercased — e.g.
+   * discord.nanako.org, plus discord-next.nanako.org while verifying a cutover.
+   */
+  shareHosts: ReadonlySet<string>;
   share: Hono | null;
 }
 
@@ -25,7 +28,7 @@ export function createApp(parts: AppParts): Hono {
 
   app.all('*', (c) => {
     const host = hostnameOf(c.req.header('host'));
-    if (parts.share && parts.shareHost && host === parts.shareHost) {
+    if (parts.share && parts.shareHosts.has(host)) {
       return parts.share.fetch(c.req.raw);
     }
     return c.json({ error: 'Not found' }, 404);

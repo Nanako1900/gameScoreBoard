@@ -27,12 +27,15 @@
    | `CLOUDFLARE_TUNNEL_TOKEN` | 第 2 步的 token |
    | `INVITE_CODE` | 一个**永不过期**的邀请码（`discord.gg/` 后面那段）。留空则用 widget 的轮换邀请 |
    | `APP_TAG` | 可选；默认 `latest`，回滚时填旧的 git sha |
-   | `SHARE_HOST` / `SITE_URL` / `SITE_NAME` / `GUILD_ID` | 默认值已经是现在线上的配置，一般不用改 |
+   | `SHARE_HOST` / `SITE_URL` / `SITE_NAME` / `GUILD_ID` | 默认值已经是现在线上的配置，一般不用改。`SHARE_HOST` 可以逗号分隔多个主机名 |
 
 ## 把 discord.nanako.org 从 Worker 切到 Coolify
 
-1. Coolify 上的 stack 起来后，先确认健康检查是绿的。可以临时给 Tunnel 加一个
-   `discord-next.nanako.org` 先访问一遍。
+1. Coolify 上的 stack 起来后，先确认健康检查是绿的。然后预检：
+   - Coolify 环境变量里把 `SHARE_HOST` 设成 `discord.nanako.org,discord-next.nanako.org` 并重新部署
+     （服务只认列出的主机名，不加这一项预检地址只会得到 404）；
+   - Tunnel 里加 `discord-next.nanako.org` → `http://app:8787`，打开看一遍；
+   - 切换完成后可以把 `SHARE_HOST` 改回默认值、删掉 Tunnel 里的 `discord-next`。
 2. 在 DC 仓库（`discord-share`）里：Cloudflare 后台 → Workers & Pages →
    `discord-share` → Settings → Domains & Routes，**删掉 Custom Domain**
    `discord.nanako.org`；同时在 Builds 里断开仓库连接，否则下一次推送又会把域名建回来。
@@ -42,6 +45,9 @@
 回滚：删掉 Tunnel 里的 hostname，恢复 Worker 的 Custom Domain。
 
 ## 缓存与源站故障
+
+服务把最近一次成功拉到的 Discord 数据写进 `app-data` 卷（`/data/share-snapshot.json`）。
+重启、部署、OOM 之后如果 Discord 恰好连不上，页面照样渲染上一次的数据，并显示「数据可能有延迟」。
 
 分享页 HTML 的响应头是 `Cache-Control: public, max-age=0, s-maxage=60, stale-if-error=86400`。
 Cloudflare 默认不缓存 HTML，需要加一条 Cache Rule：Hostname 等于 `discord.nanako.org`

@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '../../src/share/discord';
-import { createShareApp, createSnapshotPoller, readShareConfig } from '../../src/share';
+import { createShareApp, createSnapshotPoller, etagMatches, readShareConfig } from '../../src/share';
 import { REFRESH_INTERVAL_MS, STALE_MS } from '../../src/share/poller';
 import application from './fixtures/application.json';
 import invite from './fixtures/invite.json';
@@ -174,6 +174,27 @@ describe('foreign invite code', () => {
   });
 });
 
+describe('after a restart while Discord is down', () => {
+  it('still renders the persisted snapshot, flagged stale', async () => {
+    const config = readShareConfig({ GUILD_ID, INVITE_CODE: '', SITE_URL, SITE_NAME: 'x' });
+    // A healthy run first, to get a realistic stored snapshot.
+    const good = discordFetch({ invite: () => json(invite), widget: () => json(widget), application: () => json(application) });
+    let saved: import('../../src/share/snapshot').StoredSnapshot | null = null;
+    const first = createSnapshotPoller(config, { fetcher: good, onSnapshot: (s) => (saved = s) });
+    await first.refresh();
+    expect(saved).not.toBeNull();
+
+    vi.setSystemTime(Date.now() + STALE_MS + 1);
+    const poller = createSnapshotPoller(config, { fetcher: discordFetch({}), initial: saved, onError: () => undefined });
+    poller.start();
+    const app = createShareApp({ config, poller, publicDir: PUBLIC_DIR });
+    const html = await (await app.request(`${SITE_URL}/`)).text();
+    expect(html).toMatch(/<main class="stage" data-layout="split"/);
+    expect((initialData(html) as { stale: boolean }).stale).toBe(true);
+    poller.stop();
+  });
+});
+
 describe('GET /', () => {
   it('falls back to the configured link when Discord is unavailable', async () => {
     const { poller, get } = setup('XmuHsQYX', discordFetch({}));
@@ -242,6 +263,16 @@ describe('static files and other routes', () => {
     expect(etag).toMatch(/^"[\w-]+"$/);
     const revalidated = await get('/app.js', { headers: { 'If-None-Match': etag } });
     expect(revalidated.status).toBe(304);
+  });
+
+  it('answers 304 for weak, listed and * validators too (RFC 9110 weak comparison)', async () => {
+    const { get } = setup('', discordFetch({}));
+    const etag = (await get('/styles.css')).headers.get('ETag') ?? '';
+    for (const header of [`W/${etag}`, `"old", ${etag}`, '*']) {
+      expect((await get('/styles.css', { headers: { 'If-None-Match': header } })).status).toBe(304);
+    }
+    expect((await get('/styles.css', { headers: { 'If-None-Match': '"other"' } })).status).toBe(200);
+    expect(etagMatches(undefined, etag)).toBe(false);
   });
 
   it('redirects /index.html, 404s unknown paths and API routes, 405s writes', async () => {

@@ -6,7 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
-import { createShareApp, createSnapshotPoller, readShareConfig } from './share';
+import {
+  createShareApp,
+  createSnapshotPoller,
+  readShareConfig,
+  readSnapshotFile,
+  writeSnapshotFile,
+} from './share';
 
 const SHUTDOWN_GRACE_MS = 10_000;
 
@@ -19,18 +25,36 @@ function main(): void {
   const publicDir = process.env.SHARE_PUBLIC_DIR ?? path.resolve(here, '../share-public');
 
   const shareConfig = readShareConfig(process.env);
-  const shareHost = (process.env.SHARE_HOST ?? new URL(shareConfig.siteUrl).hostname).toLowerCase();
+  // Comma-separated, e.g. "discord.nanako.org,discord-next.nanako.org" while a
+  // cutover is being verified. Canonical / og URLs always come from SITE_URL.
+  const shareHosts = new Set(
+    (process.env.SHARE_HOST || new URL(shareConfig.siteUrl).hostname)
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  // Optional: a file on a volume that keeps the last good snapshot across restarts.
+  const snapshotFile = process.env.SNAPSHOT_FILE || null;
   const poller = createSnapshotPoller(shareConfig, {
     onError: (error) => console.error('Discord snapshot refresh failed', error),
+    initial: snapshotFile ? readSnapshotFile(snapshotFile, shareConfig.guildId) : null,
+    onSnapshot: (snapshot) => {
+      if (!snapshotFile) return;
+      try {
+        writeSnapshotFile(snapshotFile, snapshot);
+      } catch (error) {
+        console.warn('could not persist the Discord snapshot', error);
+      }
+    },
   });
   poller.start();
 
   const app = createApp({
-    shareHost,
+    shareHosts,
     share: createShareApp({ config: shareConfig, poller, publicDir }),
   });
   const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
-    console.log(`listening on :${info.port} (share host ${shareHost})`);
+    console.log(`listening on :${info.port} (share hosts ${[...shareHosts].join(', ')})`);
   });
 
   const shutdown = (signal: string): void => {

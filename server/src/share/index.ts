@@ -18,10 +18,11 @@ import { buildMeta, SECURITY_HEADERS } from './html';
 import { joinUrlFor, pageDataFrom, pagePatches, snapshotOf } from './page';
 import { createPoller, UpstreamLoadingError, type SnapshotPoller } from './poller';
 import { renderPage } from './render';
-import { buildSnapshot } from './snapshot';
+import { buildSnapshot, type StoredSnapshot } from './snapshot';
 
 export { readConfig as readShareConfig, type AppConfig as ShareConfig } from './config';
 export type { SnapshotPoller } from './poller';
+export { readSnapshotFile, writeSnapshotFile } from './snapshot-file';
 
 /** Don't hold the HTML (and link-preview crawlers) hostage to a slow first load. */
 const PAGE_DATA_TIMEOUT_MS = 2_000;
@@ -59,10 +60,23 @@ function loadStatic(publicDir: string): Map<string, StaticFile> {
   return files;
 }
 
+/**
+ * RFC 9110 §13.1.2 weak comparison for If-None-Match: `*`, a comma-separated
+ * list, and W/ prefixes — Cloudflare weakens strong ETags when it compresses.
+ */
+export function etagMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  const opaque = (tag: string) => tag.trim().replace(/^W\//, '');
+  const want = opaque(etag);
+  return header.split(',').some((tag) => tag.trim() === '*' || opaque(tag) === want);
+}
+
 export interface PollerDeps {
   fetcher?: Fetcher;
   intervalMs?: number;
   onError?: (error: unknown) => void;
+  initial?: StoredSnapshot | null;
+  onSnapshot?: (snapshot: StoredSnapshot) => void;
 }
 
 export function createSnapshotPoller(config: AppConfig, deps: PollerDeps = {}): SnapshotPoller {
@@ -70,6 +84,8 @@ export function createSnapshotPoller(config: AppConfig, deps: PollerDeps = {}): 
   return createPoller({
     intervalMs: deps.intervalMs,
     onError: deps.onError,
+    initial: deps.initial,
+    onSnapshot: deps.onSnapshot,
     load: async (previous) => {
       const data = await fetchDiscordData(config, fetcher, {
         fallbackInviteCode: inviteCodeFrom(previous?.inviteUrl),
@@ -127,7 +143,9 @@ export function createShareApp(deps: ShareDeps): Hono {
     headers.set('Content-Type', file.type);
     headers.set('Cache-Control', file.cacheControl);
     headers.set('ETag', file.etag);
-    if (c.req.header('If-None-Match') === file.etag) return new Response(null, { status: 304, headers });
+    if (etagMatches(c.req.header('If-None-Match'), file.etag)) {
+      return new Response(null, { status: 304, headers });
+    }
     return new Response(c.req.method === 'HEAD' ? null : new Uint8Array(file.body), { status: 200, headers });
   });
 

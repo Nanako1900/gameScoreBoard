@@ -14,13 +14,18 @@ services:
     environment:
       NODE_ENV: production
       PORT: "8787"
-      # Discord share page (formerly the discord-share Worker)
+      # Discord share page (formerly the discord-share Worker). Comma-separated;
+      # add discord-next.nanako.org while verifying a cutover.
       SHARE_HOST: ${SHARE_HOST:-discord.nanako.org}
+      # Last good Discord snapshot, kept across restarts (served stale if Discord is down).
+      SNAPSHOT_FILE: /data/share-snapshot.json
       SITE_URL: ${SITE_URL:-https://discord.nanako.org}
       SITE_NAME: ${SITE_NAME:-Nanako's Community}
       GUILD_ID: ${GUILD_ID:-1114391825336250432}
       # A never-expiring invite code. Empty = the widget's rotating invite.
       INVITE_CODE: ${INVITE_CODE:-}
+    volumes:
+      - app-data:/data
     healthcheck:
       # /healthz answers before Host routing and checks liveness only.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8787/healthz >/dev/null || exit 1"]
@@ -49,3 +54,6 @@ services:
       app:
         condition: service_healthy
     logging: *logging
+
+volumes:
+  app-data:

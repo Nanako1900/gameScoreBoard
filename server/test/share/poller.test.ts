@@ -125,6 +125,36 @@ describe('createPoller', () => {
   });
 });
 
+describe('createPoller — across restarts', () => {
+  it('serves the persisted snapshot (aged, so stale) until a refresh succeeds', async () => {
+    const onError = vi.fn();
+    const poller = createPoller({
+      initial: snap(T0 - STALE_MS - 1, 'From disk'),
+      load: async () => Promise.reject(new Error('discord down')),
+      onError,
+    });
+    await poller.refresh();
+    const served = await poller.get();
+    expect(served.name).toBe('From disk');
+    expect(served.stale).toBe(true);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands every successful snapshot to onSnapshot, and only those', async () => {
+    const saved: string[] = [];
+    const load = vi
+      .fn<(previous: StoredSnapshot | null) => Promise<StoredSnapshot>>()
+      .mockResolvedValueOnce(snap(T0, 'one'))
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce(snap(T0, 'two'));
+    const poller = createPoller({ load, onError: () => undefined, onSnapshot: (s) => saved.push(s.name) });
+    await poller.refresh();
+    await poller.refresh();
+    await poller.refresh();
+    expect(saved).toEqual(['one', 'two']);
+  });
+});
+
 describe('isReportedLoadError', () => {
   it('recognises the poller’s own rejections and nothing else', () => {
     expect(isReportedLoadError(new UpstreamFailedError('x'))).toBe(true);

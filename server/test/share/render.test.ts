@@ -1,9 +1,11 @@
+import { parseHTML } from 'linkedom';
 import { describe, expect, it } from 'vitest';
 import { safeJsonForScript } from '../../src/share/html';
 import { renderPage } from '../../src/share/render';
 
 const TEMPLATE = `<!doctype html>
 <html><head>
+<title>placeholder title</title>
 <meta property="og:title" content="old" />
 <meta property="og:title" content="duplicate" />
 <script id="initial-data" type="application/json">null</script>
@@ -29,6 +31,23 @@ describe('renderPage (HTMLRewriter replacement)', () => {
     ]);
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; co');
     expect(html).not.toContain('<img src=x');
+  });
+
+  it('escapes text into <title> too — linkedom would write it out raw', () => {
+    // A guild renamed by anyone with Manage Server. HTMLRewriter escaped this;
+    // without escaping, a real <meta http-equiv=refresh> lands in <head>.
+    const name = 'Nanako</title><meta http-equiv="refresh" content="0;url=https://evil.example/"> Tom &amp; Jerry';
+    const html = renderPage(TEMPLATE, [{ selector: 'title', kind: 'text', value: name }]);
+    const { document } = parseHTML(html);
+    expect(document.querySelectorAll('meta[http-equiv]')).toHaveLength(0);
+    // The browser decodes the escaped RCDATA back to the exact name.
+    expect(document.title).toBe(name);
+  });
+
+  it('refuses a text patch into <script> — there is no safe escaping there', () => {
+    expect(() =>
+      renderPage(TEMPLATE, [{ selector: 'script#initial-data', kind: 'text', value: 'x' }]),
+    ).toThrow(/script/);
   });
 
   it('removes attributes and elements', () => {

@@ -51,6 +51,14 @@ export interface PollerOptions {
   now?: () => number;
   /** The single place refresh failures are reported, once each. */
   onError?: (error: unknown) => void;
+  /**
+   * Last snapshot from a previous run (see snapshot-file.ts). Served — marked
+   * stale by its age — until the first refresh of this run succeeds, so a
+   * restart while Discord is unreachable still renders the page.
+   */
+  initial?: StoredSnapshot | null;
+  /** Called after every successful refresh, e.g. to persist it. */
+  onSnapshot?: (snapshot: StoredSnapshot) => void;
 }
 
 export function createPoller(options: PollerOptions): SnapshotPoller {
@@ -58,7 +66,7 @@ export function createPoller(options: PollerOptions): SnapshotPoller {
   const now = options.now ?? Date.now;
   const onError = options.onError ?? (() => undefined);
 
-  let snapshot: StoredSnapshot | null = null;
+  let snapshot: StoredSnapshot | null = options.initial ?? null;
   let inflight: Promise<void> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -66,6 +74,7 @@ export function createPoller(options: PollerOptions): SnapshotPoller {
     try {
       // A failed refresh never touches the snapshot: old data beats no data.
       snapshot = await options.load(snapshot);
+      options.onSnapshot?.(snapshot);
     } catch (error) {
       onError(error);
     }

@@ -20,6 +20,8 @@ COPY server/package.json server/package.json
 RUN npm ci --workspace server --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/server/dist server/dist
 COPY server/share-public server/share-public
+# Mount point for the app-data volume; a fresh named volume takes this owner.
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8787
 # Exec form, so SIGTERM reaches node (graceful shutdown in server/src/main.ts).
