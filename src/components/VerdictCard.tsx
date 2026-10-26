@@ -10,6 +10,8 @@ interface VerdictCardProps {
   actions?: React.ReactNode;
   /** Shown only to the filing judge / an admin while the hint is live. */
   escalation?: React.ReactNode;
+  /** The case a link pointed at: marked, and focusable. */
+  focused?: boolean;
 }
 
 const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
@@ -31,6 +33,7 @@ export function VerdictCard({
   record,
   actions,
   escalation,
+  focused = false,
 }: VerdictCardProps): JSX.Element {
   const def = VIOLATION_MAP[record.type];
   const { verdict, status } = record;
@@ -41,7 +44,7 @@ export function VerdictCard({
   const hidden = record.redacted === true;
 
   return (
-    <article className={`vc vc--${status}`}>
+    <article id={`case-${record.id}`} tabIndex={-1} className={`vc vc--${status}${focused ? ' vc--focus' : ''}`}>
       <header className="vc__head">
         <span className="vc__emoji" aria-hidden="true">
           {def?.emoji ?? '📝'}

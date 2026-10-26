@@ -55,6 +55,14 @@ describe('renderDm', () => {
     expect(json(appealed.components)).not.toContain('v1:appeal:');
   });
 
+  it('links to the case itself on the web; an appeal sends the admin to review it', () => {
+    for (const kind of ['dm.filed', 'dm.decided', 'dm.revoked', 'dm.appealed'] as const) {
+      const m = renderDm(kind, record({ ...decided, status: 'appealed' }), 'https://score.example')!;
+      expect(json(m.components), kind).toContain('https://score.example/?case=7');
+    }
+    expect(json(renderDm('dm.appealed', record({ ...decided, status: 'appealed' }), 'https://score.example')!.components)).toContain('去复核');
+  });
+
   it('a withdrawal leaves no button to press', () => {
     const m = renderDm('dm.withdrawn', record({ status: 'withdrawn' }), 'https://score.example')!;
     expect(m.components).toEqual([]);

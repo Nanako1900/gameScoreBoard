@@ -389,3 +389,11 @@ reaches `decided` rather than stranding a player's score.
   weekly report on the page.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
+- Links into the app (the bot's DMs and replies use them): `/?case=<id>` opens
+  that case in its subject's page, scrolled to and focused; `/?session=<id>`
+  opens the session. Only a positive integer id is read (anything else is
+  ignored), the parameter is stripped at once, and the link only picks which
+  ordinary view opens — what it shows and which controls come from the API and
+  `/api/me` as always. A link never writes. A case that is gone gets a notice.
+- A case with `redacted: true` says a statement exists (when `statement_at` is
+  set) rather than calling it a verdict in absence, and shows no verdict words.

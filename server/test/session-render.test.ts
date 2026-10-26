@@ -86,6 +86,7 @@ describe('RSVP buttons', () => {
     const ids = card.components.flatMap((row) => row.components).flatMap((b) => ('custom_id' in b ? [b.custom_id] : []));
     expect(ids).toContain(`v1:rsvp:3:going:${Date.parse('2026-10-26T12:00:00.000Z')}`);
     expect(ids.every((id) => id.length <= 100)).toBe(true);
+    expect(JSON.stringify(card.components)).toContain('https://score.example/?session=3');
   });
 
   it('read only their own ids, and give back the time', () => {
