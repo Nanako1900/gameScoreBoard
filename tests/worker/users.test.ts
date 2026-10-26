@@ -404,12 +404,17 @@ describe('upsertUser — later logins', () => {
     expect(other?.is_judge).toBe(1);
   });
 
-  // Verified on D1: Promise.all of two first logins → one fulfils (isNew), the
-  // other rejects with a plain Error "D1_ERROR: UNIQUE constraint failed: users.id",
-  // not an ApiError. An INSERT ... ON CONFLICT(id) DO UPDATE would close it.
-  it.todo(
-    'BUG: two concurrent first logins for the same sub race the SELECT-then-INSERT; the loser gets a raw UNIQUE constraint error (500) instead of being treated as a re-login (worker/db.ts:174-184)',
-  );
+  it('survives two first logins for the same subject at once — the loser is a re-login', async () => {
+    // Used to be SELECT-then-INSERT: the loser got a raw UNIQUE-violation 500.
+    const results = await Promise.all([
+      upsertUser(env.DB, profile(), NO_GRANTS),
+      upsertUser(env.DB, profile(), NO_GRANTS),
+    ]);
+    expect(results.map((r) => r.isNew).sort()).toEqual([false, true]);
+    expect(results[0].user.id).toBe(results[1].user.id);
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>();
+    expect(n?.n).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -531,9 +536,26 @@ describe('scoreMutation', () => {
 
   it('writes nothing until the caller runs the statements (so they can be batched atomically)', async () => {
     await seedUser({ id: 'u', score: 70 });
-    const m = scoreMutation(env.DB, 'u', 70, -15, 'record:7');
-    expect(m.applied).toBe(-15);
-    expect(m.newScore).toBe(55);
+    scoreMutation(env.DB, 'u', -15, 'record:7');
+    expect(await scoreOf('u')).toBe(70);
+    expect(await scoreEventCount('u')).toBe(0);
+  });
+
+  it('moves the score from its value when the batch runs — not from one read earlier', async () => {
+    await seedUser({ id: 'u', score: 70 });
+    const statements = scoreMutation(env.DB, 'u', -15, 'record:7');
+    // A verdict lands between building the statements and running them.
+    await env.DB.prepare('UPDATE users SET score = 50 WHERE id = ?').bind('u').run();
+    await env.DB.batch(statements);
+    expect(await scoreOf('u')).toBe(35);
+    expect(await eventsOf('u')).toEqual([{ delta: -15, reason: 'record:7', resulting_score: 35 }]);
+  });
+
+  it('does nothing at all when its guard is false', async () => {
+    await seedUser({ id: 'u', score: 70 });
+    await env.DB.batch(
+      scoreMutation(env.DB, 'u', -15, 'record:7', { sql: 'EXISTS (SELECT 1 FROM users WHERE id = ?)', binds: ['nobody'] }),
+    );
     expect(await scoreOf('u')).toBe(70);
     expect(await scoreEventCount('u')).toBe(0);
   });
@@ -542,8 +564,7 @@ describe('scoreMutation', () => {
     await seedUser({ id: 'u', score: 70 });
     await seedUser({ id: 'bystander', score: 70 });
     await backdate('u');
-    const m = scoreMutation(env.DB, 'u', 70, -15, 'record:7');
-    await env.DB.batch(m.statements);
+    await env.DB.batch(scoreMutation(env.DB, 'u', -15, 'record:7'));
 
     expect(await scoreOf('u')).toBe(55);
     expect(await eventsOf('u')).toEqual([{ delta: -15, reason: 'record:7', resulting_score: 55 }]);
@@ -557,29 +578,21 @@ describe('scoreMutation', () => {
 
   it('clamps at MAX_SCORE and logs only the part of the delta that landed', async () => {
     await seedUser({ id: 'u', score: 95 });
-    const m = scoreMutation(env.DB, 'u', 95, 10, 'record:1');
-    expect(m.applied).toBe(5);
-    expect(m.newScore).toBe(MAX_SCORE);
-    await env.DB.batch(m.statements);
+    await env.DB.batch(scoreMutation(env.DB, 'u', 10, 'record:1'));
     expect(await scoreOf('u')).toBe(100);
     expect(await eventsOf('u')).toEqual([{ delta: 5, reason: 'record:1', resulting_score: 100 }]);
   });
 
   it('clamps at 0', async () => {
     await seedUser({ id: 'u', score: 10 });
-    const m = scoreMutation(env.DB, 'u', 10, -30, 'record:2');
-    expect(m.applied).toBe(-10);
-    expect(m.newScore).toBe(0);
-    await env.DB.batch(m.statements);
+    await env.DB.batch(scoreMutation(env.DB, 'u', -30, 'record:2'));
     expect(await scoreOf('u')).toBe(0);
     expect(await eventsOf('u')).toEqual([{ delta: -10, reason: 'record:2', resulting_score: 0 }]);
   });
 
   it('still logs a zero-delta audit event when already at the cap', async () => {
     await seedUser({ id: 'u', score: 100 });
-    const m = scoreMutation(env.DB, 'u', 100, 5, 'record:3');
-    expect(m.applied).toBe(0);
-    await env.DB.batch(m.statements);
+    await env.DB.batch(scoreMutation(env.DB, 'u', 5, 'record:3'));
     expect(await scoreOf('u')).toBe(100);
     expect(await eventsOf('u')).toEqual([{ delta: 0, reason: 'record:3', resulting_score: 100 }]);
   });

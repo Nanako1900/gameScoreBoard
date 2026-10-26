@@ -38,7 +38,7 @@ import type {
   User,
 } from './types';
 import { ApiError } from './errors';
-import { getUserById, scoreMutation } from './db';
+import { appliedDeltaSql, getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
 import { fitsWeeklyBonusCap } from './case-limits';
 import { parseSqlUtc } from './time';
@@ -403,10 +403,11 @@ export async function cancelSession(
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status === 'settled') throw new ApiError(400, '已结算的约局不能取消');
-  await db
+  const res = await db
     .prepare("UPDATE game_sessions SET status = 'cancelled' WHERE id = ? AND status = 'open'")
     .bind(id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '约局状态已变化，请刷新后重试');
   return getSessionDetail(db, id, caller.id);
 }
 
@@ -442,15 +443,32 @@ export async function setRsvp(
     }
   }
 
-  await db
-    .prepare(
-      `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
-       VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(session_id, user_id) DO UPDATE SET
-         rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
-    )
-    .bind(id, caller.id, rawRsvp)
-    .run();
+  // The check above is the friendly fast path; this is the one that holds.
+  // The seat count is re-checked inside the write itself, after a no-op
+  // UPDATE has taken the session's row lock on PostgreSQL (so RSVPs to one
+  // session queue up instead of racing for the last seat; D1 serialises
+  // batches anyway). Two players cannot both take the last seat.
+  const capped = occupiesSlot(rawRsvp) && row.capacity !== null;
+  // Same rule as the fast path: someone already holding a seat may re-confirm
+  // even when a lowered capacity is now below the going count.
+  const seatFree = capped
+    ? `(EXISTS (SELECT 1 FROM session_players WHERE session_id = ? AND user_id = ? AND rsvp = 'going')
+        OR (SELECT COUNT(*) FROM session_players
+             WHERE session_id = ? AND rsvp = 'going' AND user_id != ?) < ?)`
+    : '1 = 1';
+  const seatBinds = capped ? [id, caller.id, id, caller.id, row.capacity] : [];
+  const results = await db.batch([
+    db.prepare('UPDATE game_sessions SET status = status WHERE id = ?').bind(id),
+    db
+      .prepare(
+        `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
+         SELECT ?, ?, ?, datetime('now') WHERE ${seatFree}
+         ON CONFLICT(session_id, user_id) DO UPDATE SET
+           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
+      )
+      .bind(id, caller.id, rawRsvp, ...seatBinds),
+  ]);
+  if ((results[1]?.meta?.changes ?? 0) === 0) throw new ApiError(400, '人数已满');
   return getSessionDetail(db, id, caller.id);
 }
 
@@ -829,9 +847,10 @@ async function awardOrganizerBonus(
   const recordId = Number(insert.meta?.last_row_id);
   if (!recordId) return;
 
-  const mutation = scoreMutation(db, organizer.id, organizer.score, def.base, `record:${recordId}`);
+  const reason = `record:${recordId}`;
+  const applied = appliedDeltaSql(organizer.id, reason);
   await db.batch([
-    db.prepare('UPDATE records SET delta = ? WHERE id = ?').bind(mutation.applied, recordId),
-    ...mutation.statements,
+    ...scoreMutation(db, organizer.id, def.base, reason),
+    db.prepare(`UPDATE records SET delta = ${applied.sql} WHERE id = ?`).bind(...applied.binds, recordId),
   ]);
 }

@@ -378,24 +378,13 @@ describe('weeklyHeal — idempotency ledger', () => {
     ]);
   });
 
-  it('rolls back every score write when the ledger insert collides with a week committed meanwhile', async () => {
-    // Deterministic version of the race above: a concurrent winner commits this
-    // week's ledger row after this call's "already healed?" check but before its
-    // batch. The score UPDATEs run first in the batch and the ledger INSERT last,
-    // so only an all-or-nothing transaction keeps them from landing. A PG port
-    // using ON CONFLICT DO NOTHING inside the same transaction would double-heal;
-    // ON CONFLICT DO UPDATE would also clobber the winner's ledger row.
-    freezeAt(WED_MID_WEEK);
-    await seedUser({ id: 'a', score: 40 });
-    await seedUser({ id: 'b', score: 90 });
-    const racedDb = new Proxy(env.DB, {
+  /** env.DB, with `before` run right before every batch — a deterministic race. */
+  function racing(before: () => Promise<unknown>): D1Database {
+    return new Proxy(env.DB, {
       get(target, prop) {
         if (prop === 'batch') {
           return async (statements: D1PreparedStatement[]) => {
-            await target
-              .prepare('INSERT INTO weekly_heals (week_start, affected) VALUES (?, ?)')
-              .bind(THIS_MONDAY, 9)
-              .run();
+            await before();
             return target.batch(statements);
           };
         }
@@ -403,10 +392,26 @@ describe('weeklyHeal — idempotency ledger', () => {
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });
+  }
 
-    // Both D1's and PostgreSQL's unique-violation messages name the table.
-    await expect(weeklyHeal(racedDb, OFFSET_HOURS)).rejects.toThrow(/weekly_heals/);
+  it('does nothing at all when another heal claims the week between its check and its batch', async () => {
+    // Deterministic version of the race above: a concurrent winner commits this
+    // week's ledger row after this call's "already healed?" check but before its
+    // batch. The batch claims the week first (ON CONFLICT DO NOTHING) and every
+    // later statement only runs while that claim is ours — so no double heal,
+    // no error, and the winner's ledger row is left exactly as it wrote it.
+    freezeAt(WED_MID_WEEK);
+    await seedUser({ id: 'a', score: 40 });
+    await seedUser({ id: 'b', score: 90 });
+    const racedDb = racing(() =>
+      env.DB.prepare('INSERT INTO weekly_heals (week_start, affected) VALUES (?, ?)').bind(THIS_MONDAY, 9).run(),
+    );
 
+    await expect(weeklyHeal(racedDb, OFFSET_HOURS)).resolves.toEqual({
+      week_start: THIS_MONDAY,
+      affected: 0,
+      skipped: true,
+    });
     expect(await scoreOf('a')).toBe(40);
     expect(await scoreOf('b')).toBe(90);
     expect(await totalEvents()).toBe(0);
@@ -438,9 +443,21 @@ describe('weeklyHeal — idempotency ledger', () => {
   // waitUntil), so a verdict landing between the read and the batch is
   // overwritten: score 80, verdict -10 -> 70, heal then stores 95 (not 85), and
   // score_events shows -10 -> 70 followed by +15 -> 95, which no longer adds up.
-  it.todo(
-    'BUG: weeklyHeal lost update — a score change between its participant SELECT and its batch is overwritten (worker/db.ts:384-415); heal should be relative, e.g. SET score = MIN(100, score + 15)',
-  );
+  it('keeps a score change that lands between its check and its batch — the heal is relative', async () => {
+    // Before, the heal read every score, then wrote back absolute values: a
+    // verdict landing in between was overwritten (80 → 70 by the verdict, then
+    // 95 = 80 + 15 by the heal) and the history no longer added up.
+    freezeAt(WED_MID_WEEK);
+    await seedUser({ id: 'a', score: 80 });
+    const racedDb = racing(() => env.DB.prepare('UPDATE users SET score = 70 WHERE id = ?').bind('a').run());
+
+    await weeklyHeal(racedDb, OFFSET_HOURS);
+    expect(await scoreOf('a')).toBe(85);
+    const events = await env.DB.prepare('SELECT delta, resulting_score FROM score_events WHERE user_id = ?')
+      .bind('a')
+      .all<{ delta: number; resulting_score: number }>();
+    expect(events.results).toEqual([{ delta: 15, resulting_score: 85 }]);
+  });
 });
 
 describe('weeklyHeal — week key is the local Monday under the reset offset', () => {
