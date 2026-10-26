@@ -37,8 +37,8 @@ export function weekStartInstant(offsetHours: number): Date {
 }
 
 /** Local (offset) Monday date of the current week as 'YYYY-MM-DD'. */
-export function weekStartLocal(offsetHours: number): string {
-  const local = new Date(Date.now() + offsetHours * HOUR_MS);
+export function weekStartLocal(offsetHours: number, now = Date.now()): string {
+  const local = new Date(now + offsetHours * HOUR_MS);
   const dow = local.getUTCDay();
   const daysSinceMonday = (dow + 6) % 7;
   const monday = new Date(

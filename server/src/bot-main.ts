@@ -22,6 +22,7 @@ import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
 import { handleRsvpButton, parseRsvpButton } from './discord/sessions';
+import { handleEscalationButton, parseEscalationButton } from './discord/escalation';
 import { resetOffsetHours } from '../../worker/time';
 import {
   MODAL_FIELD,
@@ -180,6 +181,7 @@ function main(): void {
         verdictChannelId: config.verdictChannelId,
         sessionChannelId: config.sessionChannelId,
         frontendUrl: config.frontendUrl,
+        offsetHours: ctx.offsetHours,
       },
       createListener: () => new pg.Client({ connectionString: config.databaseUrl, options: '-c TimeZone=UTC' }),
       describeError,
@@ -187,8 +189,8 @@ function main(): void {
     dispatcher.start();
     console.log(
       config.verdictChannelId
-        ? `posting verdicts to channel ${config.verdictChannelId}`
-        : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts are not posted',
+        ? `posting verdicts and weekly reports to channel ${config.verdictChannelId}`
+        : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts and weekly reports are not posted',
     );
     console.log(
       config.sessionChannelId
@@ -226,7 +228,13 @@ function main(): void {
       const verdictId = parseVerdictButton(interaction.customId);
       const caseButton = parseCaseButton(interaction.customId);
       const rsvp = parseRsvpButton(interaction.customId);
-      if (rsvp) {
+      const escalation = parseEscalationButton(interaction.customId);
+      if (escalation) {
+        // Pressed in the filing judge's DM: no guild check.
+        work = answer(interaction, 'escalation button', () =>
+          handleEscalationButton(escalation.recordId, escalation.choice, caller, ctx),
+        );
+      } else if (rsvp) {
         // On a card in the channel or on an invitation DM: no guild check.
         work = answer(interaction, 'rsvp button', () => handleRsvpButton(rsvp.sessionId, rsvp.choice, rsvp.startsAt, caller, ctx));
       } else if (verdictId !== null) {

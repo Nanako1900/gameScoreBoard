@@ -10,6 +10,7 @@ import {
   listRecords,
   reclassifyCase,
   submitStatement,
+  withdrawCase,
 } from '../../worker/cases';
 import { ApiError } from '../../worker/errors';
 import { OFFSET_HOURS, noAiEnv, scoreEventCount, scoreOf, seedUser } from './helpers';
@@ -405,6 +406,18 @@ describe('reclassify needs a judge', () => {
     const filed = await fileCase(env.DB, judge, { subject_id: players[0].id, type: 'late_minor', claim: CLAIM }, OPTS, noAiEnv());
     await expect(reclassifyCase(env.DB, other, filed.id, 'late_major')).rejects.toMatchObject({ status: 403 });
     await expect(reclassifyCase(env.DB, judge, filed.id, 'late_major')).resolves.toMatchObject({ type: 'late_major' });
+  });
+
+  it('dismissing, like confirming, is for a case still awaiting a statement — and only once', async () => {
+    const { judge, players } = await judgeAnd(2);
+    const once = await fileCase(env.DB, judge, { subject_id: players[0].id, type: 'no_show', claim: CLAIM }, OPTS, noAiEnv());
+    await env.DB.prepare('UPDATE records SET escalation_suggested = 1 WHERE id = ?').bind(once.id).run();
+    await dismissEscalation(env.DB, judge, once.id);
+    await expect(dismissEscalation(env.DB, judge, once.id)).rejects.toMatchObject({ status: 400 });
+    const late = await fileCase(env.DB, judge, { subject_id: players[1].id, type: 'no_show', claim: CLAIM }, OPTS, noAiEnv());
+    await env.DB.prepare('UPDATE records SET escalation_suggested = 1 WHERE id = ?').bind(late.id).run();
+    await withdrawCase(env.DB, judge, late.id);
+    await expect(dismissEscalation(env.DB, judge, late.id)).rejects.toThrow(/已进入裁决|升级建议不再适用/);
   });
 
   it('a judge who has stepped down can no longer confirm or dismiss an escalation', async () => {

@@ -16,7 +16,7 @@ import {
   formatDelta,
   GOLD,
   GREY,
-  joinUrl,
+  webUrl,
   LIMITS,
   linkButton,
   parseTimestamp,
@@ -50,9 +50,22 @@ export function isDmKind(kind: string): kind is DmKind {
   return (DM_KINDS as readonly string[]).includes(kind);
 }
 
-type Button = { label: string; customId: string } | { label: string; url: string };
+/** The DMs of a case that carry a 写陈述 button, and the purpose they are stored under. */
+export const STATEMENT_DMS: Partial<Record<DmKind, string>> = { 'dm.filed': 'dm:filed', 'dm.deadline': 'dm:deadline' };
 
-function message(embed: BotEmbed, buttons: Button[]): ChannelMessage {
+export type DmButton =
+  | { label: string; customId: string; style?: 'primary' | 'secondary' | 'danger' }
+  | { label: string; url: string };
+type Button = DmButton;
+
+const BUTTON_STYLE = {
+  primary: ButtonStyle.Primary,
+  secondary: ButtonStyle.Secondary,
+  danger: ButtonStyle.Danger,
+} as const;
+
+/** A DM: one embed and a row of buttons, pinging nobody. */
+export function dmMessage(embed: BotEmbed, buttons: DmButton[]): ChannelMessage {
   const components: APIActionRowComponent<APIButtonComponent>[] =
     buttons.length === 0
       ? []
@@ -62,16 +75,17 @@ function message(embed: BotEmbed, buttons: Button[]): ChannelMessage {
             components: buttons.map((b) =>
               'url' in b
                 ? { type: ComponentType.Button, style: ButtonStyle.Link, label: b.label, url: b.url }
-                : { type: ComponentType.Button, style: ButtonStyle.Primary, label: b.label, custom_id: b.customId },
+                : { type: ComponentType.Button, style: BUTTON_STYLE[b.style ?? 'primary'], label: b.label, custom_id: b.customId },
             ),
           },
         ];
   return { embeds: [toEmbed(clampEmbed(embed))], components, allowed_mentions: { parse: [] } };
 }
 
-function web(frontendUrl: string): Button {
-  // The web app has no per-case URL yet: its front page.
-  return linkButton('在网页查看', joinUrl(frontendUrl, '/'));
+const message = dmMessage;
+
+export function web(frontendUrl: string, recordId: number): Button {
+  return linkButton('在网页查看', webUrl(frontendUrl, { case: recordId }));
 }
 
 /** What a DM about a case becomes when the case is deleted (with its user). */
@@ -106,7 +120,7 @@ function accusation(record: RecordItem): string {
 }
 
 function statementButtons(record: RecordItem, frontendUrl: string): Button[] {
-  return [{ label: '写陈述', customId: `${STATEMENT_BUTTON}${record.id}` }, web(frontendUrl)];
+  return [{ label: '写陈述', customId: `${STATEMENT_BUTTON}${record.id}` }, web(frontendUrl, record.id)];
 }
 
 function verdictText(record: RecordItem): string {
@@ -150,7 +164,7 @@ export function renderDm(kind: DmKind, record: RecordItem, frontendUrl: string):
     case 'dm.decided':
     case 'dm.overridden': {
       const override = kind === 'dm.overridden';
-      const buttons: Button[] = [web(frontendUrl)];
+      const buttons: Button[] = [web(frontendUrl, record.id)];
       // Same rule as the web: a decided case can be appealed.
       if (record.status === 'decided') {
         buttons.unshift({ label: '申诉', customId: `${APPEAL_BUTTON}${record.id}` });
@@ -173,7 +187,7 @@ export function renderDm(kind: DmKind, record: RecordItem, frontendUrl: string):
           description: `${type}的判决撤销了，~~${points}~~ 已退回。`,
           color: GREY,
         },
-        [web(frontendUrl)],
+        [web(frontendUrl, record.id)],
       );
     case 'dm.withdrawn':
       // Replaces the filed DM in place: no buttons left to press.
@@ -192,9 +206,23 @@ export function renderDm(kind: DmKind, record: RecordItem, frontendUrl: string):
           description: `${safeLine(record.subject.username, NAME_MAX)} 对${type}的判决（${points}）提出了申诉。`,
           color: GOLD,
           fields: record.appeal_reason ? [{ name: '理由', value: safeText(record.appeal_reason, LIMITS.fieldValue) }] : [],
-          footer: { text: '请到网页的管理页复核。' },
+          footer: { text: '点「去复核」到网页上这个案件：改判或撤销。' },
         },
-        [web(frontendUrl)],
+        [{ ...web(frontendUrl, record.id), label: '去复核' }],
       );
   }
+}
+
+/** An admin set the recipient's score by hand (P8): what it was, what it is. */
+export function scoreAdjustedDm(change: { delta: number; resulting_score: number }, frontendUrl: string): ChannelMessage {
+  const before = change.resulting_score - change.delta;
+  return message(
+    {
+      title: '🛠️ 管理员调整了你的信誉分',
+      description: `**${before} → ${change.resulting_score}**（${formatDelta(change.delta)}）`,
+      color: change.delta > 0 ? GOLD : RED,
+      footer: { text: '这是管理员手动调整，不是判决；有疑问请联系管理员。' },
+    },
+    [linkButton('在网页查看', webUrl(frontendUrl))],
+  );
 }

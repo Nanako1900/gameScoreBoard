@@ -2,6 +2,7 @@
 
 import { env } from 'cloudflare:test';
 import type { Env, User } from '../../worker/types';
+import { weekStartLocal } from '../../worker/time';
 
 export interface SeedUser {
   id: string;
@@ -75,3 +76,12 @@ export function noAiEnv(overrides: Partial<Env> = {}): Env {
 }
 
 export const OFFSET_HOURS = 8;
+
+/**
+ * A moment in the CURRENT board week (Monday 00:00 local + `hours`), in UTC
+ * ms — for clocks handed to code whose "last week" must stay the real one.
+ */
+export function inThisWeek(hours: number, offsetHours = OFFSET_HOURS): number {
+  const monday = Date.parse(`${weekStartLocal(offsetHours)}T00:00:00Z`) - offsetHours * 3_600_000;
+  return monday + hours * 3_600_000;
+}

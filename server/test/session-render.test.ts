@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRsvpButton, sessionCard, sessionDmRelevant, slotIso } from '../src/discord/sessions';
+import { parseRsvpButton, renderSessionDm, sessionCard, sessionDmRelevant, slotIso } from '../src/discord/sessions';
 import type { SessionDetail } from '../../worker/types';
 
 const EVIL = '[报名](https://evil.example) @everyone <@123456789012345678>';
@@ -86,6 +86,7 @@ describe('RSVP buttons', () => {
     const ids = card.components.flatMap((row) => row.components).flatMap((b) => ('custom_id' in b ? [b.custom_id] : []));
     expect(ids).toContain(`v1:rsvp:3:going:${Date.parse('2026-10-26T12:00:00.000Z')}`);
     expect(ids.every((id) => id.length <= 100)).toBe(true);
+    expect(JSON.stringify(card.components)).toContain('https://score.example/?session=3');
   });
 
   it('read only their own ids, and give back the time', () => {
@@ -99,3 +100,12 @@ describe('RSVP buttons', () => {
     }
   });
 });
+
+describe('session DMs', () => {
+  it('link to the session itself', () => {
+    for (const kind of ['dm.session.invited', 'dm.session.changed', 'dm.session.cancelled', 'dm.session.starting', 'dm.session.rollcall'] as const) {
+      expect(JSON.stringify(renderSessionDm(kind, session(), 'https://score.example')), kind).toContain('https://score.example/?session=3');
+    }
+  });
+});
+

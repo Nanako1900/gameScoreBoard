@@ -113,6 +113,20 @@
   box-shadow: var(--shadow-panel);
 }
 
+.dlink-notice--warn {
+  border-color: color-mix(in oklab, var(--gold) 40%, transparent);
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--gold) 14%, transparent) 0%,
+    color-mix(in oklab, var(--gold) 4%, transparent) 55%,
+    transparent 100%
+  );
+}
+
+.dlink-notice--warn .dlink-notice__icon {
+  background: var(--gold);
+}
+
 .dlink-notice__icon {
   flex: none;
   display: grid;

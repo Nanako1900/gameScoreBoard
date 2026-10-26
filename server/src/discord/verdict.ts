@@ -16,7 +16,7 @@ import {
   type APIEmbed,
 } from 'discord.js';
 import { VIOLATION_MAP } from '../../../shared/scoring';
-import { getRecordItemById } from '../../../worker/case-reads';
+import { canReadPrivate, getRecordItemById } from '../../../worker/case-reads';
 import type { RecordItem } from '../../../worker/types';
 import { toEmbed } from './client';
 import { judgedInAbsence, violationLabel, webButton } from './commands';
@@ -26,7 +26,7 @@ import {
   ephemeralReply,
   GREY,
   formatDelta,
-  joinUrl,
+  webUrl,
   LIMITS,
   linkButton,
   RED,
@@ -96,8 +96,8 @@ export interface ChannelMessage {
 
 /** The channel post for a case, as Discord's REST API takes it. */
 export function verdictPost(record: RecordItem, frontendUrl: string): ChannelMessage {
-  // The web app has no per-case URL yet: its front page.
-  const web = linkButton('在网页查看', joinUrl(frontendUrl, '/'));
+  // The case on the web shows its private parts only to those who may read them.
+  const web = linkButton('在网页查看', webUrl(frontendUrl, { case: record.id }));
   return {
     embeds: [toEmbed(clampEmbed(verdictEmbed(record)))],
     components: [
@@ -121,9 +121,7 @@ export async function handleVerdictButton(recordId: number, caller: DiscordUserR
   const record = await getRecordItemById(ctx.db, recordId);
   if (!record || !isPostable(record)) return ephemeralReply('这条判决不存在了。');
   const viewer = await boundUser(ctx.db, caller.id);
-  const involved =
-    viewer !== null &&
-    (viewer.id === record.subject.id || viewer.id === record.reporter.id || viewer.is_judge || viewer.is_admin);
+  const involved = canReadPrivate(record, viewer);
 
   const embed = verdictEmbed(record);
   if (involved && record.verdict) {
@@ -139,5 +137,8 @@ export async function handleVerdictButton(recordId: number, caller: DiscordUserR
         : '先用 /link 绑定 Nanako 账号；当事人、立案人和裁判可以在这里看判词。',
     };
   }
-  return ephemeralReply(undefined, { embeds: [embed], buttons: [webButton(ctx, '在网页查看')] });
+  return ephemeralReply(undefined, {
+    embeds: [embed],
+    buttons: [linkButton('在网页查看', webUrl(ctx.frontendUrl, { case: record.id }))],
+  });
 }

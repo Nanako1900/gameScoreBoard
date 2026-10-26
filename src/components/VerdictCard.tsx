@@ -10,6 +10,8 @@ interface VerdictCardProps {
   actions?: React.ReactNode;
   /** Shown only to the filing judge / an admin while the hint is live. */
   escalation?: React.ReactNode;
+  /** The case a link pointed at: marked, and focusable. */
+  focused?: boolean;
 }
 
 const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
@@ -18,6 +20,8 @@ const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
   manual: { label: '直接记录', tone: 'manual' },
   admin_override: { label: '管理员改判', tone: 'override' },
 };
+
+const PRIVATE_TO = '只有当事人、立案人、裁判和管理员能看';
 
 /**
  * A case, told as a story: 案由 → 双方陈述 → 判词 → 量刑尺.
@@ -29,6 +33,7 @@ export function VerdictCard({
   record,
   actions,
   escalation,
+  focused = false,
 }: VerdictCardProps): JSX.Element {
   const def = VIOLATION_MAP[record.type];
   const { verdict, status } = record;
@@ -36,9 +41,13 @@ export function VerdictCard({
   const judging = status === 'judging';
   const voided = status === 'revoked' || status === 'withdrawn';
   const badge = verdict ? SOURCE_BADGE[verdict.source] : null;
+  const hidden = record.redacted === true;
+  // Only a trial's verdict has words to hide; a bonus's is just its label.
+  const wordsHidden = hidden && verdict !== null && verdict.source !== 'manual';
+  const trial = def?.kind === 'penalty';
 
   return (
-    <article className={`vc vc--${status}`}>
+    <article id={`case-${record.id}`} tabIndex={-1} className={`vc vc--${status}${focused ? ' vc--focus' : ''}`}>
       <header className="vc__head">
         <span className="vc__emoji" aria-hidden="true">
           {def?.emoji ?? '📝'}
@@ -84,8 +93,12 @@ export function VerdictCard({
           <span className="vc__quote-who">{record.subject.username} 的说明</span>
           <p>{record.statement}</p>
         </blockquote>
+      ) : hidden && trial && record.statement_at ? (
+        <p className="vc__hidden">
+          <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
+        </p>
       ) : (
-        !pending && (
+        !pending && trial && (
           <p className="vc__absent">该选手没有在期限内说明情况，按缺席裁决。</p>
         )
       )}
@@ -102,11 +115,17 @@ export function VerdictCard({
       {verdict && (
         <div className="vc__verdict">
           <div className="vc__verdict-head">
-            <h5 className="vc__headline">{verdict.headline}</h5>
+            {wordsHidden ? (
+              <p className="vc__hidden">
+                <span aria-hidden="true">🔒</span> 判词{PRIVATE_TO}
+              </p>
+            ) : (
+              <h5 className="vc__headline">{verdict.headline}</h5>
+            )}
             {badge && <span className={`vc__source vc__source--${badge.tone}`}>{badge.label}</span>}
           </div>
-          {verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
-          {verdict.factors.length > 0 && (
+          {!wordsHidden && verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
+          {!wordsHidden && verdict.factors.length > 0 && (
             <ul className="vc__factors">
               {verdict.factors.map((f, i) => (
                 <li
@@ -124,7 +143,7 @@ export function VerdictCard({
 
       {status === 'appealed' && (
         <>
-          {record.appeal_reason && (
+          {!hidden && record.appeal_reason && (
             <blockquote className="vc__quote vc__quote--appeal">
               <span className="vc__quote-who">申诉理由</span>
               <p>{record.appeal_reason}</p>
@@ -138,7 +157,7 @@ export function VerdictCard({
       {status === 'revoked' && <p className="vc__flag">这笔记录已被撤销，分数已还原。</p>}
       {status === 'withdrawn' && <p className="vc__flag">裁判已撤案，未产生任何扣分。</p>}
 
-      {record.escalation_suggested && (
+      {record.escalation_suggested && pending && (
         <div className="vc__escalate">
           <p className="vc__escalate-text">
             AI 认为这够得上「团灭级放鸽」。系统先按较轻的案由立案了 —— 要升级得由人确认。

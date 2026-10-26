@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { tierFor } from '@shared/scoring';
 import type { HistoryPoint, RecordItem, User, UserDetailResponse } from '../types';
 import {
@@ -10,6 +10,7 @@ import {
   overrideCase,
   revokeRecord,
   setJudge,
+  setScore,
   withdrawCase,
 } from '../api';
 import { parseTimestamp } from '../lib/time';
@@ -19,6 +20,7 @@ import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
 import { VerdictCard } from './VerdictCard';
 import { HistoryChart } from './HistoryChart';
+import { AdminScoreForm } from './AdminScoreForm';
 import './player-detail.css';
 
 interface PlayerDetailProps {
@@ -29,6 +31,8 @@ interface PlayerDetailProps {
   onOpenStatement?: (record: RecordItem) => void;
   /** Called after a mutation so parent lists can refresh. */
   onChanged?: () => void;
+  /** A case to bring into view and focus once loaded (a link from Discord). */
+  focusRecordId?: number | null;
 }
 
 interface DetailState {
@@ -40,6 +44,8 @@ interface DetailState {
 const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 /** busyId while the judge role is being changed (record ids are positive). */
 const JUDGE_BUSY = -1;
+/** busyId while the score is being set by hand. */
+const SCORE_BUSY = -2;
 
 /** Post-verdict reversal: any admin, or the reporter within 15 minutes. */
 function canRevoke(record: RecordItem, me: User | null): boolean {
@@ -64,6 +70,7 @@ export function PlayerDetail({
   onClose,
   onOpenStatement,
   onChanged,
+  focusRecordId = null,
 }: PlayerDetailProps): JSX.Element {
   const [state, setState] = useState<DetailState>({
     status: 'loading',
@@ -72,6 +79,18 @@ export function PlayerDetail({
   });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [overriding, setOverriding] = useState<number | null>(null);
+  const focused = useRef(false);
+
+  // Once the cases are in: bring the linked one into view, and focus it.
+  useEffect(() => {
+    if (focused.current || focusRecordId === null || state.status !== 'ready') return;
+    focused.current = true;
+    const card = document.getElementById(`case-${focusRecordId}`);
+    if (!card) return; // not among the cases shown here
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    card.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    card.focus({ preventScroll: true });
+  }, [focusRecordId, state.status]);
 
   const load = useCallback(async (): Promise<void> => {
     setState({ status: 'loading', data: null, error: null });
@@ -164,6 +183,15 @@ export function PlayerDetail({
                 )}
               </div>
               <p className="pd__blurb">{tier.blurb}</p>
+              {me?.is_admin === true && (
+                <AdminScoreForm
+                  key={data.user.score}
+                  username={data.user.username}
+                  score={data.user.score}
+                  busy={busyId === SCORE_BUSY}
+                  onSubmit={(next) => void run(SCORE_BUSY, () => setScore(userId, next))}
+                />
+              )}
             </div>
           </header>
 
@@ -190,6 +218,7 @@ export function PlayerDetail({
                   <VerdictCard
                     key={r.id}
                     record={r}
+                    focused={r.id === focusRecordId}
                     escalation={
                       // Only the filing judge (or an admin) may co-sign the -25
                       // charge, so only they get the buttons — a reporter who is

@@ -154,6 +154,23 @@ export function joinUrl(base: string, path = ''): string {
   return `${root}/${path.replace(/^\/+/, '')}`;
 }
 
+/** What a web link opens: a case (in its subject's page) or a session. */
+export type WebTarget = { case: number } | { session: number };
+
+/**
+ * A link into the web app: its front page, or `?case=<id>` / `?session=<id>`,
+ * which the SPA opens on load (src/lib/deepLink.ts). Ids only — never names.
+ */
+export function webUrl(frontendUrl: string, target?: WebTarget): string {
+  const url = new URL(joinUrl(frontendUrl, '/'));
+  if (target) {
+    const [key, id] = 'case' in target ? ['case', target.case] : ['session', target.session];
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`not a ${key} id: ${id}`);
+    url.searchParams.set(key, String(id));
+  }
+  return url.toString();
+}
+
 /** A Link button. Only http(s) URLs are accepted — Discord rejects anything else. */
 export function linkButton(label: string, url: string): BotLinkButton {
   const parsed = new URL(url);

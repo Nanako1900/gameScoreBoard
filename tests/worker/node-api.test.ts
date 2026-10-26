@@ -6,7 +6,7 @@ import { env as testEnv } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildEnv, ConfigError, createApi, withForwardedProto } from '../../server/src/api';
 import { previousWeekStart } from '../../worker/report';
-import { expireDeadline, OFFSET_HOURS, seedUser, statusOf } from './helpers';
+import { expireDeadline, inThisWeek, OFFSET_HOURS, seedUser, statusOf } from './helpers';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -23,8 +23,11 @@ const BASE_ENV = {
   AI_ENABLED: 'false',
 };
 
-const api = (extra: Record<string, string> = {}) =>
-  createApi(buildEnv({ ...BASE_ENV, ...extra }, testEnv.DB), { onError: () => undefined });
+/** Wednesday noon this week: past the report's Monday 10:30, whatever the real time. */
+const REPORT_DUE = inThisWeek(2 * 24 + 12);
+
+const api = (extra: Record<string, string> = {}, now?: () => number) =>
+  createApi(buildEnv({ ...BASE_ENV, ...extra }, testEnv.DB), { onError: () => undefined, now: now ?? (() => REPORT_DUE) });
 
 async function heals(): Promise<number> {
   const row = await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM weekly_heals').first<{ n: number }>();
@@ -209,6 +212,15 @@ describe('runJobs — the timer that replaces Cloudflare cron', () => {
   it('writes last week’s report, which only ever ran lazily on the Worker', async () => {
     await lastWeekActivity();
     await api().runJobs();
+    expect(await reports()).toBe(1);
+  });
+
+  it('writes it only from Monday 10:30 on (board time)', async () => {
+    await lastWeekActivity();
+    // Monday 10:29 and 10:30 at UTC+8.
+    await api({}, () => inThisWeek(10 + 29 / 60)).runJobs();
+    expect(await reports()).toBe(0);
+    await api({}, () => inThisWeek(10.5)).runJobs();
     expect(await reports()).toBe(1);
   });
 

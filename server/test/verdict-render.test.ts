@@ -71,7 +71,7 @@ describe('verdictPost', () => {
     const post = verdictPost(record(), 'https://score.example/');
     const [action, link] = post.components[0].components as unknown as Array<Record<string, unknown>>;
     expect(action).toMatchObject({ custom_id: 'v1:verdict:42', label: '看判词' });
-    expect(link).toMatchObject({ url: 'https://score.example/', label: '在网页查看' });
+    expect(link).toMatchObject({ url: 'https://score.example/?case=42', label: '在网页查看' });
   });
 });
 

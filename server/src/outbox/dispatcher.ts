@@ -14,7 +14,7 @@
 
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
-import { dmStillRelevant, isDmKind, removedDm, renderDm, type DmKind } from '../discord/dm';
+import { dmStillRelevant, isDmKind, removedDm, renderDm, STATEMENT_DMS, type DmKind } from '../discord/dm';
 import {
   isSessionDmKind,
   isUpcoming,
@@ -25,6 +25,26 @@ import {
   type SessionDmKind,
 } from '../discord/sessions';
 import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
+import {
+  CANNOT_DM,
+  STALE_MS,
+  UNKNOWN_CHANNEL,
+  UNKNOWN_MESSAGE,
+  errorCode,
+  errorStatus,
+  nonceFor,
+  type ChannelApi,
+  type DispatcherConfig,
+  type OutboxRow,
+  type Outcome,
+  type Recipient,
+} from './kit';
+
+import { deliverReport, REPORT_KINDS } from './report-delivery';
+import { deliverEscalation, deliverRecharged, ESCALATION_KINDS } from './escalation-delivery';
+import { deliverScoreAdjusted, SCORE_KIND } from './score-delivery';
+
+export { STALE_MS, type ChannelApi, type DispatcherConfig } from './kit';
 
 const POLL_MS = 30_000;
 const RECONNECT_MS = 5_000;
@@ -35,8 +55,6 @@ const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_S = 3_600;
 /** A refusal (401/403) waits this long, without using up an attempt: the fix is a human's. */
 const REFUSED_RETRY_S = 300;
-/** Never posted and older than this: not worth announcing any more (bot was down for a day). */
-export const STALE_MS = 24 * 3_600_000;
 /** This many 401/403 within a minute pause delivery: a reset token or a lost permission. */
 const AUTH_FAILURES_TO_PAUSE = 5;
 const AUTH_WINDOW_MS = 60_000;
@@ -45,7 +63,8 @@ const PAUSE_MS = 5 * 60_000;
 /**
  * Reminders and to-dos one person gets per 24 h; past it they are skipped (the
  * web has it all). Outcomes — a verdict, an override, a revoke, an appeal to
- * review — are never budgeted: they are what the reminders were for. Each is
+ * review, an admin's score correction — are never budgeted: they are what the
+ * reminders were for. Each is
  * at most one per case (or needs an admin), and cases need a judge, or the
  * subject's own 'going' to a session.
  */
@@ -59,6 +78,11 @@ export const DM_BUDGET = 20;
 export const SESSION_DM_BUDGET = 10;
 /** Invitations from one organizer to one person per 24 h. */
 export const INVITES_PER_ORGANIZER = 3;
+/**
+ * Escalation asks to a judge (P8) have their own allowance: a batch of filings
+ * the AI all flagged must not use up the judge's own statement reminders.
+ */
+export const ESCALATION_DM_BUDGET = 10;
 
 interface Budget {
   kinds: readonly string[];
@@ -67,6 +91,7 @@ interface Budget {
 const BUDGETS: readonly Budget[] = [
   { kinds: ['dm.filed', 'dm.deadline'], limit: DM_BUDGET },
   { kinds: ['dm.session.invited', 'dm.session.changed'], limit: SESSION_DM_BUDGET },
+  { kinds: ['dm.escalation'], limit: ESCALATION_DM_BUDGET },
 ];
 
 function budgetFor(kind: string): Budget | null {
@@ -75,27 +100,6 @@ function budgetFor(kind: string): Budget | null {
 /** News (not to-dos) that could not go out within this long is not worth sending late. */
 const NEWS_KINDS: ReadonlySet<DmKind> = new Set(['dm.decided', 'dm.overridden', 'dm.revoked', 'dm.appealed']);
 
-// Discord JSON error codes.
-const UNKNOWN_CHANNEL = 10003;
-const UNKNOWN_MESSAGE = 10008;
-/** "Cannot send messages to this user": DMs closed, or no server in common. */
-const CANNOT_DM = 50007;
-
-export interface ChannelApi {
-  send(channelId: string, message: ChannelMessage & { nonce: string; enforce_nonce: true }): Promise<{ id: string }>;
-  edit(channelId: string, messageId: string, message: ChannelMessage): Promise<void>;
-  remove(channelId: string, messageId: string): Promise<void>;
-  /** The DM channel with this Discord user (opened if need be). */
-  openDm(discordUserId: string): Promise<string>;
-}
-
-export interface DispatcherConfig {
-  /** null: verdict events are marked skipped, nothing is posted. */
-  verdictChannelId: string | null;
-  /** Where session cards go (P7); null or absent: no cards. */
-  sessionChannelId?: string | null;
-  frontendUrl: string;
-}
 
 export interface DispatcherDeps {
   /** Plain pg for the outbox tables. */
@@ -110,28 +114,10 @@ export interface DispatcherDeps {
   describeError?: (error: unknown) => string;
 }
 
-interface OutboxRow {
-  id: number;
-  kind: string;
-  entity: string;
-  entity_id: string;
-  payload: Record<string, unknown>;
-  claim_token: string;
-  attempts: number;
-  created_at: Date;
-  refused_since: Date | null;
-}
 
 /** The record events this version delivers; anything else waits for a newer one. */
 const RECORD_KINDS: ReadonlySet<string> = new Set(['case.decided', 'case.overridden', 'case.revoked', 'case.removed']);
 
-type Outcome =
-  | { result: 'sent' | 'skipped' | 'dead'; note: string | null }
-  /**
-   * `refused`: Discord said 401/403 — retried every few minutes without counting
-   * the attempt; `unhandled`: this version has no handler — left for a newer one.
-   */
-  | { result: 'retry'; note: string; refused?: boolean; unhandled?: boolean };
 
 export interface Dispatcher {
   start(): void;
@@ -140,25 +126,6 @@ export interface Dispatcher {
   stop(): Promise<void>;
 }
 
-function errorStatus(error: unknown): number | null {
-  const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === 'number' ? status : null;
-}
-
-function errorCode(error: unknown): number | null {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'number' ? code : null;
-}
-
-/**
- * Discord returns the first message instead of a second one for a repeated
- * nonce (a send retried after a crash between sending and recording it). An
- * event re-armed for later (a reminder whose deadline moved) is a new send:
- * re-arming resets created_at, so the nonce changes with it. At most 25 chars.
- */
-function nonceFor(row: OutboxRow): string {
-  return `ob${row.id}.${row.created_at.getTime().toString(36)}`;
-}
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { pool, db, api, config } = deps;
@@ -396,9 +363,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
-  interface Recipient {
-    discord_user_id: string;
-  }
 
   /** The recipient's Discord account if DMs to them are on — else why not. */
   async function recipient(userId: string): Promise<Recipient | Outcome> {
@@ -445,8 +409,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
   }
 
-  /** The DMs of a case that carry a 写陈述 button, by purpose. */
-  const STATEMENT_DMS: Partial<Record<DmKind, string>> = { 'dm.filed': 'dm:filed', 'dm.deadline': 'dm:deadline' };
 
   async function isAdmin(userId: string): Promise<boolean> {
     const res = await pool.query<{ is_admin: number }>('SELECT is_admin FROM users WHERE id = $1', [userId]);
@@ -499,6 +461,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
+    if (row.kind === SCORE_KIND) return deliverScoreAdjusted(row, { config, recipient, sendDm });
+    if (row.kind === 'dm.recharged' || ESCALATION_KINDS.has(row.kind)) {
+      const tools = { pool, db, config, recipient, sendDm, rewrite, messageFor, rememberDm };
+      return row.kind === 'dm.recharged' ? deliverRecharged(row, tools) : deliverEscalation(row, tools);
+    }
     if (isSessionDmKind(row.kind)) return deliverSessionDm(row, row.kind);
     if (!isDmKind(row.kind)) return unhandled(row);
     const kind = row.kind;
@@ -541,28 +508,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const sent = await sendDm(row, to, message);
     if (isOutcome(sent)) return sent;
     if (!purpose) return { result: 'sent', note: null };
-
-    // Remember it (a withdrawal or a deletion rewrites it) — unless the record
-    // was deleted while this was being sent. The lock waits out a deletion in
-    // progress (whose trigger saw nothing stored yet); a record that is gone
-    // gets its DM rewritten like any other, as an event, so it is retried.
-    const kept = await pool.query(
-      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
-       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5 FOR KEY SHARE)
-       ON CONFLICT (entity, entity_id, purpose)
-       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
-      [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
-    );
-    if (kept.rowCount === 0) {
-      await pool.query(
-        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
-         VALUES ('dm.removed', 'user', $1, 'dm:case:' || $2 || ':removed:' || $3 || ':' || $4,
-                 jsonb_build_object('record_id', $2::bigint, 'purpose', $3::text, 'channel_id', $5::text, 'message_id', $4::text))
-         ON CONFLICT (dedupe_key) DO NOTHING`,
-        [row.entity_id, recordId, purpose, sent.messageId, sent.channelId],
-      );
-      return { result: 'sent', note: null };
-    }
+    if (!(await rememberDm(row, recordId, purpose, sent))) return { result: 'sent', note: null };
     // A reminder sent again (its deadline moved): the earlier one loses its
     // button, so only the current DM offers 写陈述. The new one is sent and
     // remembered whatever happens to this — so it never decides the outcome.
@@ -571,6 +517,37 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       await tidy(row, earlier.channel_id, earlier.message_id, { ...message, components: [] }, 'take the button off the earlier reminder');
     }
     return { result: 'sent', note: null };
+  }
+
+  /**
+   * Remember a DM about a case (a withdrawal or a deletion rewrites it) —
+   * unless the record was deleted while it was being sent. The lock waits out
+   * a deletion in progress (whose trigger saw nothing stored yet); a record
+   * that is gone gets its DM rewritten like any other, as an event, so it is
+   * retried. False: it was gone.
+   */
+  async function rememberDm(
+    row: OutboxRow,
+    recordId: number,
+    purpose: string,
+    sent: { channelId: string; messageId: string },
+  ): Promise<boolean> {
+    const kept = await pool.query(
+      `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
+       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5 FOR KEY SHARE)
+       ON CONFLICT (entity, entity_id, purpose)
+       DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
+      [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
+    );
+    if (kept.rowCount !== 0) return true;
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+       VALUES ('dm.removed', 'user', $1, 'dm:case:' || $2 || ':removed:' || $3 || ':' || $4,
+               jsonb_build_object('record_id', $2::bigint, 'purpose', $3::text, 'channel_id', $5::text, 'message_id', $4::text))
+       ON CONFLICT (dedupe_key) DO NOTHING`,
+      [row.entity_id, recordId, purpose, sent.messageId, sent.channelId],
+    );
+    return false;
   }
 
   /** A best-effort edit after the event's real work is done: a failure is only logged. */
@@ -709,7 +686,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             ? await deliverDm(row)
             : row.entity === 'session'
               ? await deliverSession(row)
-              : unhandled(row);
+              : row.entity === 'report' && REPORT_KINDS.has(row.kind)
+                ? await deliverReport(row, { pool, db, api, config })
+                : unhandled(row);
     } catch (error) {
       outcome = outcomeOf(error, row);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);

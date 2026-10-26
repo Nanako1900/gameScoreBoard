@@ -83,6 +83,7 @@ describe('PlayerDetail — the escalation buttons', () => {
     verdict: null,
     range: { min: -20, max: -10, base: -15 },
     created_at: '2026-10-26 12:00:00',
+    redacted: false,
   };
 
   function stubCase(): void {
@@ -101,11 +102,95 @@ describe('PlayerDetail — the escalation buttons', () => {
     expect(await screen.findByRole('button', { name: '确认是团灭级' })).toBeInTheDocument();
   });
 
+  it('are gone once the case went to judgment', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const user = { id: 'p', username: '选手', avatar_url: null, is_participant: true, is_judge: false, score: 90, created_at: 'x' };
+        const decided = { ...record, status: 'decided', delta: -15, verdict: { source: 'ai', headline: '判了', reasoning: '', factors: [] } };
+        return { ok: true, status: 200, text: async () => JSON.stringify({ user, records: [decided], history: [] }) };
+      }),
+    );
+    render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('button', { name: '确认是团灭级' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/够得上「团灭级放鸽」/)).not.toBeInTheDocument();
+  });
+
   it('are not for a reporter who is no judge (any more): the server would refuse', async () => {
     stubCase();
     render(<PlayerDetail userId="p" me={{ ...REPORTER, is_judge: false }} onClose={() => {}} />);
     await screen.findByRole('heading', { name: '选手' });
     expect(screen.queryByRole('button', { name: '确认是团灭级' })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayerDetail — setting a score by hand', () => {
+  it('lets an admin set it in two steps, and posts only the score', async () => {
+    const posts = stubBackend(false);
+    const user = userEvent.setup();
+    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, '75');
+    await user.click(screen.getByRole('button', { name: '改分' }));
+    expect(screen.getByText(/私信通知本人/)).toBeInTheDocument();
+    expect(posts).toEqual([]);
+    await user.click(screen.getByRole('button', { name: '确认改分' }));
+    await waitFor(() => expect(posts).toEqual([{ path: '/api/admin/users/p', body: { score: 75 } }]));
+  });
+
+  it('refuses a score off the scale, and shows no such form to anyone else', async () => {
+    stubBackend(false);
+    const user = userEvent.setup();
+    const { unmount } = render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    await user.clear(input);
+    await user.type(input, '101');
+    expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    unmount();
+    render(<PlayerDetail userId="p" me={{ ...ME, is_admin: false }} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('spinbutton', { name: '调整分数' })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayerDetail — the score form, at its edges', () => {
+  for (const [what, typed] of [
+    ['an empty box (it would read as 0)', ''],
+    ['a score below 0', '-1'],
+    ['a fractional score', '75.5'],
+  ] as const) {
+    it(`refuses ${what}`, async () => {
+      stubBackend(false);
+      const user = userEvent.setup();
+      render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+      const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+      await user.clear(input);
+      if (typed) await user.type(input, typed);
+      expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    });
+  }
+
+  it('is not for a judge who is not an admin', async () => {
+    stubBackend(false);
+    render(<PlayerDetail userId="p" me={{ ...ME, is_admin: false, is_judge: true }} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('spinbutton', { name: '调整分数' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the keyboard where it was: on 确认改分, back on the number after 取消', async () => {
+    stubBackend(false);
+    const user = userEvent.setup();
+    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    await user.clear(input);
+    await user.type(input, '75');
+    await user.click(screen.getByRole('button', { name: '改分' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '确认改分' }));
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    expect(document.activeElement).toBe(screen.getByRole('spinbutton', { name: '调整分数' }));
   });
 });
 

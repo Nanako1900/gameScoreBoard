@@ -352,7 +352,7 @@ export async function confirmEscalation(
   return loadRecordItem(db, id);
 }
 
-/** Dismiss the AI's escalation hint and keep the lesser charge. */
+/** Dismiss the AI's escalation hint and keep the lesser charge — before a verdict, like confirming. */
 export async function dismissEscalation(
   db: D1Database,
   caller: User,
@@ -362,10 +362,22 @@ export async function dismissEscalation(
   if (!isFilingJudge(caller, rec.reporter_id)) {
     throw new ApiError(403, '只有立案的裁判或管理员可以处理升级建议');
   }
-  await db
-    .prepare('UPDATE records SET escalation_suggested = 0 WHERE id = ?')
+  if (rec.escalation_suggested !== 1) {
+    throw new ApiError(400, '该案件没有待确认的升级');
+  }
+  // Same window as confirming: once the case is being judged, the suggestion
+  // is moot either way.
+  if (rec.status !== 'awaiting_statement') {
+    throw new ApiError(400, '案件已进入裁决，升级建议不再适用');
+  }
+  const res = await db
+    .prepare(
+      `UPDATE records SET escalation_suggested = 0
+        WHERE id = ? AND status = 'awaiting_statement' AND escalation_suggested = 1`,
+    )
     .bind(id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '记录状态已变化，请刷新后重试');
   return loadRecordItem(db, id);
 }
 

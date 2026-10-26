@@ -143,24 +143,32 @@ interface RecordItem {
   reporter: { id: string; username: string; avatar_url: string | null };
   type: ViolationType;           // v3: usually chosen by the AI, always validated
   delta: number;                 // signed, actually applied; 0 before a verdict
-  note: string | null;           // judge's short note — PUBLIC, like every field here
+  note: string | null;           // judge's short note — PUBLIC, like every field not marked PRIVATE
   claim: string | null;          // judge's account of the facts (required for penalties)
   claim_summary: string | null;  // AI's one-line condensation; the feed headline
   classified_by: 'ai' | 'fallback' | 'human' | 'derived';
   escalation_suggested: boolean; // AI wants no_show_group; a judge must co-sign
   session_id: number | null;     // originating 约局, if any
-  statement: string | null;      // the subject's one statement
-  statement_at: string | null;
-  appeal_reason: string | null;  // why the subject contested; shown to the reviewing admin
+  statement: string | null;      // PRIVATE: the subject's one statement
+  statement_at: string | null;   // public: whether (and when) they spoke up
+  appeal_reason: string | null;  // PRIVATE: why the subject contested; for the reviewing admin
   deadline_at: string | null;    // statement window close (sqlite datetime, UTC)
   status: CaseStatus;
   verdict: {
     source: 'ai' | 'fallback' | 'manual' | 'admin_override';
-    headline: string; reasoning: string;
-    factors: { kind: 'mitigating' | 'aggravating'; text: string }[];
+    headline: string; reasoning: string;                         // PRIVATE
+    factors: { kind: 'mitigating' | 'aggravating'; text: string }[]; // PRIVATE
   } | null;
   range: { min: number; max: number; base: number };
   created_at: string;
+  // PRIVATE fields are for the case's subject, its reporter, judges and admins.
+  // For anyone else (logged out included) every response blanks them —
+  // statement / appeal_reason null, headline / reasoning '' and factors [] —
+  // and sets `redacted: true` (whatever was there, so it never tells whether
+  // an appeal reason exists). The verdict's words are covered because the AI
+  // writes them after reading the statement and often quotes it — except a
+  // bonus's 'manual' verdict, which is only its label and stays.
+  redacted: boolean;
 }
 
 interface SessionItem {
@@ -206,6 +214,10 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 `{ "error": string }` with an appropriate 4xx/5xx status.
 
 ### Public (no auth)
+
+Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`,
+`/api/sessions/:id`) shape each case for the caller (see `RecordItem`'s PRIVATE
+fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/config`
   → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt }`
   Also fires (non-blocking) three idempotent jobs: the weekly heal, the
@@ -261,6 +273,8 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   a flagged case to `no_show_group`. `awaiting_statement` only — after a verdict
   the subject argued against the lesser charge, so re-sentencing is an admin override.
 - `POST /api/records/:id/escalate/dismiss` → `{ record }`. Keep the lesser charge.
+  Same rules as `escalate`: filing judge or admin, a flagged case, `awaiting_statement`
+  only (400 otherwise), 409 if it changed meanwhile.
 - `POST /api/records/:id/reclassify` `{ type }` → `{ record }`. Filing judge or
   admin overrides the AI's category, pre-verdict, penalties only. A roll-call case
   (filed by settling a session) may only move between `no_show` and
@@ -323,11 +337,26 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 - Generation is idempotent via the `weekly_reports` primary key, and the row is
   claimed with the deterministic fallback text BEFORE the AI call, so a
   Monday-morning rush produces one narrative rather than one per visitor.
+- Last week's report is written from **Monday 10:30** board time on (not at
+  midnight), and once every case filed that week has been judged — waiting at
+  most one statement window past the week's end, plus an hour — so a case
+  filed late on Sunday is counted (cases filed, total penalty) in its week. On
+  the Worker the lazy job runs after the overdue-case sweep for that reason.
+  本周之星 / 鸽王 count score movement within the week (a case judged on Monday
+  moves next week's), and neither the weekly heal nor an admin's corrections.
+  Until last week's report is out, `/api/report/latest` is the one before.
+- On the Node backend, a newly written report is posted to the Discord verdict
+  channel (once per week, the latest finished week only) and a rewrite edits
+  that post.
 
 ### Admin (is_admin)
 - `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative
-  for `YYYY-MM-DD` (a local Monday); recomputes the stats too.
+  for `YYYY-MM-DD` (a local Monday); recomputes the stats too. Only a finished
+  week: a non-Monday or a week still running is a 400.
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
+  `score` sets it by hand (clamped to 0–100, logged as `admin_adjust`); on the
+  Node backend a real change DMs the player if they are bound (old → new). The
+  player page offers it to admins (type the number, then confirm).
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
   `decided`/`appealed` only; delta is clamped to the violation range; the score
   moves by the difference so the record ends up worth exactly the new delta.
@@ -378,3 +407,13 @@ reaches `decided` rather than stranding a player's score.
   weekly report on the page.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
+- Links into the app (the bot's DMs and replies use them): `/?case=<id>` opens
+  that case in its subject's page, scrolled to and focused (if it is among the
+  200 most recent cases the page shows; else the page opens unscrolled);
+  `/?session=<id>`
+  opens the session. Only a positive integer id is read (anything else is
+  ignored), the parameter is stripped at once, and the link only picks which
+  ordinary view opens — what it shows and which controls come from the API and
+  `/api/me` as always. A link never writes. A case that is gone gets a notice.
+- A case with `redacted: true` says a statement exists (when `statement_at` is
+  set) rather than calling it a verdict in absence, and shows no verdict words.

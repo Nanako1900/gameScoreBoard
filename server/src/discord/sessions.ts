@@ -18,7 +18,7 @@ import {
   fitLines,
   GOLD,
   GREY,
-  joinUrl,
+  webUrl,
   LIMITS,
   linkButton,
   parseTimestamp,
@@ -69,7 +69,7 @@ export function isUpcoming(session: SessionDetail, now = Date.now()): boolean {
 }
 
 function rsvpRow(session: SessionDetail, frontendUrl: string): APIActionRowComponent<APIButtonComponent> {
-  const web = linkButton('在网页查看', joinUrl(frontendUrl, '/'));
+  const web = linkButton('在网页查看', webUrl(frontendUrl, { session: session.id }));
   const styles: Record<RsvpChoice, ButtonStyle.Success | ButtonStyle.Secondary | ButtonStyle.Danger> = {
     going: ButtonStyle.Success,
     maybe: ButtonStyle.Secondary,
@@ -170,7 +170,7 @@ export function renderSessionDm(kind: SessionDmKind, session: SessionDetail, fro
   const title = safeLine(session.title, TITLE_MAX);
   const when = `${discordTime(session.starts_at, 'F')}（${discordTime(session.starts_at, 'R')}）`;
   const organizer = safeLine(session.organizer.username, NAME_MAX);
-  const web = { type: ComponentType.ActionRow as const, components: [webLink(frontendUrl)] };
+  const web = { type: ComponentType.ActionRow as const, components: [webLink(frontendUrl, session.id)] };
   switch (kind) {
     case 'dm.session.invited':
       return message(
@@ -200,8 +200,8 @@ export function renderSessionDm(kind: SessionDmKind, session: SessionDetail, fro
   }
 }
 
-function webLink(frontendUrl: string): APIButtonComponent {
-  const web = linkButton('去网页', joinUrl(frontendUrl, '/'));
+function webLink(frontendUrl: string, sessionId: number): APIButtonComponent {
+  const web = linkButton('去网页', webUrl(frontendUrl, { session: sessionId }));
   return { type: ComponentType.Button, style: ButtonStyle.Link, label: web.label, url: web.url };
 }
 
@@ -227,7 +227,7 @@ export async function handleRsvpButton(
       const when = now ? `现在是 ${discordTime(now.starts_at, 'F')}（${discordTime(now.starts_at, 'R')}）。` : '';
       const where = ctx.sessionCards ? '约局频道里更新后的卡片、或网页' : '网页';
       return ephemeralReply(`🔁 这个约局改时间了，${when}请在${where}上按新时间重新选。`, {
-        buttons: [linkButton('去网页', joinUrl(ctx.frontendUrl, '/'))],
+        buttons: [linkButton('去网页', webUrl(ctx.frontendUrl, { session: sessionId }))],
       });
     }
     if (error instanceof ApiError) return ephemeralReply(safeLine(error.message, LIMITS.content));

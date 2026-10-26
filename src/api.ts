@@ -298,6 +298,11 @@ export function setJudge(userId: string, isJudge: boolean): Promise<{ ok: boolea
   return post<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(userId)}`, { is_judge: isJudge });
 }
 
+/** Admin: set a player's score by hand (they get a DM if bound). */
+export function setScore(userId: string, score: number): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(userId)}`, { score });
+}
+
 export function getAiConfig(): Promise<AiConfigResponse> {
   return request<AiConfigResponse>('/api/admin/ai-config');
 }

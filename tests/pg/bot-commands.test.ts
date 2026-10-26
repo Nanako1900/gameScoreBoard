@@ -377,8 +377,28 @@ describe('/todo', () => {
     const text = textOf(reply);
     expect(text).not.toContain('鲍勃的局');
     expect(text).not.toContain('@everyone');
-    expect(text).not.toContain('](');
     expect(text).not.toMatch(/https?:\/\/evil/);
+    // The only links are the bot's own: straight to the case and to the invite.
+    const links = [...text.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toMatch(/^https:\/\/score\.example\/\?(case|session)=\d+$/);
+    expect(fields[0].value).toMatch(/\[去处理\]\(https:\/\/score\.example\/\?case=\d+\)/);
+    expect(fields[1].value).toMatch(/\[查看\]\(https:\/\/score\.example\/\?session=\d+\)/);
+  });
+
+  it('shows an admin the appeals to review — who and what, not the reason — with a way there', async () => {
+    await seedPeople();
+    await env.DB.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').bind('bob').run();
+    await seedRecord({ subject: 'alice', status: 'appealed', createdAt: '2026-10-20 12:00:00' });
+    const reply = await run('todo', BOB_DC);
+    const field = (reply.embeds?.[0].fields ?? []).find((f) => f.name.startsWith('待复核的申诉'));
+    expect(field?.name).toBe('待复核的申诉（1）');
+    expect(field?.value).toContain('爱丽丝');
+    expect(field?.value).toMatch(/\[去复核\]\(https:\/\/score\.example\/\?case=\d+\)/);
+    expect(textOf(reply)).not.toContain(SECRET.appeal);
+    // Not for anyone else.
+    const alice = await run('todo', ALICE_DC);
+    expect(textOf(alice)).not.toContain('待复核的申诉');
   });
 
   it('says there is nothing to do', async () => {

@@ -8,8 +8,9 @@ import {
   getReport,
   previousWeekStart,
   regenerateReport,
+  reportDue,
 } from '../../worker/report';
-import { OFFSET_HOURS, noAiEnv, seedUser } from './helpers';
+import { OFFSET_HOURS, inThisWeek, noAiEnv, seedUser } from './helpers';
 
 /** A sqlite-datetime inside last week, offset days from its local Monday. */
 function inLastWeek(dayOffset = 1, hour = 12): string {
@@ -111,6 +112,23 @@ describe('computeStats — every figure comes from SQL', () => {
     expect(s.star?.delta).toBe(4);
     expect(s.pigeon?.name).toBe('阿强');
     expect(s.pigeon?.delta).toBe(-15);
+  });
+
+  it('excludes an admin’s direct score corrections from star / pigeon', async () => {
+    const judge = await seedUser({ id: 'judge', judge: true });
+    const a = await seedUser({ id: 'a', username: '阿强' });
+    const b = await seedUser({ id: 'b', username: '小明' });
+    await seedCase({ subject: a.id, reporter: judge.id, type: 'late_minor', delta: -3 });
+    // b's score was corrected by hand — that is no one's doing that week.
+    await env.DB.prepare(
+      `INSERT INTO score_events (user_id, delta, reason, resulting_score, created_at)
+       VALUES (?, -40, 'admin_adjust', 60, ?)`,
+    )
+      .bind(b.id, inLastWeek(2))
+      .run();
+    const s = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
+    expect(s.pigeon?.name).toBe('阿强');
+    expect(s.pigeon?.delta).toBe(-3);
   });
 
   it('awards 最会说话 to the biggest gap above the anchor', async () => {
@@ -227,6 +245,19 @@ describe('fallbackNarrative', () => {
   });
 });
 
+/** Wednesday noon this week: past the report's Monday 10:30, whatever the real time. */
+const REPORT_DUE = inThisWeek(2 * 24 + 12);
+
+describe('reportDue — Monday 10:30, board time', () => {
+  it('opens at 10:30 on Monday and stays open all week', () => {
+    expect(reportDue(8, Date.parse('2026-10-26T02:29:59Z'))).toBe(false); // Mon 10:29:59 at UTC+8
+    expect(reportDue(8, Date.parse('2026-10-26T02:30:00Z'))).toBe(true);
+    expect(reportDue(8, Date.parse('2026-11-01T15:59:00Z'))).toBe(true); // Sun 23:59
+    expect(reportDue(8, Date.parse('2026-11-01T16:00:00Z'))).toBe(false); // the next Monday 00:00
+    expect(reportDue(-5, Date.parse('2026-10-26T15:30:00Z'))).toBe(true); // Mon 10:30 at UTC-5
+  });
+});
+
 describe('ensureWeeklyReport — idempotent per week', () => {
   /** A report is only generated for a week that actually had something happen. */
   async function seedActivity(): Promise<void> {
@@ -235,8 +266,29 @@ describe('ensureWeeklyReport — idempotent per week', () => {
     await seedCase({ subject: a.id, reporter: judge.id, type: 'no_show', delta: -15 });
   }
 
+  it('waits for Monday 10:30', async () => {
+    await seedActivity();
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(10))).toBeNull();
+    const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM weekly_reports').first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+  });
+
+  it('waits for last week’s cases to be judged — but not for ever', async () => {
+    await seedActivity();
+    // Filed late on Sunday, still waiting for its statement on Monday morning.
+    await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, claim, status, deadline_at, created_at)
+       VALUES ('ra', 'rjudge', 'no_show', 0, '周日晚上没来', 'awaiting_statement', ?, ?)`,
+    )
+      .bind(inLastWeek(6, 23), inLastWeek(6, 23))
+      .run();
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(11))).toBeNull();
+    // A statement window (12 h) past the week's end, plus an hour: written anyway.
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, inThisWeek(13.5))).not.toBeNull();
+  });
+
   it('skips a week in which nothing happened — no card beats an empty card', async () => {
-    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS)).toBeNull();
+    expect(await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE)).toBeNull();
     const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM weekly_reports').first<{
       n: number;
     }>();
@@ -246,11 +298,11 @@ describe('ensureWeeklyReport — idempotent per week', () => {
   it('generates last week once and reuses it thereafter', async () => {
     await seedActivity();
     const week = previousWeekStart(OFFSET_HOURS);
-    const first = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS);
+    const first = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
     expect(first?.week_start).toBe(week);
     expect(first?.source).toBe('fallback'); // AI is off in tests
 
-    const second = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS);
+    const second = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
     expect(second?.created_at).toBe(first?.created_at);
 
     const rows = await env.DB.prepare(
@@ -265,7 +317,7 @@ describe('ensureWeeklyReport — idempotent per week', () => {
     await seedActivity();
     // Monday morning: everyone opens the page at once.
     await Promise.all(
-      Array.from({ length: 5 }, () => ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS)),
+      Array.from({ length: 5 }, () => ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE)),
     );
     const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM weekly_reports').first<{
       n: number;
@@ -278,10 +330,21 @@ describe('ensureWeeklyReport — idempotent per week', () => {
     const a = await seedUser({ id: 'a', username: '阿强' });
     await seedCase({ subject: a.id, reporter: judge.id, type: 'no_show', delta: -15 });
 
-    const report = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS);
+    const report = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
     const direct = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
     // The card renders `stats`; it must equal what SQL says, not a paraphrase.
     expect(report?.stats).toEqual(direct);
+  });
+});
+
+describe('regenerateReport — only a finished week', () => {
+  it('refuses a day that is not a Monday, and a week still running', async () => {
+    const last = previousWeekStart(OFFSET_HOURS);
+    const tuesday = new Date(Date.parse(`${last}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const thisWeek = new Date(Date.parse(`${last}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+    await expect(regenerateReport(env.DB, noAiEnv(), tuesday, OFFSET_HOURS)).rejects.toMatchObject({ status: 400 });
+    await expect(regenerateReport(env.DB, noAiEnv(), thisWeek, OFFSET_HOURS)).rejects.toMatchObject({ status: 400 });
+    await expect(regenerateReport(env.DB, noAiEnv(), last, OFFSET_HOURS)).resolves.toMatchObject({ week_start: last });
   });
 });
 
@@ -291,7 +354,7 @@ describe('regenerateReport', () => {
     const a = await seedUser({ id: 'ra', username: '阿强' });
     await seedCase({ subject: a.id, reporter: judge.id, type: 'no_show', delta: -15 });
     const week = previousWeekStart(OFFSET_HOURS);
-    await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS);
+    await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
     const again = await regenerateReport(env.DB, noAiEnv(), week, OFFSET_HOURS);
 
     expect(again.week_start).toBe(week);

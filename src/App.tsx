@@ -15,11 +15,13 @@ import {
   getLeaderboard,
   getMe,
   getMyInvites,
+  getRecord,
   getRecords,
   logout as apiLogout,
   regenerateReport,
 } from './api';
-import { parseTimestamp } from './lib/time';
+import { lastWeekStartOf, parseTimestamp } from './lib/time';
+import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
 import { Header } from './components/Header';
 import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
@@ -37,6 +39,7 @@ import { AdminAiPanel } from './components/AdminAiPanel';
 import { InviteBanner } from './components/InviteBanner';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
+import { LinkMissingNotice } from './components/LinkMissingNotice';
 import './app.css';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -131,6 +134,14 @@ export function App(): JSX.Element {
   const [discordLinked, setDiscordLinked] = useState(
     () => new URLSearchParams(window.location.search).get('linked') === 'discord',
   );
+  // ?case= / ?session= (links from Discord): read once, opened once data is in.
+  const [deepLink] = useState(() => readDeepLink(window.location.search));
+  const deepLinkDone = useRef(false);
+  // Set by the effects that open the first-run dialog (state they set is not
+  // visible to an effect in the same commit): the link waits for it to close.
+  const onboardingAsked = useRef(false);
+  const [focusCaseId, setFocusCaseId] = useState<number | null>(null);
+  const [linkMissing, setLinkMissing] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -149,16 +160,16 @@ export function App(): JSX.Element {
   }, [refresh]);
 
   useEffect(() => {
+    // One-off parameters: stripped at once, so a reload does not repeat them.
     const params = new URLSearchParams(window.location.search);
-    if (params.get('linked') !== 'discord') {
+    const oneOff = [...(params.get('linked') === 'discord' ? ['linked'] : []), ...DEEP_LINK_PARAMS];
+    if (!oneOff.some((name) => params.has(name))) {
       return;
     }
-    params.delete('linked');
-    const qs = params.toString();
     window.history.replaceState(
       null,
       '',
-      `${window.location.pathname}${qs ? `?${qs}` : ''}`,
+      `${window.location.pathname}${withoutParams(window.location.search, oneOff)}`,
     );
   }, []);
 
@@ -170,6 +181,7 @@ export function App(): JSX.Element {
     }
     const params = new URLSearchParams(window.location.search);
     if (params.get('onboarding') === '1') {
+      onboardingAsked.current = true;
       setOnboardingOpen(true);
       params.delete('onboarding');
       const qs = params.toString();
@@ -189,8 +201,32 @@ export function App(): JSX.Element {
     const me = ready?.me;
     if (!discordLinked || !me || askedAfterLink.current) return;
     askedAfterLink.current = true;
-    if (!me.is_participant && !me.is_judge) setOnboardingOpen(true);
+    if (!me.is_participant && !me.is_judge) {
+      onboardingAsked.current = true;
+      setOnboardingOpen(true);
+    }
   }, [discordLinked, ready?.me]);
+
+  // Open what the link points at, once: a case in its subject's page, or a
+  // session. Through the same reads as clicking there — so the same rules.
+  useEffect(() => {
+    if (!ready || !deepLink || deepLinkDone.current || onboardingOpen || onboardingAsked.current) return;
+    deepLinkDone.current = true;
+    if (deepLink.kind === 'session') {
+      setSessionId(deepLink.id);
+      return;
+    }
+    getRecord(deepLink.id)
+      .then(({ record }) => {
+        setFocusCaseId(record.id);
+        setSelectedUserId(record.subject.id);
+      })
+      .catch((err: unknown) => {
+        setLinkMissing(
+          err instanceof ApiError && err.status === 404 ? '链接里的案件不存在了。' : '打不开链接里的案件，稍后再试。',
+        );
+      });
+  }, [ready, deepLink, onboardingOpen]);
 
   const handleLogout = useCallback(async (): Promise<void> => {
     try {
@@ -272,6 +308,8 @@ export function App(): JSX.Element {
       <main className="app__main">
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
 
+        {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
+
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
@@ -291,6 +329,10 @@ export function App(): JSX.Element {
         {report && (
           <WeeklyReportCard
             report={report}
+            stale={(() => {
+              const lastWeek = lastWeekStartOf(config.nextResetAt);
+              return lastWeek !== null && report.week_start < lastWeek;
+            })()}
             regenerating={regenerating}
             onRegenerate={
               me?.is_admin === true
@@ -369,7 +411,10 @@ export function App(): JSX.Element {
       {me && (
         <OnboardingDialog
           open={onboardingOpen}
-          onClose={() => setOnboardingOpen(false)}
+          onClose={() => {
+            onboardingAsked.current = false;
+            setOnboardingOpen(false);
+          }}
           me={me}
           onSaved={handleMeUpdated}
         />
@@ -403,9 +448,14 @@ export function App(): JSX.Element {
         <PlayerDetail
           userId={selectedUserId}
           me={me}
-          onClose={() => setSelectedUserId(null)}
+          focusRecordId={focusCaseId}
+          onClose={() => {
+            setSelectedUserId(null);
+            setFocusCaseId(null);
+          }}
           onOpenStatement={(record) => {
             setSelectedUserId(null);
+            setFocusCaseId(null);
             setStatementCase(record);
           }}
           onChanged={handleChanged}

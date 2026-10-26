@@ -20,6 +20,7 @@ import { listMyInvites } from '../../../worker/sessions';
 import type { RecordItem, SessionItem, User } from '../../../worker/types';
 import { boundUser, linkByDiscordId, unlinkAccounts } from './links';
 import { handleYue, YUE_SLOTS } from './sessions';
+import { reportEmbed } from './report';
 
 export { boundUser };
 import {
@@ -32,9 +33,9 @@ import {
   formatDelta,
   joinUrl,
   linkButton,
+  webUrl,
   publicReply,
   safeLine,
-  safeText,
 } from './render';
 import type {
   BotContext,
@@ -92,12 +93,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     description: '最近 5 次判决（只有你自己看得到）',
     options: [userOption('要查谁，不填就是自己')],
   },
-  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述和待回应的约局' },
+  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述、待回应的约局（管理员还有待复核的申诉）' },
   { type: CHAT_INPUT, name: 'report', description: '最新一期周报' },
   {
     type: CHAT_INPUT,
     name: 'notify',
-    description: '私信提醒开关：被立案、快截止、出判决时私信你',
+    description: '私信提醒开关：被立案、快截止、出判决、分数被调整、约局时私信你',
     options: [
       {
         type: STRING_OPTION,
@@ -143,7 +144,7 @@ function scoreColor(score: number): number {
   return tierFor(score).min >= GOOD_TIER_MIN ? GOLD : RED;
 }
 
-/** The web app has no per-page URLs yet, so every web link opens its front page. */
+/** The web app's front page; a case or a session has its own link (webUrl). */
 export function webButton(ctx: BotContext, label = '打开网页'): BotLinkButton {
   return linkButton(label, joinUrl(ctx.frontendUrl, '/'));
 }
@@ -165,13 +166,6 @@ async function resolveTarget(input: CommandInput, ctx: BotContext): Promise<Targ
 function unboundTarget(target: Target): BotReply {
   if (target.self) return ephemeralReply(NOT_LINKED);
   return ephemeralReply(`${safeLine(target.ref.username, NAME_MAX)} 还没有绑定 Nanako 账号。`);
-}
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** A stored YYYY-MM-DD as-is; anything else is not shown. */
-function dateOnly(value: string | null | undefined): string {
-  return value && DATE.test(value) ? value : '—';
 }
 
 export function violationLabel(type: string): string {
@@ -286,38 +280,66 @@ async function handleVerdicts(input: CommandInput, ctx: BotContext): Promise<Bot
   });
 }
 
-function statementLine(r: RecordItem): string {
+/** A link the bot writes itself (never from user text): straight to the case or session. */
+function goTo(label: string, url: string): string {
+  return `[${label}](${url})`;
+}
+
+function statementLine(r: RecordItem, frontendUrl: string): string {
   const deadline = r.deadline_at ? ` · 截止 ${discordTime(r.deadline_at, 'R')}` : '';
-  const head = `${violationLabel(r.type)}${deadline}`;
+  const head = `${violationLabel(r.type)}${deadline} · ${goTo('去处理', webUrl(frontendUrl, { case: r.id }))}`;
   // The case is about the caller and only they see this, so the short
   // description of what they are accused of is shown — it is what they must answer.
   const about = r.claim_summary ?? r.claim;
   return about ? `${head}\n${safeLine(about, SUMMARY_MAX)}` : head;
 }
 
-function inviteLine(s: SessionItem): string {
+function inviteLine(s: SessionItem, frontendUrl: string): string {
   return [
     `📅 **${safeLine(s.title, TITLE_MAX)}**`,
     discordTime(s.starts_at, 'f'),
     `${safeLine(s.organizer.username, NAME_MAX)} 组织`,
+    goTo('查看', webUrl(frontendUrl, { session: s.id })),
   ].join(' · ');
+}
+
+/** An appeal for an admin to review: who, what, and the way there — not the reason. */
+function appealLine(r: RecordItem, frontendUrl: string): string {
+  return [
+    `${safeLine(r.subject.username, NAME_MAX)} · ${violationLabel(r.type)}（${r.delta}）`,
+    goTo('去复核', webUrl(frontendUrl, { case: r.id })),
+  ].join(' · ');
+}
+
+const APPEALS_SHOWN = 10;
+
+/** The appeals that have waited longest (the list is newest first). */
+async function oldestAppeals(ctx: BotContext): Promise<RecordItem[]> {
+  const appealed = await listRecords(ctx.db, { status: 'appealed', limit: 200 });
+  return appealed.slice(-APPEALS_SHOWN).reverse();
 }
 
 async function handleTodo(input: CommandInput, ctx: BotContext): Promise<BotReply> {
   const user = await boundUser(ctx.db, input.caller.id);
   if (!user) return ephemeralReply(NOT_LINKED);
-  const [pending, invites] = await Promise.all([
+  const [pending, invites, appeals, counts] = await Promise.all([
     listRecords(ctx.db, { pendingFor: user.id }),
     listMyInvites(ctx.db, user.id),
+    user.is_admin ? oldestAppeals(ctx) : Promise.resolve([]),
+    pendingCounts(ctx.db, user),
   ]);
-  if (pending.length === 0 && invites.length === 0) return ephemeralReply('没有待办，清清爽爽 ✨');
+  if (pending.length === 0 && invites.length === 0 && appeals.length === 0) return ephemeralReply('没有待办，清清爽爽 ✨');
 
+  const url = ctx.frontendUrl;
   const fields: BotEmbedField[] = [
     ...(pending.length > 0
-      ? [{ name: `待写陈述（${pending.length}）`, value: fitLines(pending.map(statementLine), LIMITS.fieldValue) }]
+      ? [{ name: `待写陈述（${pending.length}）`, value: fitLines(pending.map((r) => statementLine(r, url)), LIMITS.fieldValue) }]
       : []),
     ...(invites.length > 0
-      ? [{ name: `待回应的约局（${invites.length}）`, value: fitLines(invites.map(inviteLine), LIMITS.fieldValue) }]
+      ? [{ name: `待回应的约局（${invites.length}）`, value: fitLines(invites.map((s) => inviteLine(s, url)), LIMITS.fieldValue) }]
+      : []),
+    ...(appeals.length > 0
+      ? [{ name: `待复核的申诉（${counts.appeals}）`, value: fitLines(appeals.map((r) => appealLine(r, url)), LIMITS.fieldValue) }]
       : []),
   ];
   const embed: BotEmbed = {
@@ -332,35 +354,7 @@ async function handleTodo(input: CommandInput, ctx: BotContext): Promise<BotRepl
 async function handleReport(_input: CommandInput, ctx: BotContext): Promise<BotReply> {
   const report = await getLatestReport(ctx.db);
   if (!report) return ephemeralReply('还没有战报。');
-  const s = report.stats;
-  const fields: BotEmbedField[] = [
-    { name: '开局', value: `${s.sessionsPlayed} 局`, inline: true },
-    { name: '立案', value: `${s.casesFiled} 起`, inline: true },
-    { name: '合计扣分', value: String(s.totalPenalty), inline: true },
-    {
-      name: '出勤率',
-      value: s.attendanceRate === null ? '—' : `${Math.round(s.attendanceRate * 100)}%`,
-      inline: true,
-    },
-  ];
-  if (s.star) {
-    fields.push({ name: '🏆 本周之星', value: `${safeLine(s.star.name, NAME_MAX)}（${formatDelta(s.star.delta)}）`, inline: true });
-  }
-  if (s.pigeon) {
-    fields.push({ name: '🕊️ 本周鸽王', value: `${safeLine(s.pigeon.name, NAME_MAX)}（${formatDelta(s.pigeon.delta)}）`, inline: true });
-  }
-  return publicReply(undefined, {
-    embeds: [
-      {
-        title: `📰 周报 · ${dateOnly(report.week_start)} – ${dateOnly(s.weekEnd)}`,
-        description: safeText(report.narrative, LIMITS.embedDescription),
-        color: GOLD,
-        fields,
-        footer: { text: report.source === 'ai' ? '数字由系统统计，文字由 AI 撰写' : '数字由系统统计' },
-      },
-    ],
-    buttons: [webButton(ctx, '在网页查看')],
-  });
+  return publicReply(undefined, { embeds: [reportEmbed(report)], buttons: [webButton(ctx, '在网页查看')] });
 }
 
 async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotReply> {
@@ -375,7 +369,7 @@ async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotRe
     .run();
   return ephemeralReply(
     on
-      ? '已打开私信提醒：被立案、陈述快截止、出判决时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
+      ? '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
       : '已关闭私信提醒。网页上仍能看到一切；想重新打开用 /notify 开。',
   );
 }

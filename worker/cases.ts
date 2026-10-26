@@ -51,9 +51,12 @@ import {
   loadRecordItem,
 } from './case-reads';
 export {
+  canReadPrivate,
   getRecordItemById,
   listRecords,
   pendingCounts,
+  redactRecord,
+  redactRecords,
   type ListRecordsFilters,
   type PendingCounts,
 } from './case-reads';

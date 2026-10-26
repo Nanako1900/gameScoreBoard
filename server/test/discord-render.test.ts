@@ -18,6 +18,7 @@ import {
   safeLine,
   safeText,
   truncate,
+  webUrl,
 } from '../src/discord/render';
 
 const ZWSP = '\u200b';
@@ -161,6 +162,15 @@ describe('helpers', () => {
   it('joins URLs without doubled slashes', () => {
     expect(joinUrl('https://api.example/', '/link/discord')).toBe('https://api.example/link/discord');
     expect(joinUrl('https://score.example', '/')).toBe('https://score.example/');
+  });
+
+  it('links straight to a case or a session in the web app, by id only', () => {
+    expect(webUrl('https://score.example')).toBe('https://score.example/');
+    expect(webUrl('https://score.example/', { case: 7 })).toBe('https://score.example/?case=7');
+    expect(webUrl('https://edg.example/score', { session: 3 })).toBe('https://edg.example/score/?session=3');
+    for (const id of [0, -1, 1.5, Number.NaN, 2 ** 60]) {
+      expect(() => webUrl('https://score.example', { case: id })).toThrow();
+    }
   });
 
   it('accepts only http(s) link buttons', () => {

@@ -122,7 +122,7 @@ export function StatementDialog({
             </label>
 
             <p className="sd__notice">
-              提交后不可修改，并会立即触发裁决。
+              提交后不可修改，并会立即触发裁决。只有你、立案人、裁判和管理员能看到这段说明和判词。
               {config.aiEnabled && '你的说明会发送给已配置的 AI 服务用于本次判罚。'}
             </p>
 

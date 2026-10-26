@@ -112,10 +112,23 @@
 }
 
 .vc__absent,
+.vc__hidden,
 .vc__pending,
 .vc__flag {
   font-size: var(--text-sm);
   color: var(--muted);
+}
+
+/* The case a link from Discord pointed at. */
+.vc--focus {
+  outline: 2px solid color-mix(in oklab, var(--gold) 70%, transparent);
+  outline-offset: 3px;
+}
+
+/* Words the viewer may not read (statement, verdict): say they exist, quietly. */
+.vc__hidden {
+  font-style: italic;
+  color: var(--faint);
 }
 
 .vc__pending {
