@@ -383,7 +383,15 @@ describe('readBotConfig', () => {
       databaseUrl: 'postgres://edg:pw@postgres:5432/edg',
       appUrl: 'https://api.nanako.org',
       frontendUrl: 'https://score.nanako.org',
+      verdictChannelId: null,
     });
+  });
+
+  it('takes an optional verdict channel, which must be an id', () => {
+    expect(readBotConfig({ ...valid, DISCORD_VERDICT_CHANNEL_ID: ' 1234567890123456780 ' }).verdictChannelId).toBe(
+      '1234567890123456780',
+    );
+    expect(() => readBotConfig({ ...valid, DISCORD_VERDICT_CHANNEL_ID: '#edg' })).toThrow(/DISCORD_VERDICT_CHANNEL_ID/);
   });
 
   it('names every problem at once and never echoes the token', () => {

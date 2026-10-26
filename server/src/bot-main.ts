@@ -9,16 +9,20 @@ import { Client, Events, GatewayIntentBits, Options, Routes } from 'discord.js';
 import pg from 'pg';
 import { asD1, installTypeParsers, PgD1Database } from './db/d1';
 import {
+  answer,
   describeError,
   fetchSessionBudget,
   MIN_SESSION_STARTS,
   readBotConfig,
   respond,
+  restChannelApi,
   type BotConfig,
 } from './discord/client';
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
+import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
 import { envFlag, envInt } from './env';
+import { createDispatcher, type Dispatcher } from './outbox/dispatcher';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -141,10 +145,28 @@ function main(): void {
   health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
 
   const client = createClient();
+  // Verdict posts (P5). Started once the client is logged in, since it sends
+  // through the client's REST; events committed meanwhile wait in the outbox.
+  let dispatcher: Dispatcher | null = null;
   client.once(Events.ClientReady, (ready) => {
     gateway = 'ready';
     console.log(`gateway ready as ${ready.user.tag}`);
     void registerCommands(ready, config);
+    if (stopping) return;
+    dispatcher = createDispatcher({
+      pool,
+      db: ctx.db,
+      api: restChannelApi(ready.rest),
+      config: { verdictChannelId: config.verdictChannelId, frontendUrl: config.frontendUrl },
+      createListener: () => new pg.Client({ connectionString: config.databaseUrl, options: '-c TimeZone=UTC' }),
+      describeError,
+    });
+    dispatcher.start();
+    console.log(
+      config.verdictChannelId
+        ? `posting verdicts to channel ${config.verdictChannelId}`
+        : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts are not posted',
+    );
   });
   client.on(Events.ShardReady, () => (gateway = 'ready'));
   client.on(Events.ShardResume, () => (gateway = 'ready'));
@@ -163,8 +185,21 @@ function main(): void {
   client.on(Events.Error, (error) => console.error('discord client error', describeError(error)));
   client.on(Events.Warn, (message) => console.warn('discord client warning', message));
   client.on(Events.InteractionCreate, (interaction) => {
-    if (stopping || !interaction.isChatInputCommand()) return;
-    const task: Promise<void> = respond(interaction, ctx, handleCommand, { guildId: config.guildId })
+    if (stopping) return;
+    let work: Promise<void>;
+    if (interaction.isChatInputCommand()) {
+      work = respond(interaction, ctx, handleCommand, { guildId: config.guildId });
+    } else if (interaction.isButton()) {
+      const recordId = parseVerdictButton(interaction.customId);
+      if (recordId === null) return;
+      const caller = { id: interaction.user.id, username: interaction.user.username };
+      work = answer(interaction, 'verdict button', () => handleVerdictButton(recordId, caller, ctx), {
+        guildId: config.guildId,
+      });
+    } else {
+      return;
+    }
+    const task: Promise<void> = work
       .catch((error: unknown) => console.error('respond failed', describeError(error)))
       .finally(() => inFlight.delete(task));
     inFlight.add(task);
@@ -213,6 +248,12 @@ function main(): void {
     console.log(`${signal}: shutting down`);
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
     gateway = 'connecting';
+    // The dispatcher first: it sends through the client's REST, which
+    // destroy() takes the token from, so an event in flight would fail.
+    await Promise.race([
+      Promise.allSettled([dispatcher?.stop()]),
+      new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
+    ]);
     await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));
     // Let commands already running finish their reply before the pool goes away.
     await Promise.race([

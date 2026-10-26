@@ -69,6 +69,7 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
 | `DISCORD_CLIENT_ID` | app | Application ID（同上） |
 | `DISCORD_CLIENT_SECRET` | app | 第 1 步 OAuth2 页的 secret |
 | `GUILD_ID` / `APP_URL` / `FRONTEND_URL` | app + bot | 默认值就是线上配置，一般不用改。bot 只把命令注册到 `GUILD_ID` 这一个服务器 |
+| `DISCORD_VERDICT_CHANNEL_ID` | bot | 可选：判决播报的私有频道 id，见第 5 节。留空就不播报 |
 
 `DATABASE_URL` 由 `compose.yaml` 拼好，不用填。`DISCORD_TOKEN` 留空时 bot 只是空闲；填了之后
 bot 启动时会检查其余变量，缺了或格式不对就直接退出，日志里会列出每一项问题（不会打印 token）。
@@ -83,7 +84,39 @@ bot 启动时会检查其余变量，缺了或格式不对就直接退出，日�
 在 `/score`、`/verdicts`（以及想限制的其它命令）上把 `@everyone` 关掉、只允许 `@EDG 选手`，
 也可以限制到 `#edg-信誉分` 频道。这是 Discord 自己的权限，bot 不需要改。
 
-## 5. 验证
+## 5. 判决播报（P5）
+
+判决、改判、撤销会自动发到一个私有频道（建议 `#edg-信誉分`，只有 @EDG 选手 能看）。
+**默认关闭**：不设 `DISCORD_VERDICT_CHANNEL_ID` 就什么都不发。
+
+1. Discord 里打开开发者模式（用户设置 → 高级），右键频道 → 复制频道 ID。
+2. 频道权限里给 bot 的角色：查看频道、发送消息、嵌入链接。
+3. Coolify 里设 `DISCORD_VERDICT_CHANNEL_ID`，重新部署 `bot`。日志里会出现
+   `posting verdicts to channel …`。
+
+发什么：
+
+- 每个案件**一条帖子**，只有固定字段：名字（不 @）、类型、分数变化、判决方式（当庭 / 缺席 / 管理员改判）、
+  网页链接。**不发**事实描述、陈述、AI 的标题和判词：这些是看过陈述之后写的，可能带出私事。
+- 改判、撤销时**编辑原帖**（撤销后分数划掉，标「已撤销」），不另发新帖；原帖被删了就按当前状态重发一条。
+- 帖子上的「看判词」按钮：当事人、立案人、裁判、管理员（需要已用 `/link` 绑定）点了能看到完整判词，
+  只有自己可见；其他人只能看到同样的固定字段。
+- 加分不播报；立案、陈述、申诉也不播报（「不做有罪推定」）。
+
+可靠性：
+
+- 事件和判决在**同一个数据库事务**里写入（`outbox` 表，由 `records` 上的触发器产生），判决回滚就没有事件；
+  bot 停着的时候事件在表里排队，起来后按顺序补发。
+- **超过 24 小时还没发出去的判决不再补发**（例如 bot 停了一天），免得一上线刷屏；已经发过的帖子照常编辑。
+- Discord 出错（5xx、网络）时退避重试，最多 8 次（约 20 分钟）后放弃，日志里有 `outbox … is dead`。
+- 被 Discord 拒绝（403：频道权限没给）时每 5 分钟重试一次、不计次数，补上权限后会自动发出；
+  1 分钟内 5 次 403 暂停投递 5 分钟，日志里有 `!!! Discord keeps refusing the bot`。401（token 失效）直接暂停。
+- 改判、撤销只编辑原帖；频道里从没发过的案件（例如当时还没配频道）不会因为撤销才冒出来。
+  换了 `DISCORD_VERDICT_CHANNEL_ID` 之后，后续的更新发到新频道。
+- 管理员删除用户时，他的案件帖子也会从频道里删掉。
+- 已处理的事件保留 30 天后自动清理。
+
+## 6. 验证
 
 1. Coolify → `bot` 的日志里依次看到：
    - `gateway session starts left today: 9xx/1000`
@@ -97,7 +130,7 @@ bot 启动时会检查其余变量，缺了或格式不对就直接退出，日�
    `wget -qO- http://127.0.0.1:8788/status`，正常是 `{"gateway":"ready"}`（未连上时返回 503）。
    容器健康检查只看 `/healthz`（进程活着就是 200），Discord 断线不会让容器被重启。
 
-## 6. bot 挂了会怎样
+## 7. bot 挂了会怎样
 
 - **网页完全不受影响。** `bot` 是独立容器，`app` 不依赖它；网页上的绑定入口
   （`/link/discord`）由 `app` 提供，照常能用。只是 Discord 里的命令会显示「该应用程序未响应」。
@@ -113,6 +146,6 @@ bot 启动时会检查其余变量，缺了或格式不对就直接退出，日�
   （`/healthz` 仍是 200，`/status` 是 503），按上一条换 token 后重新部署。
 - token 泄露：立刻在 Bot 页 Reset Token，旧 token 当场失效，再按上一条更新。
 
-## 7. 停用
+## 8. 停用
 
 在 Coolify 里停掉 `bot` 服务即可，其他服务不受影响。要连命令一起去掉，在服务器设置 → 集成里把 bot 移出服务器。
