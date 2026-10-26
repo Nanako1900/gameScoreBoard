@@ -72,7 +72,7 @@ export interface Env {
 
   // Split deployment (see DEPLOY-EDGEONE.md)
   FRONTEND_ORIGIN?: string;
-  FRONTEND_URL?: string;     // login returns here; when set (and not this origin), non-API paths 301 here
+  FRONTEND_URL?: string;     // login returns here; when set (and not this origin), non-API paths 302 here (no-store)
   COOKIE_SAMESITE?: string; COOKIE_DOMAIN?: string;
   AVATAR_ALLOWED_HOSTS?: string;
 }

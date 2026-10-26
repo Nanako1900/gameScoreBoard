@@ -53,7 +53,8 @@ export function parseCsvList(csv: string | undefined): string[] {
 }
 
 export function cookieConfig(env: Env): CookieConfig {
-  const hostOnly = ['1', 'true', 'yes'].includes((env.HOST_ONLY_COOKIES ?? '').trim().toLowerCase());
+  // String(): an unquoted TOML `HOST_ONLY_COOKIES = 1` arrives as a number.
+  const hostOnly = ['1', 'true', 'yes'].includes(String(env.HOST_ONLY_COOKIES ?? '').trim().toLowerCase());
   if (hostOnly && env.COOKIE_DOMAIN) {
     // A __Host- cookie with a Domain attribute is silently dropped by the
     // browser: nobody could log in. Refuse loudly instead.

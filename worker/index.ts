@@ -34,9 +34,14 @@ app.onError((err, c) => {
 
 // SPA fallback: delegate non-API requests to the static assets — or, once the
 // SPA has moved to FRONTEND_URL (Cloudflare Pages), send old links there.
+// Temporary and uncacheable on purpose: browsers keep a 301 forever, so after a
+// rollback anyone who had seen it would keep landing on the new host.
 app.all('*', (c) => {
   const target = legacySpaRedirect(c.env, c.req.url);
-  if (target) return c.redirect(target, 301);
+  if (target) {
+    c.header('Cache-Control', 'no-store');
+    return c.redirect(target, 302);
+  }
   return c.env.ASSETS.fetch(c.req.raw);
 });
 

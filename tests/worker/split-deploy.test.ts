@@ -1,5 +1,5 @@
 // The P2 topology: SPA on Cloudflare Pages (FRONTEND_URL / FRONTEND_ORIGIN),
-// this Worker on its own api.* host. Host-only (__Host-) cookie names, the 301
+// this Worker on its own api.* host. Host-only (__Host-) cookie names, the redirect
 // for links still pointing at the old SPA host, and credentialed CORS.
 
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
@@ -73,6 +73,11 @@ describe('HOST_ONLY_COOKIES', () => {
     expect(login.headers.get('Set-Cookie')?.startsWith('edg_oauth_state=')).toBe(true);
   });
 
+  it('accepts an unquoted TOML value (a number) for the flag', async () => {
+    const res = await call(`${API}/auth/login`, {}, { ...SPLIT, HOST_ONLY_COOKIES: 1 as unknown as string });
+    expect(res.headers.get('Set-Cookie')?.startsWith('__Host-edg_oauth_state=')).toBe(true);
+  });
+
   it('refuses to run with COOKIE_DOMAIN too — the browser would drop every cookie', async () => {
     const res = await call(`${API}/auth/login`, {}, { ...SPLIT, COOKIE_DOMAIN: '.example.com' });
     expect(res.status).toBe(500);
@@ -82,9 +87,11 @@ describe('HOST_ONLY_COOKIES', () => {
 });
 
 describe('links to the old SPA host', () => {
-  it('301 to the same path and query on FRONTEND_URL', async () => {
+  it('redirect to the same path and query on FRONTEND_URL — temporary and uncacheable', async () => {
     const res = await call(`${API}/players/abc?tab=history`, {}, SPLIT);
-    expect(res.status).toBe(301);
+    // Not 301: a browser would cache that forever and break a rollback for them.
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(res.headers.get('Location')).toBe(`${SPA}/players/abc?tab=history`);
     const root = await call(`${API}/`, {}, SPLIT);
     expect(root.headers.get('Location')).toBe(`${SPA}/`);

@@ -75,11 +75,14 @@ ADMIN_USERNAMES = "Hongyu Qi"
 # See docs/DEPLOY-PAGES.md. Uncomment together, add the Custom Domain
 # api.nanako.org to this Worker, and rotate SESSION_SECRET. Everyone logs in once.
 # APP_URL           = "https://api.nanako.org"
-# FRONTEND_URL      = "https://score.nanako.org"   # also 301s old SPA links there
+# FRONTEND_URL      = "https://score.nanako.org"   # also 302s old SPA links there
 # FRONTEND_ORIGIN   = "https://score.nanako.org"   # credentialed CORS + CSRF allowlist
 # HOST_ONLY_COOKIES = "1"                          # __Host- cookie names
-# Once EdgeOne no longer proxies to workers.dev (docs/DEPLOY-PAGES.md step 7):
-# workers_dev = false   ← top-level key; move it above [vars] when you enable it
+# Once EdgeOne no longer proxies to workers.dev (docs/DEPLOY-PAGES.md step 7), add
+#   workers_dev  = false
+#   preview_urls = false
+# at the very TOP of this file (right under compatibility_date, before [assets]).
+# Anywhere below a [table] header they become fields of that table and do nothing.
 
 # --- Split deployment: frontend on EdgeOne, backend here. See DEPLOY-EDGEONE.md.
 # Option A (EdgeOne edge-function reverse-proxy, recommended): set APP_URL to the
