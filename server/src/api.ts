@@ -36,7 +36,7 @@ const NO_ASSETS = {
 /**
  * Env for the Worker code. Every string in process.env is passed through, so a
  * variable the Worker learns to read later needs no change here. APP_URL is
- * required: behind the Tunnel the request origin is not the public URL, and
+ * required: behind the proxy the request origin is not the public URL, and
  * the OAuth redirect_uri would otherwise be derived from it.
  */
 export function buildEnv(processEnv: NodeJS.ProcessEnv, db: D1Database): Env {
@@ -49,8 +49,8 @@ export function buildEnv(processEnv: NodeJS.ProcessEnv, db: D1Database): Env {
 }
 
 /**
- * Cloudflare Tunnel reaches this process over plain HTTP but says what the
- * browser used in X-Forwarded-Proto. The Worker code reads the request origin
+ * The reverse proxy in front (Coolify's) terminates TLS and reaches this
+ * process over plain HTTP, but says what the browser used in X-Forwarded-Proto. The Worker code reads the request origin
  * (CSRF allowlist, own-host checks), so give it the public one.
  */
 export function withForwardedProto(request: Request): Request {

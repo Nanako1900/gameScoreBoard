@@ -3,6 +3,7 @@
 > 路径约定：无前缀的路径指 `/Users/nanako/Dropbox/SProject/scoreboard`（A），`DC:` 前缀指 `/Users/nanako/Dropbox/Project/DC`（B）。
 > 域名后来定为：前端 `community.nanako.org`（Pages），API `capi.nanako.org`（`api.` 已被别的服务占用），
 > 旧网址 `score.nanako.org` 留在 Worker 上跳转。下文仍按当时的 `score.` / `api.` 书写，部署以 `docs/DEPLOY-*.md` 为准。
+> 也**不用 Cloudflare Tunnel**：服务器有公网 IP，由 Coolify 自带的反向代理接入并签发证书，下文里的 Tunnel 都按此理解。
 >
 > 状态：**方案分析，未实施**（2026-10-25）。只读了代码，没有跑测试或构建。行号以本地 main 为准。origin/main（PR #3）没有动 `worker/`，只在 `shared/quickTime.ts` 末尾加了一个纯函数 `isSynthesizedTitle`，所以后端行号在 origin/main 上同样成立。
 

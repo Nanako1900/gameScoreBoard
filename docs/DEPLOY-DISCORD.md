@@ -1,7 +1,7 @@
 # 部署 Discord bot（P4）
 
 > P4 起 `compose.yaml` 多了一个 `bot` 服务：和 `app` 同一个镜像，只连 Discord Gateway（出站），
-> 不开端口、Tunnel 里也不用加任何东西。Coolify 本身见 [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)。
+> 不开端口，也不用在 Coolify 里给它配域名。Coolify 本身见 [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md)。
 > 绑定页和 bot 都读 PostgreSQL，所以要等 API 切到 Coolify（[DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)）之后才有意义。
 >
 > **合并本期 PR 不会改变线上行为**：`DISCORD_TOKEN` 留空时 `bot` 空闲（不连 Discord，健康检查照常绿）；
