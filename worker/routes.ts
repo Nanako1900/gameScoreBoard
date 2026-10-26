@@ -77,8 +77,7 @@ import { judgeCase } from './ai/provider';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
-  SESSION_COOKIE,
-  STATE_COOKIE,
+  cookieNames,
   buildClearSessionCookie,
   buildClearStateCookie,
   buildSessionCookie,
@@ -167,7 +166,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   // --- Auth middleware: resolve current user from the session cookie ---------
   app.use('*', async (c, next) => {
     let user: User | null = null;
-    const token = getCookie(c.req.raw, SESSION_COOKIE);
+    const token = getCookie(c.req.raw, cookieNames(cookieConfig(c.env)).session);
     if (token) {
       const payload = await verifySession(token, c.env.SESSION_SECRET);
       if (payload) {
@@ -548,7 +547,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const stateParam = c.req.query('state');
     if (!code || !stateParam) throw new ApiError(400, '缺少授权参数');
 
-    const cookie = getCookie(c.req.raw, STATE_COOKIE);
+    const cookie = getCookie(c.req.raw, cookieNames(cookieConfig(env)).state);
     const embedded = cookie ? await readSignedState(cookie, env.SESSION_SECRET) : null;
     if (!embedded || embedded !== stateParam) {
       throw new ApiError(400, 'state 校验失败');

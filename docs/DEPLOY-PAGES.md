@@ -1,0 +1,71 @@
+# P2：SPA 迁到 Cloudflare Pages，Worker 只做 API
+
+> 目标拓扑：`score.nanako.org`（Cloudflare Pages，静态 SPA）+ `api.nanako.org`
+> （现在的 Worker；P3a 起换成 Coolify 上的 Node）。两者同属 `nanako.org`，是
+> **同站（same-site）**，所以 `SameSite=Lax` 的会话 cookie 在 SPA 的
+> `fetch(…, { credentials: 'include' })` 里照常发送，不需要 `SameSite=None`。
+> 整体方案见 [DESIGN-v4-discord-coolify.md](DESIGN-v4-discord-coolify.md)。
+
+**合并本期 PR 不会改变线上行为**：所有新行为都由下面的变量开启，变量不设就和现在一样。
+切换时**所有人需要重新登录一次**（cookie 换名 + 换 `SESSION_SECRET`），整个迁移只有这一次。
+
+## 代码里新增了什么
+
+| 变量（Worker） | 作用 |
+|---|---|
+| `HOST_ONLY_COOKIES=1` | cookie 改名为 `__Host-edg_session` / `__Host-edg_oauth_state`：浏览器拒绝任何带 Domain 的同名 cookie，兄弟子域没法伪造或覆盖。不能与 `COOKIE_DOMAIN` 同时设置（会直接报配置错误） |
+| `FRONTEND_URL` | 已有：登录后跳回这里。**新增**：设置后，Worker 对所有非 `/api`、`/auth` 的路径返回 301 到这里（同路径同 query），旧链接自动跳到新站 |
+| `FRONTEND_ORIGIN` | 已有：允许带凭据的 CORS；同时是 CSRF 允许的 Origin |
+
+| 构建 | 作用 |
+|---|---|
+| `npm run build:pages` | `vite build` 后生成 `dist/_headers`：CSP（只允许连 `VITE_API_BASE` 的源）、HSTS、`X-Frame-Options` 等，`/assets/*` 永久缓存 |
+
+本地已完整演练过这套拓扑：`wrangler pages dev` 托管 SPA（应用生成的 `_headers`）+
+`wrangler dev` 跑 Worker，`__Host-` cookie 登录态、跨源读、带预检的 JSON 写、
+不带 body 的 POST（CSRF 检查）、旧链接 301 全部通过，浏览器无 CSP 报错。
+
+## 切换步骤（需要你在各家后台操作）
+
+### 准备（不影响线上）
+
+1. **备份 secret**：Cloudflare 上的 secret 读不回来。生成新的
+   `SESSION_SECRET`（`openssl rand -base64 48`）存进密码管理器；
+   `OAUTH_CLIENT_SECRET`、`AI_API_KEY` 如果找不到明文，现在就去 OAuth 后台 / AI 服务商轮换。
+2. **Cloudflare Pages 项目**：Workers & Pages → Create → Pages → 连接这个仓库。
+   - Build command：`npm run build:pages`
+   - Build output：`dist`
+   - 环境变量：`VITE_API_BASE=https://api.nanako.org`
+   - 生产分支：`main`
+   - Custom domain：`score.nanako.org`（如果你想用别的名字，下面所有 `score.` 一起换）
+3. **OAuth 回调**：在 nanako.org 的 OAuth 后台给这个 client 登记
+   `https://api.nanako.org/auth/callback`（保留旧回调直到切换完成）。
+
+### 切换（几分钟）
+
+4. 在 `wrangler.toml` 的 `[vars]` 里取消注释 P2 那一段（见文件内注释），
+   在 Worker 设置里给它加 Custom Domain `api.nanako.org`，并更新 secret：
+   ```bash
+   wrangler secret put SESSION_SECRET   # 第 1 步生成的新值
+   ```
+5. 合并 / 部署。此后：
+   - `https://score.nanako.org` 是新站；
+   - 旧网址（workers.dev 或你原来的自定义域）对页面请求返回 301 到新站；
+   - 所有人重新登录一次。
+6. **在 iPhone Safari 上实测**：登录 → 刷新 → 关掉浏览器再打开仍是登录态。
+   （WebKit 对「IP 和主站差异较大的子域」设置的 cookie 有 7 天上限；Pages 和 Worker 都在
+   Cloudflare，理论上不触发，但要实测。）
+
+### 收尾
+
+7. `wrangler.toml` 加 `workers_dev = false`，关掉 `*.workers.dev` 入口。
+   **注意**：EdgeOne 边缘函数反代的上游写死了 workers.dev 地址（`functions/api/[[default]].js`），
+   做这一步之前先处理 EdgeOne。
+8. **EdgeOne**：在 EdgeOne Pages 项目里把整站重定向到 `https://score.nanako.org`，
+   或者直接删除该项目。
+
+## 回滚
+
+- 第 5 步之后：把 P2 那几行 `[vars]` 重新注释掉并部署 —— Worker 恢复自己托管 SPA，
+  旧 cookie 名生效。由于 `SESSION_SECRET` 已换，大家还要再登录一次。
+- Pages 项目和 `score.` 域名可以保留，不影响回滚。

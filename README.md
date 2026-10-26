@@ -208,6 +208,7 @@ npm run dev:web
 | `npm run dev` | 启动 Worker 本地开发（`wrangler dev`），监听 :8787 |
 | `npm run dev:web` | 启动 Vite 开发服务器，监听 :5173，代理 `/api` `/auth` 到 :8787 |
 | `npm run build` | 构建前端产物到 `./dist`（`vite build`） |
+| `npm run build:pages` | Cloudflare Pages 构建：`vite build` + 按 `VITE_API_BASE` 生成 `dist/_headers`（CSP 等） |
 | `npm run preview` | 构建后用 `wrangler dev` 预览生产构建 |
 | `npm run deploy` | 构建 + 部署到 Cloudflare（`vite build && wrangler deploy`） |
 | `npm run typecheck` | 对前端与 Worker 两套 tsconfig 分别做 `tsc --noEmit` |
@@ -238,6 +239,7 @@ npm run dev:web
 | `ADMIN_SUBJECT_IDS` | 可选 | 逗号分隔的 OAuth subject id（`users.id`），登录时命中则自动授予管理员权限 |
 | `ADMIN_USERNAMES` | 可选（已废弃） | 逗号分隔的用户名；设置了 `ADMIN_SUBJECT_IDS` 后被忽略 |
 | `READ_ONLY` | 可选 | `1` = 维护模式：所有写请求返回 503，惰性任务与 Cron 跳过（数据库切换时用） |
+| `HOST_ONLY_COOKIES` | 可选 | `1` = cookie 名加 `__Host-` 前缀（SPA 在 Pages、Worker 在 api 子域时用，见 docs/DEPLOY-PAGES.md）；不能与 `COOKIE_DOMAIN` 同时设置 |
 | `AI_BASE_URL` | AI 必需 | OpenAI 兼容端点，须以 `/v1` 结尾（代码只拼 `/chat/completions`） |
 | `AI_MODEL` | AI 必需 | 模型名，如 `gpt-4o-mini` / `deepseek-chat` |
 | `AI_API_KEY` | AI 必需 | **只能用 `wrangler secret put` 设置，永不落库** |
@@ -257,5 +259,6 @@ npm run dev:web
 ## 部署
 
 - **一体化部署**（前后端都在 Cloudflare Worker）：见 [DEPLOY.md](./DEPLOY.md)。
+- **SPA → Cloudflare Pages，Worker 只做 API**（`score.` + `api.` 子域）：见 [docs/DEPLOY-PAGES.md](./docs/DEPLOY-PAGES.md)。
 - **Node 后端（Coolify + Docker Compose）**：目前承载 Discord 分享页 `discord.nanako.org`，见 [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md)。
 - **拆分部署**（前端 → 腾讯 EdgeOne Pages，后端 → Cloudflare Worker）：见 [DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md)，内含跨域会话 Cookie 的处理与三种架构方案（推荐 EdgeOne 边缘函数反代，保持单源、Safari 安全、无需自定义域名）。

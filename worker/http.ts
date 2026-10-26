@@ -53,7 +53,31 @@ export function parseCsvList(csv: string | undefined): string[] {
 }
 
 export function cookieConfig(env: Env): CookieConfig {
-  return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN };
+  const hostOnly = ['1', 'true', 'yes'].includes((env.HOST_ONLY_COOKIES ?? '').trim().toLowerCase());
+  if (hostOnly && env.COOKIE_DOMAIN) {
+    // A __Host- cookie with a Domain attribute is silently dropped by the
+    // browser: nobody could log in. Refuse loudly instead.
+    throw new ApiError(500, '服务器配置错误：HOST_ONLY_COOKIES 不能与 COOKIE_DOMAIN 同时设置');
+  }
+  return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN, hostOnly };
+}
+
+/**
+ * Where a non-API request should go once the SPA lives elsewhere (FRONTEND_URL,
+ * e.g. on Cloudflare Pages): the same path and query there. Null when the SPA
+ * is still served from here.
+ */
+export function legacySpaRedirect(env: Env, requestUrl: string): string | null {
+  if (!env.FRONTEND_URL) return null;
+  let frontend: URL;
+  try {
+    frontend = new URL(env.FRONTEND_URL);
+  } catch {
+    return null;
+  }
+  const url = new URL(requestUrl);
+  if (url.origin === frontend.origin) return null;
+  return `${frontend.origin}${url.pathname}${url.search}`;
 }
 
 /** READ_ONLY=1 / true: maintenance mode for the database cutover. */

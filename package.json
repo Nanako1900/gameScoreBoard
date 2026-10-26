@@ -11,6 +11,7 @@
     "dev:web": "vite",
     "dev": "wrangler dev",
     "build": "vite build",
+    "build:pages": "vite build && node scripts/pages-headers.mjs dist",
     "preview": "vite build && wrangler dev",
     "deploy": "vite build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p server/tsconfig.json --noEmit",
