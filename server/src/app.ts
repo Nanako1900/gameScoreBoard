@@ -1,7 +1,7 @@
-// The one HTTP app the Node process serves, split by Host header. Cloudflare
-// Tunnel forwards every public hostname to the same container port and keeps the
-// original Host, so the hostname is what tells the Discord share page
-// (discord.*) apart from the scoreboard API (api.*).
+// The one HTTP app the Node process serves, split by Host header. The reverse
+// proxy (Coolify's) forwards every public hostname to the same container port
+// and keeps the original Host, so the hostname is what tells the Discord share
+// page (discord.*) apart from the scoreboard API (capi.*).
 
 import { Hono } from 'hono';
 

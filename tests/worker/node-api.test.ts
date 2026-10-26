@@ -88,7 +88,7 @@ describe('buildEnv', () => {
 });
 
 describe('withForwardedProto', () => {
-  it('gives the Worker the public https origin the Tunnel saw', async () => {
+  it('gives the Worker the public https origin the proxy saw', async () => {
     const req = new Request('http://api.example.com/api/me?x=1', {
       method: 'POST',
       headers: { 'X-Forwarded-Proto': 'https', 'Content-Type': 'application/json' },
