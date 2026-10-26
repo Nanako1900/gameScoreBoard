@@ -3,11 +3,11 @@
 // Node server on PostgreSQL — endpoint by endpoint, for the cutover's
 // go / no-go. Read-only: GETs only, no cookies.
 //
-//   node scripts/compare-api.mjs <old-base> <new-base> [--new-host api.nanako.org]
+//   node scripts/compare-api.mjs <old-base> <new-base> [--new-host capi.nanako.org]
 //
 // --new-host: send this Host (and TLS SNI) to <new-base>, e.g. to check the app
 // by IP or over an SSH tunnel before DNS points at it:
-//   node scripts/compare-api.mjs https://api.nanako.org http://127.0.0.1:8787 --new-host api-next.nanako.org
+//   node scripts/compare-api.mjs https://capi.nanako.org http://127.0.0.1:8787 --new-host capi-next.nanako.org
 //
 // The PG port keeps D1's exact output (timestamps, 0/1 flags, ordering), so the
 // comparison is strict: any difference is reported.

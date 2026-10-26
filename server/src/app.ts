@@ -14,7 +14,7 @@ export interface HostedApp {
 export interface AppParts {
   /** The Discord share page — discord.nanako.org (+ a -next host during a cutover). */
   share: HostedApp | null;
-  /** The scoreboard API (the Worker app on PostgreSQL) — api.nanako.org. */
+  /** The scoreboard API (the Worker app on PostgreSQL) — capi.nanako.org. */
   api: HostedApp | null;
   /** Dependency health for external monitoring; /healthz deliberately has none. */
   status?: () => Promise<Record<string, unknown>>;

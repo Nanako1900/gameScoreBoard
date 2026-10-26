@@ -71,13 +71,14 @@ ADMIN_USERNAMES = "Hongyu Qi"
 # SESSION_ORGANIZER_CAN_FILE = "true"  # "false" = non-judge organizers can only record attendance
 # APP_URL = "https://your-app.edgeone.app"        # set to the EdgeOne origin for the split deploy
 
-# --- P2: SPA on Cloudflare Pages (score.nanako.org), this Worker = api.nanako.org.
+# --- P2: SPA on Cloudflare Pages (community.nanako.org), this Worker = capi.nanako.org.
 # See docs/DEPLOY-PAGES.md. Uncomment together, add the Custom Domain
-# api.nanako.org to this Worker, and rotate SESSION_SECRET. Everyone logs in once.
-# APP_URL           = "https://api.nanako.org"
-# FRONTEND_URL      = "https://score.nanako.org"   # also 302s old SPA links there
-# FRONTEND_ORIGIN   = "https://score.nanako.org"   # credentialed CORS + CSRF allowlist
-# HOST_ONLY_COOKIES = "1"                          # __Host- cookie names
+# capi.nanako.org to this Worker, and rotate SESSION_SECRET. Everyone logs in once.
+# Keep the score.nanako.org Custom Domain: FRONTEND_URL makes it 302 old links.
+# APP_URL           = "https://capi.nanako.org"
+# FRONTEND_URL      = "https://community.nanako.org"  # also 302s old SPA links there
+# FRONTEND_ORIGIN   = "https://community.nanako.org"  # credentialed CORS + CSRF allowlist
+# HOST_ONLY_COOKIES = "1"                             # __Host- cookie names
 # Once EdgeOne no longer proxies to workers.dev (docs/DEPLOY-PAGES.md step 7), add
 #   workers_dev  = false
 #   preview_urls = false

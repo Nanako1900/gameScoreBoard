@@ -26,9 +26,9 @@ export interface CommandInput {
 export interface BotContext {
   /** PostgreSQL through the D1-compatible adapter — the same DB the API uses. */
   db: D1Database;
-  /** Public API origin, e.g. https://api.nanako.org (binding pages live there). */
+  /** Public API origin, e.g. https://capi.nanako.org (binding pages live there). */
   appUrl: string;
-  /** Public SPA origin, e.g. https://score.nanako.org (links into the web app). */
+  /** Public SPA origin, e.g. https://community.nanako.org (links into the web app). */
   frontendUrl: string;
   /** READ_ONLY maintenance: commands that write answer with a notice instead. */
   readOnly?: boolean;
