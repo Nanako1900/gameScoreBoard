@@ -131,6 +131,72 @@ describe('admin grant through the real OAuth callback', () => {
   });
 });
 
+describe('login ?next= (back to a binding page after login)', () => {
+  function stubIdp(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.endsWith('/oauth/token')) return Response.json({ access_token: 'tok' });
+        if (url.endsWith('/oauth/userinfo')) return Response.json({ sub: 'sub-next', username: 'n' });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+  }
+
+  async function callbackWith(nextCookie: string | null): Promise<Response> {
+    stubIdp();
+    const { state, cookieValue } = await makeSignedState('test-session-secret-0123456789abcdef');
+    const cookies = [`${STATE_COOKIE}=${cookieValue}`];
+    if (nextCookie !== null) cookies.push(`edg_login_next=${nextCookie}`);
+    return call(`/auth/callback?code=abc&state=${encodeURIComponent(state)}`, {
+      headers: { Cookie: cookies.join('; ') },
+    });
+  }
+
+  it('remembers a /link/ path and returns there after the callback', async () => {
+    await seedUser({ id: 'sub-next' });
+    const login = await call('/auth/login?next=/link/discord');
+    const setCookie = login.headers.get('Set-Cookie') ?? '';
+    expect(setCookie).toContain(`edg_login_next=${encodeURIComponent('/link/discord')}`);
+    const res = await callbackWith(encodeURIComponent('/link/discord'));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/link/discord');
+  });
+
+  it('carries a first login’s onboarding along to the binding page', async () => {
+    const res = await callbackWith(encodeURIComponent('/link/discord'));
+    expect(res.headers.get('Location')).toBe('/link/discord?onboarding=1');
+  });
+
+  it('a plain login clears a next cookie left by an abandoned binding login', async () => {
+    const plain = await call('/auth/login', { headers: { Cookie: 'edg_login_next=%2Flink%2Fdiscord' } });
+    expect(plain.headers.get('Set-Cookie') ?? '').toMatch(/edg_login_next=;[^,]*Max-Age=0/);
+    // Nothing to clear: a normal login sets exactly what it always did.
+    const clean = await call('/auth/login');
+    expect(clean.headers.get('Set-Cookie') ?? '').not.toContain('edg_login_next');
+  });
+
+  it('shrugs off a malformed cookie instead of failing the login', async () => {
+    const res = await callbackWith('%E0%A4%A');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/?onboarding=1');
+  });
+
+  it('ignores anything that is not one of this host’s /link/ pages', async () => {
+    for (const next of ['https://evil.example/link/x', '//evil.example/link/x', '/api/me', '/link/../api', '/link\\x']) {
+      const login = await call(`/auth/login?next=${encodeURIComponent(next)}`);
+      expect(login.headers.get('Set-Cookie') ?? '').not.toContain('edg_login_next');
+    }
+  });
+
+  it('re-checks the cookie at the callback — a planted value cannot redirect off-site', async () => {
+    const res = await callbackWith(encodeURIComponent('//evil.example/link/x'));
+    // The normal destination (a first login lands on onboarding), not off-site.
+    expect(res.headers.get('Location')).toBe('/?onboarding=1');
+  });
+});
+
 describe('CSRF', () => {
   it('refuses a cross-origin form-style POST before it reaches the handler', async () => {
     const res = await call('/auth/logout', {

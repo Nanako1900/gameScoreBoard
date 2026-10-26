@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { affectsScore } from '@shared/scoring';
 import type {
   Config,
@@ -36,6 +36,7 @@ import { SessionDetailDialog } from './components/SessionDetailDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { InviteBanner } from './components/InviteBanner';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
+import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import './app.css';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -125,6 +126,11 @@ export function App(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
+  // ?linked=discord is where the API lands the browser after a successful bind.
+  // Read once at mount; the effect below strips it so a reload doesn't repeat it.
+  const [discordLinked, setDiscordLinked] = useState(
+    () => new URLSearchParams(window.location.search).get('linked') === 'discord',
+  );
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -141,6 +147,20 @@ export function App(): JSX.Element {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('linked') !== 'discord') {
+      return;
+    }
+    params.delete('linked');
+    const qs = params.toString();
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${qs ? `?${qs}` : ''}`,
+    );
+  }, []);
 
   // Handle ?onboarding=1 once data is ready and the user is logged in.
   const ready = state.status === 'ready' ? state.data : null;
@@ -160,6 +180,17 @@ export function App(): JSX.Element {
       );
     }
   }, [ready?.me]);
+
+  // Back from binding Discord with no role chosen yet: the bind was started
+  // from the first-run dialog (or a first login lost its flag on the way), so
+  // the first-run question is still open — ask it once more.
+  const askedAfterLink = useRef(false);
+  useEffect(() => {
+    const me = ready?.me;
+    if (!discordLinked || !me || askedAfterLink.current) return;
+    askedAfterLink.current = true;
+    if (!me.is_participant && !me.is_judge) setOnboardingOpen(true);
+  }, [discordLinked, ready?.me]);
 
   const handleLogout = useCallback(async (): Promise<void> => {
     try {
@@ -239,6 +270,8 @@ export function App(): JSX.Element {
        * The two banners self-hide when empty, so a quiet day collapses straight
        * to 约局 without leaving gaps. */}
       <main className="app__main">
+        {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
+
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />

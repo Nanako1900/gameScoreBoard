@@ -78,13 +78,16 @@ import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
   cookieNames,
+  buildClearNextCookie,
   buildClearSessionCookie,
   buildClearStateCookie,
+  buildNextCookie,
   buildSessionCookie,
   buildStateCookie,
   getCookie,
   makeSignedState,
   readSignedState,
+  safeNextPath,
   signSession,
   verifySession,
 } from './session';
@@ -117,6 +120,15 @@ import {
   requireUser,
   statementWindowHours,
 } from './http';
+
+/** A cookie written with encodeURIComponent; null if it was tampered into a malformed escape. */
+function decodeCookieValue(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 export function registerRoutes(app: Hono<AppEnv>): void {
   // --- CORS: active only when FRONTEND_ORIGIN is set (split-origin deploys).
@@ -546,6 +558,15 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const { state, cookieValue } = await makeSignedState(env.SESSION_SECRET);
     c.header('Set-Cookie', buildStateCookie(cookieValue, cookieConfig(env)), { append: true });
+    // ?next=/link/... — come back to a binding page (the Discord bot's link)
+    // instead of the SPA. Only this host's /link/ paths are accepted.
+    const next = safeNextPath(c.req.query('next'));
+    if (next) {
+      c.header('Set-Cookie', buildNextCookie(next, cookieConfig(env)), { append: true });
+    } else if (getCookie(c.req.raw, cookieNames(cookieConfig(env)).next)) {
+      // Left over from an abandoned binding login: this login is going home.
+      c.header('Set-Cookie', buildClearNextCookie(cookieConfig(env)), { append: true });
+    }
     return c.redirect(buildAuthorizeUrl(env, redirectUri, state), 302);
   });
 
@@ -580,6 +601,12 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const cfg = cookieConfig(env);
     c.header('Set-Cookie', buildSessionCookie(session, cfg), { append: true });
     c.header('Set-Cookie', buildClearStateCookie(cfg), { append: true });
+    const nextRaw = getCookie(c.req.raw, cookieNames(cfg).next);
+    const next = safeNextPath(nextRaw ? decodeCookieValue(nextRaw) : null);
+    if (nextRaw) c.header('Set-Cookie', buildClearNextCookie(cfg), { append: true });
+    // A first login on the way to a binding page still owes the onboarding
+    // dialog; the binding flow hands the flag back to the SPA when it is done.
+    if (next) return c.redirect(isNew ? `${next}?onboarding=1` : next, 302);
     // For a split deploy, FRONTEND_URL sends the browser back to the SPA origin;
     // unset → relative path (single-origin: unified Worker or EdgeOne proxy).
     const frontend = env.FRONTEND_URL ? env.FRONTEND_URL.replace(/\/$/, '') : '';

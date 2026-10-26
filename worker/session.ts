@@ -153,6 +153,28 @@ export interface CookieConfig {
 export interface CookieNames {
   session: string;
   state: string;
+  /** Where to send the browser after login (see safeNextPath). */
+  next: string;
+}
+
+export const NEXT_COOKIE = 'edg_login_next';
+
+/**
+ * A post-login destination is honoured only if it is one of this host's own
+ * binding pages (/link/...). Anything else — another origin, a scheme, `//`,
+ * a backslash — is dropped, so `next` can never become an open redirect.
+ */
+export function safeNextPath(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return /^\/link\/[A-Za-z0-9/_-]*$/.test(raw) && !raw.includes('//') ? raw : null;
+}
+
+export function buildNextCookie(path: string, cfg?: CookieConfig): string {
+  return `${cookieNames(cfg).next}=${encodeURIComponent(path)}; ${baseAttrs(cfg)}; Max-Age=${STATE_MAX_AGE_SEC}`;
+}
+
+export function buildClearNextCookie(cfg?: CookieConfig): string {
+  return `${cookieNames(cfg).next}=; ${baseAttrs(cfg)}; Max-Age=0`;
 }
 
 const HOST_PREFIX = '__Host-';
@@ -160,7 +182,11 @@ const HOST_PREFIX = '__Host-';
 /** Cookie names for this deployment (see CookieConfig.hostOnly). */
 export function cookieNames(cfg?: CookieConfig): CookieNames {
   const prefix = cfg?.hostOnly ? HOST_PREFIX : '';
-  return { session: `${prefix}${SESSION_COOKIE}`, state: `${prefix}${STATE_COOKIE}` };
+  return {
+    session: `${prefix}${SESSION_COOKIE}`,
+    state: `${prefix}${STATE_COOKIE}`,
+    next: `${prefix}${NEXT_COOKIE}`,
+  };
 }
 
 /**

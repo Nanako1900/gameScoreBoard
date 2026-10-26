@@ -1,0 +1,232 @@
+// Node entry for the compose service `bot`: one Gateway connection (outbound
+// only, Guilds intent only) answering the slash commands in our one guild.
+// Handlers read PostgreSQL directly through the same D1 adapter the API uses.
+// A separate process from the API on purpose: whatever happens here, the
+// website keeps working. See docs/DEPLOY-DISCORD.md.
+
+import http from 'node:http';
+import { Client, Events, GatewayIntentBits, Options, Routes } from 'discord.js';
+import pg from 'pg';
+import { asD1, installTypeParsers, PgD1Database } from './db/d1';
+import {
+  describeError,
+  fetchSessionBudget,
+  MIN_SESSION_STARTS,
+  readBotConfig,
+  respond,
+  type BotConfig,
+} from './discord/client';
+import { COMMANDS, handleCommand } from './discord/commands';
+import type { BotContext } from './discord/types';
+import { envFlag, envInt } from './env';
+
+const HEALTH_PORT = 8788;
+const SHUTDOWN_GRACE_MS = 10_000;
+const IN_FLIGHT_GRACE_MS = 5_000;
+// When the bot will not (or cannot) log in it waits this long before exiting.
+// restart: unless-stopped brings it straight back, so this is the retry pace:
+// slow enough that a bad token never piles up failed requests at Discord.
+const RETRY_LATER_MS = 5 * 60_000;
+
+type GatewayState = 'ready' | 'connecting' | 'disabled';
+
+function createHealthServer(gateway: () => GatewayState): http.Server {
+  return http.createServer((req, res) => {
+    const path = (req.url ?? '/').split('?')[0];
+    if (path === '/healthz') {
+      // Liveness only: a Discord outage must not get the container restarted.
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end('ok');
+    } else if (path === '/status') {
+      const state = gateway();
+      res
+        .writeHead(state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ gateway: state }));
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+}
+
+function createClient(): Client {
+  return new Client({
+    // No GuildMembers, GuildPresences or MessageContent: slash commands bring
+    // the users they mention with them.
+    intents: [GatewayIntentBits.Guilds],
+    // Nothing is read from the caches, so keep them (close to) empty. Guilds,
+    // channels and roles stay cached: discord.js does not support limiting those.
+    makeCache: Options.cacheWithLimits({
+      ...Options.DefaultMakeCacheSettings,
+      MessageManager: 0,
+      ReactionManager: 0,
+      PresenceManager: 0,
+      VoiceStateManager: 0,
+      ThreadMemberManager: 0,
+      GuildEmojiManager: 0,
+      GuildStickerManager: 0,
+      GuildInviteManager: 0,
+      GuildBanManager: 0,
+      GuildScheduledEventManager: 0,
+      StageInstanceManager: 0,
+      AutoModerationRuleManager: 0,
+      GuildMemberManager: { maxSize: 0, keepOverLimit: (member) => member.id === member.client.user.id },
+      UserManager: { maxSize: 0, keepOverLimit: (user) => user.id === user.client.user.id },
+    }),
+    // Every reply sets this too (toReplyOptions); this covers anything that does not.
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function registerCommands(client: Client<true>, config: BotConfig): Promise<void> {
+  if (client.application.id !== config.appId) {
+    console.error(`DISCORD_APP_ID ${config.appId} is not the token's application (${client.application.id})`);
+  }
+  try {
+    // Guild commands update instantly; a PUT of unchanged commands costs nothing.
+    await client.rest.put(Routes.applicationGuildCommands(config.appId, config.guildId), { body: COMMANDS });
+    console.log(`registered ${COMMANDS.length} slash commands in guild ${config.guildId}`);
+  } catch (error) {
+    console.error('could not register the slash commands', describeError(error));
+  }
+}
+
+/**
+ * No DISCORD_TOKEN yet (the Developer Portal steps in docs/DEPLOY-DISCORD.md
+ * are not done): stay up and quiet instead of crash-looping on every deploy.
+ */
+function idle(): void {
+  console.log('DISCORD_TOKEN is not set: the bot is disabled (see docs/DEPLOY-DISCORD.md)');
+  const health = createHealthServer(() => 'disabled');
+  health.listen(HEALTH_PORT, '0.0.0.0');
+  const stop = (): void => {
+    health.close(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+}
+
+function main(): void {
+  if (!(process.env.DISCORD_TOKEN ?? '').trim()) {
+    idle();
+    return;
+  }
+  let config: BotConfig;
+  try {
+    config = readBotConfig(process.env);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  installTypeParsers();
+  const pool = new pg.Pool({
+    connectionString: config.databaseUrl,
+    max: envInt(process.env.PG_POOL_MAX, 5, { name: 'PG_POOL_MAX', min: 1 }),
+    connectionTimeoutMillis: 10_000,
+    // The Worker's SQL binds zone-less 'YYYY-MM-DD HH:MM:SS' strings meant as UTC.
+    options: '-c TimeZone=UTC -c statement_timeout=30000',
+  });
+  pool.on('error', (error) => console.error('idle PostgreSQL client error', describeError(error)));
+  const ctx: BotContext = {
+    db: asD1(new PgD1Database(pool)),
+    appUrl: config.appUrl,
+    frontendUrl: config.frontendUrl,
+    readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
+  };
+
+  let gateway: GatewayState = 'connecting';
+  let stopping = false;
+  const inFlight = new Set<Promise<void>>();
+
+  const health = createHealthServer(() => gateway);
+  health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
+
+  const client = createClient();
+  client.once(Events.ClientReady, (ready) => {
+    gateway = 'ready';
+    console.log(`gateway ready as ${ready.user.tag}`);
+    void registerCommands(ready, config);
+  });
+  client.on(Events.ShardReady, () => (gateway = 'ready'));
+  client.on(Events.ShardResume, () => (gateway = 'ready'));
+  client.on(Events.ShardReconnecting, () => (gateway = 'connecting'));
+  client.on(Events.ShardDisconnect, (event) => {
+    // discord.js emits this only for close codes it will not reconnect after
+    // (4004: the token was reset; 4013/4014: intents). Staying up without
+    // retrying is right — a dead token only burns requests — so say it loudly.
+    gateway = 'connecting';
+    console.error(
+      `!!! gateway closed for good (code ${event.code}), not reconnecting. ` +
+        'Check DISCORD_TOKEN (4004) and the intents (4013/4014), then redeploy.',
+    );
+  });
+  client.on(Events.ShardError, (error) => console.error('gateway error', describeError(error)));
+  client.on(Events.Error, (error) => console.error('discord client error', describeError(error)));
+  client.on(Events.Warn, (message) => console.warn('discord client warning', message));
+  client.on(Events.InteractionCreate, (interaction) => {
+    if (stopping || !interaction.isChatInputCommand()) return;
+    const task: Promise<void> = respond(interaction, ctx, handleCommand, { guildId: config.guildId })
+      .catch((error: unknown) => console.error('respond failed', describeError(error)))
+      .finally(() => inFlight.delete(task));
+    inFlight.add(task);
+  });
+
+  // Logged, never fatal: one bad interaction must not take the bot offline.
+  process.on('unhandledRejection', (reason) => console.error('unhandled rejection', describeError(reason)));
+
+  const exitLater = (): void => {
+    setTimeout(() => process.exit(1), RETRY_LATER_MS);
+  };
+
+  const start = async (): Promise<void> => {
+    // Each login is one IDENTIFY out of a daily budget (normally 1000). When it
+    // runs out Discord resets the bot token, so a crash loop must stop well before.
+    try {
+      const budget = await fetchSessionBudget(config.token);
+      if (budget.remaining < MIN_SESSION_STARTS) {
+        const hours = (budget.resetAfterMs / 3_600_000).toFixed(1);
+        console.error(
+          `!!! NOT LOGGING IN: only ${budget.remaining}/${budget.total} gateway session starts left today ` +
+            `(refills in ${hours} h). Something keeps restarting the bot — fix that first, ` +
+            'or Discord will reset the bot token.',
+        );
+        exitLater();
+        return;
+      }
+      console.log(`gateway session starts left today: ${budget.remaining}/${budget.total}`);
+    } catch (error) {
+      console.error('could not check the gateway session budget; not logging in', describeError(error));
+      exitLater();
+      return;
+    }
+    if (stopping) return;
+    try {
+      await client.login(config.token);
+    } catch (error) {
+      console.error('Discord login failed', describeError(error));
+      exitLater();
+    }
+  };
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${signal}: shutting down`);
+    setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
+    gateway = 'connecting';
+    await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));
+    // Let commands already running finish their reply before the pool goes away.
+    await Promise.race([
+      Promise.allSettled([...inFlight]),
+      new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
+    ]);
+    await new Promise<void>((resolve) => health.close(() => resolve()));
+    await pool.end().catch(() => undefined);
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  void start();
+}
+
+main();

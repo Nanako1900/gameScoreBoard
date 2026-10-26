@@ -13,6 +13,8 @@ const TABLES = [
   'weekly_heals',
   'weekly_reports',
   'app_settings',
+  'discord_links',
+  'link_audit',
   'users',
 ];
 

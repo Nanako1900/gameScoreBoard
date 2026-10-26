@@ -95,6 +95,10 @@ services:
       AI_ENABLED: ${AI_ENABLED:-true}
       AVATAR_ALLOWED_HOSTS: ${AVATAR_ALLOWED_HOSTS:-}
       READ_ONLY: ${READ_ONLY:-}
+      # Discord account binding (/link/discord): the bot's application,
+      # Developer Portal → OAuth2. See docs/DEPLOY-DISCORD.md.
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
     volumes:
       - app-data:/data
     depends_on:
@@ -110,6 +114,44 @@ services:
       start_period: 20s
       retries: 3
     mem_limit: 384m
+    stop_grace_period: 15s
+    logging: *logging
+
+  # Discord bot (P4): one outbound Gateway connection, no ports, nothing routed
+  # to it — if it is down, only the slash commands are; the website is not.
+  # See docs/DEPLOY-DISCORD.md.
+  bot:
+    image: ghcr.io/nanako1900/gamescoreboard:${APP_TAG:-latest}
+    command: ["node", "--enable-source-maps", "server/dist/bot-main.js"]
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      # Empty until the Developer Portal steps are done: the bot then idles
+      # (healthy, /status says "disabled") instead of crash-looping.
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      # The Application ID — the same number as DISCORD_CLIENT_ID.
+      DISCORD_APP_ID: ${DISCORD_APP_ID:-}
+      GUILD_ID: ${GUILD_ID:-1114391825336250432}
+      DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
+      APP_URL: ${APP_URL:-https://api.nanako.org}
+      FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
+      # Same switch as the app's: /unlink refuses while it is on.
+      READ_ONLY: ${READ_ONLY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Liveness only (:8788/healthz); :8788/status says whether the Gateway is up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8788/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    mem_limit: 256m
     stop_grace_period: 15s
     logging: *logging
 
