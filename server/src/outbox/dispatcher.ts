@@ -453,7 +453,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return res.rows[0]?.is_admin === 1;
   }
 
-  /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
   /** Rewrite DMs already sent (no new notification); 50007 marks DMs closed. */
   async function rewrite(
     userId: string,
@@ -652,6 +651,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         const code = errorCode(error);
         if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
       }
+      await pool.query("DELETE FROM discord_messages WHERE entity = 'session' AND entity_id = $1 AND purpose = 'card'", [
+        String(sessionId),
+      ]);
     }
     // A new card only for a session people can still join.
     if (!isUpcoming(session)) return { result: 'skipped', note: 'not open for RSVPs' };

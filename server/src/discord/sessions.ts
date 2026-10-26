@@ -151,7 +151,8 @@ export function sessionDmRelevant(kind: SessionDmKind, session: SessionDetail, u
     case 'dm.session.changed':
       return isUpcoming(session, now) && rsvp !== null && rsvp !== 'out';
     case 'dm.session.cancelled':
-      return session.status === 'cancelled';
+      // News while it was still ahead; not for one that already happened.
+      return session.status === 'cancelled' && parseTimestamp(session.starts_at) > now;
     case 'dm.session.rollcall':
       return session.status === 'open' && session.organizer.id === userId;
   }

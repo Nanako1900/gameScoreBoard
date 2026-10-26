@@ -10,13 +10,14 @@ import { importD1 } from '../../server/src/import-d1';
 import { linkAccounts } from '../../server/src/discord/links';
 import { handleCommand } from '../../server/src/discord/commands';
 import { handleRsvpButton } from '../../server/src/discord/sessions';
-import { createDispatcher, SESSION_DM_BUDGET, type ChannelApi } from '../../server/src/outbox/dispatcher';
+import { createDispatcher, INVITES_PER_ORGANIZER, SESSION_DM_BUDGET, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import type { ChannelMessage } from '../../server/src/discord/verdict';
 import type { User } from '../../worker/types';
 import { OFFSET_HOURS, seedUser } from '../worker/helpers';
 import { env, pool } from './cloudflare-test';
 
 const CARDS = '500000000000000001';
+const OTHER_CARDS = '500000000000000002';
 const FRONTEND = 'https://score.example';
 const ctx = { db: env.DB, appUrl: 'https://api.example', frontendUrl: FRONTEND, offsetHours: OFFSET_HOURS };
 const dc = (n: number) => ({ id: `60000000000000000${n}`, username: `dc${n}` });
@@ -34,13 +35,25 @@ async function events(): Promise<Event[]> {
   return (await pool.query<Event>('SELECT kind, entity, entity_id, result FROM outbox ORDER BY id')).rows;
 }
 
-function fakeDiscord() {
+/** An error as discord.js reports an HTTP status. */
+function httpError(status: number): Error {
+  return Object.assign(new Error(`HTTP ${status}`), { status });
+}
+
+interface FakeHooks {
+  /** Throw here to make a send fail. */
+  send?: (channelId: string) => void;
+  openDm?: (discordUserId: string) => void;
+}
+
+function fakeDiscord(hooks: FakeHooks = {}) {
   const sent: Array<{ channelId: string; message: ChannelMessage }> = [];
   const edits: Array<{ channelId: string; messageId: string; message: ChannelMessage }> = [];
   let next = 0;
   const removed: string[] = [];
   const api: ChannelApi = {
     async send(channelId, message) {
+      hooks.send?.(channelId);
       sent.push({ channelId, message });
       next += 1;
       return { id: `91000000000000${String(next).padStart(4, '0')}` };
@@ -52,6 +65,7 @@ function fakeDiscord() {
       removed.push(messageId);
     },
     async openDm(id) {
+      hooks.openDm?.(id);
       return `dm-${id}`;
     },
   };
@@ -60,7 +74,7 @@ function fakeDiscord() {
 
 const quiet = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
-function dispatcher(api: ChannelApi, sessionChannelId: string | null = CARDS) {
+function rawDispatcher(api: ChannelApi, sessionChannelId: string | null = CARDS) {
   return createDispatcher({
     pool,
     db: env.DB,
@@ -68,6 +82,25 @@ function dispatcher(api: ChannelApi, sessionChannelId: string | null = CARDS) {
     config: { verdictChannelId: null, sessionChannelId, frontendUrl: FRONTEND },
     log: quiet,
   });
+}
+
+/** Coalesced events wait a moment (card refresh 2 s, "the time changed" 3 min): let it pass. */
+async function coalescedDue(): Promise<void> {
+  await pool.query(
+    "UPDATE outbox SET available_at = now() WHERE processed_at IS NULL AND (dedupe_key LIKE 'session:%:card' OR kind = 'dm.session.changed')",
+  );
+}
+
+/** A dispatcher whose every run comes after the coalescing delays. */
+function dispatcher(api: ChannelApi, sessionChannelId: string | null = CARDS) {
+  const d = rawDispatcher(api, sessionChannelId);
+  return {
+    ...d,
+    async runOnce() {
+      await coalescedDue();
+      return d.runOnce();
+    },
+  };
 }
 
 const text = (m: ChannelMessage) => JSON.stringify(m);
@@ -134,6 +167,9 @@ describe('session events', () => {
     ).rows;
     expect(starting).toEqual([{ m: -15 }]);
 
+    // The move put a back to 'invited' (a yes to one time is not a yes to
+    // another); a cancel still reaches them.
+    expect((await env.DB.prepare("SELECT rsvp FROM session_players WHERE user_id = 'a'").first<{ rsvp: string }>())?.rsvp).toBe('invited');
     await pool.query('DELETE FROM outbox');
     await cancelSession(env.DB, org, session.id);
     const cancelled = await events();
@@ -306,6 +342,8 @@ describe('timed session events, moved and re-armed', () => {
     expect(reminders()).toBe(2); // org + a
 
     await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    // The move asked a to answer again; a says yes again.
+    await setRsvp(env.DB, a, session.id, 'going');
     const [starting] = await scheduled('session.starting');
     expect(starting).toMatchObject({ processed_at: null, in_minutes: 165 });
     expect((await scheduled('dm.session.rollcall'))[0]).toMatchObject({ processed_at: null, in_minutes: 240 });
@@ -324,6 +362,33 @@ describe('timed session events, moved and re-armed', () => {
     expect((await scheduled('dm.session.rollcall'))[0]).toMatchObject({ in_minutes: 360 });
   });
 
+  it('a new length leaves a start reminder that is already due alone', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    // Its reminder is due but not out yet (delivery was paused, say).
+    await pool.query("UPDATE outbox SET available_at = now() - interval '1 minute' WHERE kind = 'session.starting'");
+    await updateSession(env.DB, org, session.id, { duration_min: 240 });
+    expect((await scheduled('session.starting'))[0]).toMatchObject({ processed_at: null, in_minutes: -1 });
+  });
+
+  it('an end that has come and been reminded of is not reminded of again', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), duration_min: 60 }, OFFSET_HOURS);
+    // It happened: it started three hours ago (set behind the API's back).
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 3 * 3_600_000).toISOString(), session.id)
+      .run();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    const rollcalls = () => discord.sent.filter((m) => text(m.message).includes('该点名了')).length;
+    expect(rollcalls()).toBe(1);
+    await env.DB.prepare('UPDATE game_sessions SET duration_min = 90 WHERE id = ?').bind(session.id).run();
+    expect((await scheduled('dm.session.rollcall'))[0]).toMatchObject({ result: 'sent' });
+    await d.runOnce();
+    expect(rollcalls()).toBe(1);
+  });
+
   it('moved to start within 15 minutes: the stale reminder is dropped, not sent at the wrong time', async () => {
     const { org } = await cast();
     const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
@@ -331,20 +396,20 @@ describe('timed session events, moved and re-armed', () => {
     expect((await scheduled('session.starting'))[0]).toMatchObject({ result: 'skipped' });
   });
 
-  it('the card loses its buttons by itself when the session starts', async () => {
+  it('the card loses its buttons by itself when the session starts', { timeout: 15_000 }, async () => {
     const { org } = await cast();
-    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const startsAt = new Date(Date.now() + 2_500).toISOString();
+    await createSession(env.DB, org, { starts_at: startsAt }, OFFSET_HOURS);
     const discord = fakeDiscord();
     const d = dispatcher(discord.api);
     await d.runOnce();
+    expect(discord.sent).toHaveLength(1);
     expect(discord.sent[0].message.components).not.toEqual([]);
-    // It is now the start time.
-    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
-      .bind(new Date(Date.now() - 60_000).toISOString(), session.id)
-      .run();
-    await pool.query("UPDATE outbox SET available_at = now() WHERE dedupe_key LIKE '%:card:start'");
+    // Nothing changes; the start time simply comes.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, Date.parse(startsAt) - Date.now()) + 300));
     await d.runOnce();
-    const last = discord.edits[discord.edits.length - 1].message;
+    expect(discord.edits).toHaveLength(1);
+    const last = discord.edits[0].message;
     expect(last.components).toEqual([]);
     expect(text(last)).toContain('已开局');
   });
@@ -356,12 +421,15 @@ describe('timed session events, moved and re-armed', () => {
     const discord = fakeDiscord();
     const d = dispatcher(discord.api);
     await d.runOnce();
+    const before = discord.edits.length;
     await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
       .bind(new Date(Date.now() - 3_600_000).toISOString(), session.id)
       .run();
     await rollCall(env.DB, org, session.id, [{ user_id: 'a', attendance: 'on_time' }, { user_id: 'org', attendance: 'on_time' }], OFFSET_HOURS);
     await settleSession(env.DB, org, session.id, [], true, noAiEnv(), OFFSET_HOURS);
     await d.runOnce();
+    // Start, roll call and settlement together: one edit, of the final state.
+    expect(discord.edits).toHaveLength(before + 1);
     const last = discord.edits[discord.edits.length - 1].message;
     expect(text(last)).toContain('已结束');
     expect(last.components).toEqual([]);
@@ -397,6 +465,8 @@ describe('timed session events, moved and re-armed', () => {
     const d = dispatcher(discord.api, null);
     await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
     for (let i = 0; i < 3; i += 1) await d.runOnce();
+    const fannedOut = await pool.query("SELECT entity_id FROM outbox WHERE kind = 'dm.session.starting' ORDER BY entity_id");
+    expect(fannedOut.rows.map((r) => r.entity_id)).toEqual(['a', 'org']); // not b, a maybe
     // A second fan-out of the same start time adds nothing.
     await pool.query("UPDATE outbox SET processed_at = NULL, result = NULL, available_at = now() WHERE kind = 'session.starting'");
     for (let i = 0; i < 2; i += 1) await d.runOnce();
@@ -406,8 +476,9 @@ describe('timed session events, moved and re-armed', () => {
 
   it(`session DMs have their own daily allowance (${SESSION_DM_BUDGET}) and never use up a case's`, async () => {
     await cast();
-    // Organizers can each run 5 sessions at once: enough of them to flood one invitee.
-    const organizers = 3;
+    // Organizers can each run 5 sessions at once (and invite one person 3 times
+    // a day): enough of them to flood one invitee.
+    const organizers = 4;
     for (let o = 0; o < organizers; o += 1) {
       const organizer = await seedUser({ id: `o${o}` });
       for (let i = 0; i < 5; i += 1) {
@@ -422,7 +493,9 @@ describe('timed session events, moved and re-armed', () => {
     await dispatcher(discord.api, null).runOnce();
     const toA = discord.sent.filter((m) => m.channelId === `dm-${dc(2).id}`).map((m) => text(m.message));
     expect(toA.filter((t) => t.includes('约你'))).toHaveLength(SESSION_DM_BUDGET);
+    // The case's DMs — the filing and its deadline reminder — still get through.
     expect(toA.some((t) => t.includes('有人给你立案了'))).toBe(true);
+    expect(toA.some((t) => t.includes('陈述快截止了'))).toBe(true);
   });
 });
 
@@ -449,5 +522,151 @@ describe('/yue, more', () => {
       { ...ctx, sessionCards: true },
     );
     expect(withCards.content).toContain('约局频道');
+  });
+});
+
+describe('bursts, caps and moves', () => {
+  it('a burst of answers is one card edit, a moment later', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), capacity: 4 }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    const before = discord.edits.length;
+    for (let i = 0; i < 20; i += 1) await setRsvp(env.DB, a, session.id, i % 2 === 0 ? 'going' : 'maybe');
+    const pending = await pool.query('SELECT available_at > now() AS later FROM outbox WHERE dedupe_key = $1 AND processed_at IS NULL', [
+      `session:${session.id}:card`,
+    ]);
+    expect(pending.rows).toEqual([{ later: true }]);
+    // Not yet…
+    await rawDispatcher(discord.api).runOnce();
+    expect(discord.edits).toHaveLength(before);
+    // …then once, showing where things ended up.
+    await dispatcher(discord.api).runOnce();
+    expect(discord.edits).toHaveLength(before + 1);
+    expect(text(discord.edits[before].message)).toContain('1/4 人'); // a ended on maybe
+  });
+
+  it('a session moved again and again is one "time changed" DM, a few minutes after the last move', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    for (let h = 3; h <= 6; h += 1) {
+      await updateSession(env.DB, org, session.id, { starts_at: new Date(Date.now() + h * 3_600_000).toISOString() });
+    }
+    const rows = await pool.query(
+      "SELECT entity_id, round(extract(epoch FROM available_at - now()) / 60) AS in_minutes FROM outbox WHERE kind = 'dm.session.changed'",
+    );
+    expect(rows.rows).toEqual([{ entity_id: 'a', in_minutes: 3 }]);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce();
+    expect(discord.sent.filter((m) => text(m.message).includes('约局改时间了'))).toHaveLength(1);
+  });
+
+  it(`one organizer reaches one person with at most ${INVITES_PER_ORGANIZER} invitations a day`, async () => {
+    const { org } = await cast();
+    for (let i = 0; i < 5; i += 1) await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce();
+    const invites = discord.sent.filter((m) => m.channelId === `dm-${dc(2).id}` && text(m.message).includes('约你'));
+    expect(invites).toHaveLength(INVITES_PER_ORGANIZER);
+    const held = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox WHERE kind = 'dm.session.invited' AND result = 'skipped' AND last_error LIKE 'enough invitations%'",
+    );
+    expect(held.rows[0].n).toBe(5 - INVITES_PER_ORGANIZER);
+  });
+
+  it('a new session channel: the old card comes down and a new one goes up', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    const old = discord.sent[0];
+    await setRsvp(env.DB, a, session.id, 'going');
+    await dispatcher(discord.api, OTHER_CARDS).runOnce();
+    expect(discord.removed).toEqual(['910000000000000001']);
+    expect(discord.sent.filter((s) => s.channelId === OTHER_CARDS)).toHaveLength(1);
+    expect(old.channelId).toBe(CARDS);
+    const where = await pool.query("SELECT channel_id FROM discord_messages WHERE entity = 'session'");
+    expect(where.rows).toEqual([{ channel_id: OTHER_CARDS }]);
+  });
+
+  it('a new session channel after a cancel: the old card comes down, and no new one', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    await cancelSession(env.DB, org, session.id);
+    await dispatcher(discord.api, OTHER_CARDS).runOnce();
+    expect(discord.removed).toEqual(['910000000000000001']);
+    expect(discord.sent.filter((s) => s.channelId === OTHER_CARDS)).toEqual([]);
+    expect((await pool.query("SELECT 1 FROM discord_messages WHERE entity = 'session'")).rowCount).toBe(0);
+  });
+
+  it('a start reminder held up past a move is dropped, not sent hours early', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    let down = true;
+    const discord = fakeDiscord({
+      openDm: () => {
+        if (down) throw httpError(500);
+      },
+    });
+    const d = dispatcher(discord.api, null);
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
+    await d.runOnce(); // the fan-out; the organizer's reminder fails and waits
+    await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    down = false;
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'dm.session.starting'");
+    await d.runOnce();
+    expect(discord.sent.filter((m) => text(m.message).includes('15 分钟后开局'))).toEqual([]);
+    const row = await pool.query("SELECT result, last_error FROM outbox WHERE kind = 'dm.session.starting'");
+    expect(row.rows).toEqual([{ result: 'skipped', last_error: 'the session moved since' }]);
+  });
+
+  it('cancelling a session that already started tells nobody', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 10 * 60_000).toISOString(), session.id)
+      .run();
+    await pool.query('DELETE FROM outbox');
+    await cancelSession(env.DB, org, session.id);
+    expect((await events()).filter((e) => e.kind === 'dm.session.cancelled')).toEqual([]);
+  });
+
+  it('a refused card waits behind fresh events, not in front of them', async () => {
+    const { org } = await cast();
+    const first = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    let refuse = true;
+    const discord = fakeDiscord({
+      send: (channelId) => {
+        if (refuse && channelId === CARDS) {
+          refuse = false;
+          throw httpError(403);
+        }
+      },
+    });
+    const d = dispatcher(discord.api);
+    await d.runOnce(); // the first card is refused and waits
+    expect(discord.sent).toEqual([]);
+    const second = await createSession(env.DB, org, { starts_at: IN_3H() }, OFFSET_HOURS);
+    await d.runOnce(); // both due now: the fresh one goes first
+    const order = discord.sent.map((s) => (text(s.message).includes(`v1:rsvp:${second.id}:`) ? second.id : first.id));
+    expect(order).toEqual([second.id, first.id]);
+  });
+
+  it('a card stuck in retries does not hold up the start reminders', async () => {
+    const { org } = await cast();
+    await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord({
+      send: (channelId) => {
+        if (channelId === CARDS) throw httpError(500);
+      },
+    });
+    const d = dispatcher(discord.api);
+    await d.runOnce(); // the card fails and waits to retry
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'session.starting'");
+    await d.runOnce();
+    expect(discord.sent.filter((m) => text(m.message).includes('15 分钟后开局')).map((m) => m.channelId)).toEqual([`dm-${dc(1).id}`]);
   });
 });

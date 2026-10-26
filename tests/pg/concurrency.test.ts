@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { appealCase, judgeAndDecide, overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
-import { cancelSession, createSession, setRsvp, updateSession } from '../../worker/sessions';
+import { cancelSession, createSession, MAX_OPEN_SESSIONS, setRsvp, updateSession } from '../../worker/sessions';
 import { fileCase } from '../../worker/case-filing';
 import { scoreMutation, weeklyHeal } from '../../worker/db';
 import { WEEKLY_BONUS_CAP } from '../../shared/scoring';
@@ -325,5 +325,22 @@ describe('concurrent score changes on PostgreSQL', () => {
       .bind(session.id)
       .first<{ rsvp: string }>();
     expect(row?.rsvp).toBe('invited');
+  });
+
+  it(`a burst of creates by one organizer stops at ${MAX_OPEN_SESSIONS} open sessions`, async () => {
+    const organizer = await seedUser({ id: 'org' });
+    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
+    // Every create has passed the friendly check (no sessions yet) before any
+    // of them writes. (One more than the cap: the test pool has 8 connections.)
+    const results = await queuedBehind(
+      'UPDATE users SET score = score WHERE id = $1',
+      ['org'],
+      Array.from({ length: MAX_OPEN_SESSIONS + 1 }, () => () => createSession(env.DB, organizer, { starts_at: startsAt }, OFFSET_HOURS)),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(MAX_OPEN_SESSIONS);
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(refused.map((r) => r.reason.status)).toEqual([429]);
+    const made = await pool.query("SELECT COUNT(*)::int AS n FROM game_sessions WHERE organizer_id = 'org'");
+    expect(made.rows[0].n).toBe(MAX_OPEN_SESSIONS);
   });
 });

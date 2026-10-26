@@ -72,6 +72,11 @@ describe('sessionDmRelevant', () => {
     expect(sessionDmRelevant('dm.session.rollcall', s, 'org', NOW)).toBe(true);
     expect(sessionDmRelevant('dm.session.rollcall', session({ status: 'settled' }), 'org', NOW)).toBe(false);
     expect(sessionDmRelevant('dm.session.cancelled', session({ status: 'cancelled' }), 'a', NOW)).toBe(true);
+    // Delivered after the start it would have been: news no more.
+    const afterStart = Date.parse('2026-10-26T12:30:00.000Z');
+    expect(sessionDmRelevant('dm.session.cancelled', session({ status: 'cancelled' }), 'a', afterStart)).toBe(false);
+    expect(sessionDmRelevant('dm.session.changed', s, 'c', NOW)).toBe(true);
+    expect(sessionDmRelevant('dm.session.changed', s, 'nobody', NOW)).toBe(false);
   });
 });
 

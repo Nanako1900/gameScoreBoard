@@ -5,7 +5,14 @@
 --
 -- Same outbox as 0003/0004. Card events are per session (entity 'session');
 -- DMs per recipient (entity 'user'). 'session.starting' is delivered by
--- fanning out to whoever is going at that moment.
+-- fanning out to whoever is going at that moment; it has its own queue
+-- (entity_id '<id>:starting') so a card stuck in retries cannot hold it up.
+--
+-- Bursty changes are coalesced, not queued one by one: the card has ONE
+-- refresh event per session, re-armed a moment out on every change (delivery
+-- renders the current state anyway), and "the time changed" is one DM per
+-- (session, person), re-armed a few minutes out — an RSVP toggled 60 times, or
+-- a session moved 10 times, is one edit and one DM.
 --
 -- Notifications skip the organizer on the assumption that they made the
 -- change; when an admin cancels or moves someone else's session, the organizer
@@ -21,34 +28,50 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
+/** The card's one refresh event, due a moment from now (coalescing a burst). */
+CREATE OR REPLACE FUNCTION outbox_session_card(p_session_id bigint) RETURNS void
+LANGUAGE sql AS $$
+  SELECT outbox_schedule('session.card', 'session', p_session_id::text, 'session:' || p_session_id || ':card',
+                         jsonb_build_object('session_id', p_session_id), now() + interval '2 seconds');
+$$;
+
 /**
  * The timed events of a session, (re)scheduled from its time and length: the
  * 15-minute reminder, the card's own refresh at the start (its RSVP buttons go
- * then), and the organizer's roll-call reminder at the end.
+ * then), and the organizer's roll-call reminder at the end. `start_moved` is
+ * false when only the length changed: then a due-but-unsent start reminder is
+ * left alone.
  */
-CREATE OR REPLACE FUNCTION outbox_session_reminders(s game_sessions) RETURNS void
+CREATE OR REPLACE FUNCTION outbox_session_reminders(s game_sessions, start_moved boolean) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
   sid text := s.id::text;
   ref jsonb := jsonb_build_object('session_id', s.id);
   starts timestamptz := outbox_iso(s.starts_at);
+  ends timestamptz;
 BEGIN
   IF starts IS NULL THEN
     RETURN;
   END IF;
-  IF starts - interval '15 minutes' > now() THEN
-    PERFORM outbox_schedule('session.starting', 'session', sid, 'session:' || sid || ':starting', ref,
-                            starts - interval '15 minutes');
-  ELSE
-    -- Moved to start within 15 minutes: an older reminder would now be wrong.
-    UPDATE outbox SET processed_at = now(), result = 'skipped', last_error = 'start moved too close'
-     WHERE dedupe_key = 'session:' || sid || ':starting' AND processed_at IS NULL;
+  IF start_moved THEN
+    IF starts - interval '15 minutes' > now() THEN
+      PERFORM outbox_schedule('session.starting', 'session', sid || ':starting', 'session:' || sid || ':starting', ref,
+                              starts - interval '15 minutes');
+    ELSE
+      -- Moved to start within 15 minutes: an older reminder would now be wrong.
+      UPDATE outbox SET processed_at = now(), result = 'skipped', last_error = 'start moved too close'
+       WHERE dedupe_key = 'session:' || sid || ':starting' AND processed_at IS NULL;
+    END IF;
+    IF starts > now() THEN
+      PERFORM outbox_schedule('session.card', 'session', sid, 'session:' || sid || ':card:start', ref, starts);
+    END IF;
   END IF;
-  IF starts > now() THEN
-    PERFORM outbox_schedule('session.card', 'session', sid, 'session:' || sid || ':card:start', ref, starts);
+  ends := starts + make_interval(mins => COALESCE(s.duration_min, 120)::int);
+  -- Not again for an end that has already come (and been reminded of).
+  IF ends > now() OR NOT EXISTS (
+       SELECT 1 FROM outbox WHERE dedupe_key = 'dm:session:' || sid || ':rollcall' AND processed_at IS NOT NULL) THEN
+    PERFORM outbox_schedule('dm.session.rollcall', 'user', s.organizer_id, 'dm:session:' || sid || ':rollcall', ref, ends);
   END IF;
-  PERFORM outbox_schedule('dm.session.rollcall', 'user', s.organizer_id, 'dm:session:' || sid || ':rollcall', ref,
-                          starts + make_interval(mins => COALESCE(s.duration_min, 120)::int));
 END;
 $$;
 
@@ -57,6 +80,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
   sid text := NEW.id::text;
   ref jsonb := jsonb_build_object('session_id', NEW.id);
+  player record;
 BEGIN
   IF current_setting('edg.importing', true) = 'on' THEN
     RETURN NULL;
@@ -66,8 +90,8 @@ BEGIN
     IF NEW.status <> 'open' THEN
       RETURN NULL;
     END IF;
-    PERFORM outbox_emit('session.card', 'session', sid, 'session:' || sid || ':card:' || txid_current(), ref, NULL);
-    PERFORM outbox_session_reminders(NEW);
+    PERFORM outbox_session_card(NEW.id);
+    PERFORM outbox_session_reminders(NEW, true);
   ELSE
     -- Only what the card shows. (setRsvp's lock writes the row unchanged.)
     IF NEW.title IS NOT DISTINCT FROM OLD.title AND NEW.game IS NOT DISTINCT FROM OLD.game
@@ -76,26 +100,30 @@ BEGIN
        AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
       RETURN NULL;
     END IF;
-    PERFORM outbox_emit('session.card', 'session', sid, 'session:' || sid || ':card:' || txid_current(), ref, NULL);
+    PERFORM outbox_session_card(NEW.id);
 
-    IF NEW.status = 'cancelled' AND OLD.status = 'open' THEN
-      -- Tell everyone who said they would (or might) come.
+    IF NEW.status = 'cancelled' AND OLD.status = 'open' AND outbox_iso(NEW.starts_at) > now() THEN
+      -- Tell everyone still in it — a yes, a maybe, or an invitation not yet
+      -- answered (a move puts the yeses back there) — while it is still ahead:
+      -- cancelling one that already happened is bookkeeping, not news.
       INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
       SELECT 'dm.session.cancelled', 'user', sp.user_id, 'dm:session:' || sid || ':cancelled:' || sp.user_id, ref
         FROM session_players sp
-       WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe') AND sp.user_id <> NEW.organizer_id
-      ON CONFLICT (dedupe_key) DO NOTHING;
-    ELSIF NEW.status = 'open' AND NEW.starts_at IS DISTINCT FROM OLD.starts_at THEN
-      INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
-      SELECT 'dm.session.changed', 'user', sp.user_id,
-             'dm:session:' || sid || ':changed:' || txid_current() || ':' || sp.user_id, ref
-        FROM session_players sp
        WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
       ON CONFLICT (dedupe_key) DO NOTHING;
-      PERFORM outbox_session_reminders(NEW);
+    ELSIF NEW.status = 'open' AND NEW.starts_at IS DISTINCT FROM OLD.starts_at THEN
+      -- One "the time changed" DM per person, however often it moves.
+      FOR player IN
+        SELECT sp.user_id FROM session_players sp
+         WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
+      LOOP
+        PERFORM outbox_schedule('dm.session.changed', 'user', player.user_id,
+                                'dm:session:' || sid || ':changed:' || player.user_id, ref, now() + interval '3 minutes');
+      END LOOP;
+      PERFORM outbox_session_reminders(NEW, true);
     ELSIF NEW.status = 'open' AND NEW.duration_min IS DISTINCT FROM OLD.duration_min THEN
       -- A longer or shorter session: the roll-call reminder moves with its end.
-      PERFORM outbox_session_reminders(NEW);
+      PERFORM outbox_session_reminders(NEW, false);
     END IF;
   END IF;
 
@@ -126,8 +154,7 @@ BEGIN
   IF TG_OP = 'UPDATE' AND NEW.rsvp IS NOT DISTINCT FROM OLD.rsvp THEN
     RETURN NULL;
   END IF;
-  PERFORM outbox_emit('session.card', 'session', s_id::text, 'session:' || s_id || ':card:' || txid_current(),
-                      jsonb_build_object('session_id', s_id), NULL);
+  PERFORM outbox_session_card(s_id);
   IF TG_OP = 'INSERT' AND NEW.rsvp = 'invited' THEN
     PERFORM outbox_emit('dm.session.invited', 'user', NEW.user_id, 'dm:session:' || s_id || ':invited:' || NEW.user_id,
                         jsonb_build_object('session_id', s_id), NULL);

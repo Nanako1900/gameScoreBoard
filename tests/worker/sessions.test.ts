@@ -112,6 +112,19 @@ describe('organizer limits', () => {
     await cancelSession(env.DB, organizer, made[MAX_SESSIONS_PER_DAY - MAX_OPEN_SESSIONS].id);
     await expect(createSession(env.DB, organizer, { title: 'y', starts_at: FUTURE }, OFFSET_HOURS)).rejects.toThrow(/24 小时内/);
   });
+
+  it('sessions that have already started do not count as open ones', async () => {
+    const { organizer } = await cast();
+    for (let i = 0; i < MAX_OPEN_SESSIONS; i += 1) {
+      await createSession(env.DB, organizer, { title: `局${i}`, starts_at: FUTURE }, OFFSET_HOURS);
+    }
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE organizer_id = ?')
+      .bind(new Date(Date.now() - 3_600_000).toISOString(), organizer.id)
+      .run();
+    await expect(createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS)).resolves.toMatchObject({
+      status: 'open',
+    });
+  });
 });
 
 describe('rsvp', () => {

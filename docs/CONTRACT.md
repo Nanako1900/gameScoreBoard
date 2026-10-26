@@ -279,7 +279,9 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   → `{ session }`. Any signed-in user. Only `starts_at` is required — the title is
   **synthesised server-side** from the time (a client cannot inject one). Everyone
   in `invite` (max 20) lands in `rsvp='invited'`; unknown ids are dropped rather
-  than failing creation. The organizer is auto-RSVP'd `going`.
+  than failing creation. The organizer is auto-RSVP'd `going`. **429** when the
+  organizer already has 5 open sessions still ahead, or created 10 in the last
+  24 h (checked again inside the write, so parallel creates cannot slip past).
   `starts_at` may not be in the past (5 minutes' grace) nor more than 90 days ahead.
 - `PATCH /api/sessions/:id` → `{ session }`. Organizer/admin, `open` only, and only
   before it starts (400 afterwards). A new `starts_at` (a different instant, not
