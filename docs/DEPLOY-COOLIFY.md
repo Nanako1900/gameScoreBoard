@@ -1,6 +1,7 @@
 # 部署到 Coolify（Docker Compose）
 
-> 服务器有公网 IP，流量经 **Coolify 自带的反向代理**进来，由它签发 Let's Encrypt 证书，不用 Cloudflare Tunnel。
+> 服务器有公网 IP，流量经服务器上的反向代理进来，不用 Cloudflare Tunnel。反向代理二选一：
+> **Coolify 自带的代理**，或者服务器上已经占着 80/443 的 **1Panel（OpenResty）** 等面板，见「给 `app` 配域名」。
 > 这一套服务承载 API `capi.nanako.org`（PostgreSQL）、Discord 分享页 `discord.nanako.org` 和 Discord bot。
 > `API_HOST` 为空时 API 不启动；把数据从 D1 迁过来、打开 API 的步骤见 [DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)，
 > bot 见 [DEPLOY-DISCORD.md](DEPLOY-DISCORD.md)。
@@ -13,14 +14,16 @@
 | `.github/workflows/image.yml` | PR 上只构建（验证 Dockerfile）；合并到 `main` 后推送 `ghcr.io/nanako1900/gamescoreboard:<sha>` 和 `:latest` |
 | `compose.yaml` | `postgres` + `migrate`（一次性，跑完退出）+ `app`（API 和分享页，监听 8787）+ `bot`（只往外连 Discord）。`pg-backup` 注释着，见 [DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md) |
 
-只有 `app` 对外：Coolify 的代理把各个域名转到 `app` 的 8787 端口。`postgres` 和 `bot` 不映射任何端口，
-只在这套服务自己的内网里。
+只有 `app` 对外：反向代理把各个域名转到 `app` 的 8787 端口。`app` 另外映射在宿主机的
+`127.0.0.1:8787`（`APP_HOST_PORT` 可改），给宿主机上的代理（例如 1Panel）用，只绑本机回环，外网连不到。
+`postgres` 和 `bot` 不映射任何端口，只在这套服务自己的内网里。
 
 ## 一次性准备
 
 1. **镜像可拉取**：GHCR 上的 `gamescoreboard` 已是 Public，Coolify 直接拉。若以后改回私有，
    在 Coolify 里给 `ghcr.io` 配一个只读 PAT。
-2. **服务器防火墙**：80 和 443 对外开放（Coolify 签证书和接收访问都靠它们）。不需要开别的端口。
+2. **服务器防火墙**：80 和 443 对外开放（签证书和接收访问都靠它们）。不需要开别的端口，
+   8787 也不用开（它只绑在 `127.0.0.1`）。
 3. **Coolify**：项目里 + New → Resource → **Public Repository**：
    - 仓库 `https://github.com/Nanako1900/gameScoreBoard`，Branch `main`，Build Pack 选 **Docker Compose**；
    - Base directory 填 `/`，Compose file 填 `/compose.yaml`（文件名一字不差，不是 `docker-compose.yaml`）；
@@ -35,6 +38,7 @@
    | `INVITE_CODE` | 可选：一个**永不过期**的邀请码（`discord.gg/` 后面那段）。留空则用 widget 的轮换邀请 |
    | `SHARE_HOST` / `SITE_URL` / `SITE_NAME` / `GUILD_ID` | 默认值就是现在线上的配置，一般不用改。`SHARE_HOST` 可以逗号分隔多个主机名 |
    | `SERVICE_PASSWORD_POSTGRES` | Coolify 自动生成。**部署后不要再改**：postgres 只在第一次初始化时用它，之后改了就连不上 |
+   | `APP_HOST_PORT` | 可选：`app` 在宿主机 `127.0.0.1` 上的端口，默认 `8787`。宿主机上 8787 已被占用时才改 |
    | API 的变量（`OAUTH_CLIENT_SECRET`、`SESSION_SECRET`、`AI_API_KEY`…） | 打开 API 时才需要，之前留空即可 |
 
 5. **Deploy**。预期：
@@ -46,6 +50,17 @@
    - `bot` healthy 但空闲（没填 `DISCORD_TOKEN` 时不连 Discord）。
 
 ## 给 `app` 配域名
+
+看服务器的 80/443 被谁占着，两种方式选一种：
+
+- 只有 Coolify：用 Coolify 自带的代理，见「方式一」。
+- 装了 1Panel、宝塔、Nginx Proxy Manager 这类面板（它们的 OpenResty / Nginx 占着 80/443，Coolify 的代理起不来）：
+  见「方式二」。这时在 Coolify 里给服务加的域名不会生效，可以删掉。
+
+无论哪种方式，`app` 只回答 `SHARE_HOST` 和 `API_HOST` 里列出的主机名，其余一律 404。加了域名之后，
+还要把它写进对应的变量（分享页 → `SHARE_HOST`，API → `API_HOST`），才有内容。
+
+### 方式一：Coolify 自带的代理
 
 每个对外的域名都配在 **`app`** 这个服务上，其他服务不配。
 
@@ -62,13 +77,49 @@
    | Path | 留空 |
 
 3. 保存后 **Redeploy**。DNS 生效后 Coolify 自动签证书，通常一分钟内完成。
-4. `app` 只回答 `SHARE_HOST` 和 `API_HOST` 里列出的主机名，其余一律 404。所以加了域名之后，
-   还要把它写进对应的变量（分享页 → `SHARE_HOST`，API → `API_HOST`），才有内容。
 
 **先有 DNS，再加 Coolify 域名**：DNS 还指着别处时就加，Let's Encrypt 验证会失败，连续失败几次会被限流一小时。
 
 以后想打开橙色云朵（例如让分享页走 Cloudflare 缓存），先确认证书已经签好，再把 Cloudflare 的
 SSL/TLS 模式设为 **Full (strict)**。
+
+### 方式二：服务器上已有 1Panel（OpenResty）
+
+由 1Panel 转发到 `app` 在宿主机上的端口 `http://127.0.0.1:8787`。`compose.yaml` 已经把它映射出来，
+只绑本机回环，外网连不到；1Panel 的 OpenResty 用宿主机网络运行，所以能访问到。宿主机上 8787 被占用时，
+在 Coolify 里设 `APP_HOST_PORT`，下面的端口跟着改。
+
+1. **DNS**：Cloudflare → `nanako.org` → DNS 加 A 记录（例如 `capi`）→ 服务器公网 IP。
+   橙色云朵、灰色云朵都可以，证书的差别见第 3 步。
+2. **1Panel → 网站 → 创建网站 → 反向代理**：
+
+   | 字段 | 填 |
+   |---|---|
+   | 主域名 | 例如 `capi.nanako.org` |
+   | 代理地址 | `http://127.0.0.1:8787` |
+
+   建好后打开这个站点的反向代理设置，确认**发送域名是 `$host`**。`app` 靠 Host 区分 API 和分享页，
+   发出去的是 `127.0.0.1` 就只会得到 404。
+3. **HTTPS**：在这个站点的 HTTPS 设置里开启，证书二选一：
+   - **橙色云朵**：用 Cloudflare 源站证书。Cloudflare → SSL/TLS → Origin Server → Create Certificate，
+     在 1Panel 的证书管理里手动上传，站点 HTTPS 选它；Cloudflare 的 SSL/TLS 模式设为 **Full (strict)**。
+   - **灰色云朵**：在 1Panel 里给这个域名申请 Let's Encrypt 证书。
+
+   只开 HTTP 不行：橙色云朵在 Full / Full (strict) 模式下按 HTTPS 回源，请求会落到 OpenResty 的默认站点，
+   返回它的 404。也不要为此把 Cloudflare 改成 Flexible，那是整个 `nanako.org` 的设置，会影响其他子域。
+4. 在服务器上自检（不经过 Cloudflare 和 1Panel，直接问 `app`）：
+
+   ```bash
+   curl -s http://127.0.0.1:8787/healthz                                   # ok
+   curl -s -H 'Host: capi.nanako.org' http://127.0.0.1:8787/api/config    # API 打开后返回 JSON
+   ```
+
+| 从外面看到的 | 原因 |
+|---|---|
+| openresty 的 404 页面 | 请求没匹配上 1Panel 的站点：多半是只开了 HTTP 而 Cloudflare 按 HTTPS 回源，或者主域名写错 |
+| 502 Bad Gateway | 站点匹配上了，但 `127.0.0.1:8787` 上没有服务：`app` 没起来，或者 Coolify 跑的还是没有端口映射的旧 compose（Redeploy 一次） |
+| `{"error":"Not found"}`（JSON） | 已经到了 `app`，但这个主机名不在 `API_HOST` / `SHARE_HOST` 里，或者发送域名不是 `$host` |
+| 526 | 橙色云朵 + Full (strict)，但源站证书不被 Cloudflare 认可（没装源站证书或 Let's Encrypt 证书） |
 
 ## 把 discord.nanako.org 从 Worker 切到 Coolify
 
@@ -85,7 +136,10 @@ SSL/TLS 模式设为 **Full (strict)**。
 4. 打开 https://discord.nanako.org ，把链接发到 Discord 里看预览卡片。
 5. 收尾：删掉 `discord-next` 的域名和 DNS 记录，`SHARE_HOST` 改回默认值。
 
-回滚：删掉 `discord` 的 A 记录和 Coolify 里的这个域名，恢复 Worker 的 Custom Domain。
+用 1Panel（方式二）的话，第 1、3 步里「`app` 加域名」换成在 1Panel 里加对应的反向代理站点
+（同样指向 `http://127.0.0.1:8787`、发送域名 `$host`、开 HTTPS），Coolify 里只改 `SHARE_HOST`。
+
+回滚：删掉 `discord` 的 A 记录和 Coolify（或 1Panel）里的这个域名，恢复 Worker 的 Custom Domain。
 
 ## 缓存与源站故障
 
