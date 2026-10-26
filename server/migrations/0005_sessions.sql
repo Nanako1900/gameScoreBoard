@@ -112,10 +112,11 @@ BEGIN
        WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
       ON CONFLICT (dedupe_key) DO NOTHING;
     ELSIF NEW.status = 'open' AND NEW.starts_at IS DISTINCT FROM OLD.starts_at THEN
-      -- One "the time changed" DM per person, however often it moves.
+      -- One "the time changed" DM per person, however often it moves — to
+      -- everyone in it: a move asks them all to answer again, a no included.
       FOR player IN
         SELECT sp.user_id FROM session_players sp
-         WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
+         WHERE sp.session_id = NEW.id AND sp.user_id <> NEW.organizer_id
       LOOP
         PERFORM outbox_schedule('dm.session.changed', 'user', player.user_id,
                                 'dm:session:' || sid || ':changed:' || player.user_id, ref, now() + interval '3 minutes');

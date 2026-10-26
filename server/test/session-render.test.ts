@@ -80,9 +80,22 @@ describe('sessionDmRelevant', () => {
   });
 });
 
-describe('parseRsvpButton', () => {
-  it('reads only its own ids', () => {
-    expect(parseRsvpButton('v1:rsvp:3:maybe')).toEqual({ sessionId: 3, choice: 'maybe' });
-    for (const id of ['v1:rsvp:3:invited', 'v1:rsvp:x:going', 'v1:rsvp:3', 'v1:verdict:3']) expect(parseRsvpButton(id)).toBeNull();
+describe('RSVP buttons', () => {
+  it('carry the start time they were made for', () => {
+    const card = sessionCard(session(), 'https://score.example', NOW);
+    const ids = card.components.flatMap((row) => row.components).flatMap((b) => ('custom_id' in b ? [b.custom_id] : []));
+    expect(ids).toContain(`v1:rsvp:3:going:${Date.parse('2026-10-26T12:00:00.000Z')}`);
+    expect(ids.every((id) => id.length <= 100)).toBe(true);
+  });
+
+  it('read only their own ids, and give back the time', () => {
+    expect(parseRsvpButton(`v1:rsvp:3:maybe:${Date.parse('2026-10-26T12:00:00.000Z')}`)).toEqual({
+      sessionId: 3,
+      choice: 'maybe',
+      startsAt: '2026-10-26T12:00:00.000Z',
+    });
+    for (const id of ['v1:rsvp:3:invited:1', 'v1:rsvp:x:going:1', 'v1:rsvp:3:going', 'v1:rsvp:3', 'v1:verdict:3']) {
+      expect(parseRsvpButton(id)).toBeNull();
+    }
   });
 });

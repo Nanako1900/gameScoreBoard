@@ -158,7 +158,8 @@ describe('session events', () => {
     const later = IN_3H();
     await updateSession(env.DB, org, session.id, { starts_at: later });
     const moved = await events();
-    expect(moved.filter((e) => e.kind === 'dm.session.changed').map((e) => e.entity_id)).toEqual(['a']);
+    // Everyone in it, the one who said no included: all of them answer again.
+    expect(moved.filter((e) => e.kind === 'dm.session.changed').map((e) => e.entity_id).sort()).toEqual(['a', 'b']);
     const starting = (
       await pool.query(
         "SELECT round(extract(epoch FROM available_at - $1::timestamptz) / 60) AS m FROM outbox WHERE kind = 'session.starting'",
@@ -167,13 +168,13 @@ describe('session events', () => {
     ).rows;
     expect(starting).toEqual([{ m: -15 }]);
 
-    // The move put a back to 'invited' (a yes to one time is not a yes to
-    // another); a cancel still reaches them.
+    // The move put a and b back to 'invited' (an answer to one time is not an
+    // answer to another); a cancel still reaches them.
     expect((await env.DB.prepare("SELECT rsvp FROM session_players WHERE user_id = 'a'").first<{ rsvp: string }>())?.rsvp).toBe('invited');
     await pool.query('DELETE FROM outbox');
     await cancelSession(env.DB, org, session.id);
     const cancelled = await events();
-    expect(cancelled.filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id)).toEqual(['a']);
+    expect(cancelled.filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id).sort()).toEqual(['a', 'b']);
     expect(cancelled.some((e) => e.kind === 'session.card')).toBe(true);
   });
 
@@ -283,12 +284,31 @@ describe('RSVP buttons and /yue', () => {
   it('answers the session through the same rules as the web', async () => {
     const { org } = await cast();
     const session = await createSession(env.DB, org, { starts_at: IN_2H(), capacity: 2 }, OFFSET_HOURS);
-    const ok = await handleRsvpButton(session.id, 'going', dc(2), ctx);
+    const at = session.starts_at;
+    const ok = await handleRsvpButton(session.id, 'going', at, dc(2), ctx);
     expect(ok).toMatchObject({ ephemeral: true, content: expect.stringContaining('2/2') });
-    const full = await handleRsvpButton(session.id, 'going', dc(3), ctx);
+    const full = await handleRsvpButton(session.id, 'going', at, dc(3), ctx);
     expect(full.content).toContain('人数已满');
-    expect((await handleRsvpButton(session.id, 'going', dc(9), ctx)).content).toContain('/link');
-    expect((await handleRsvpButton(session.id, 'going', dc(2), { ...ctx, readOnly: true })).content).toContain('只读');
+    expect((await handleRsvpButton(session.id, 'going', at, dc(9), ctx)).content).toContain('/link');
+    expect((await handleRsvpButton(session.id, 'going', at, dc(2), { ...ctx, readOnly: true })).content).toContain('只读');
+  });
+
+  it('a button made for the old time (an invitation DM, after a move) signs nobody up', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    await updateSession(env.DB, org, session.id, { starts_at: IN_3H() });
+    const reply = await handleRsvpButton(session.id, 'going', session.starts_at, dc(2), ctx);
+    expect(reply.content).toContain('改时间了');
+    expect(reply.content).toMatch(/<t:\d+:F>/);
+    expect((await env.DB.prepare("SELECT rsvp FROM session_players WHERE user_id = 'a'").first<{ rsvp: string }>())?.rsvp).toBe(
+      'invited',
+    );
+    // Nor does a no to the old time stand for the new one.
+    const no = await handleRsvpButton(session.id, 'out', session.starts_at, dc(2), ctx);
+    expect(no.content).toContain('改时间了');
+    // With the new time, either answer goes through.
+    const moved = await env.DB.prepare('SELECT starts_at FROM game_sessions WHERE id = ?').bind(session.id).first<{ starts_at: string }>();
+    expect((await handleRsvpButton(session.id, 'out', moved!.starts_at, dc(2), ctx)).content).toContain('不来');
   });
 
   it('/yue proposes a session at the chosen board-local time', async () => {

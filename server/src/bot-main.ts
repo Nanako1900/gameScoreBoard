@@ -228,7 +228,7 @@ function main(): void {
       const rsvp = parseRsvpButton(interaction.customId);
       if (rsvp) {
         // On a card in the channel or on an invitation DM: no guild check.
-        work = answer(interaction, 'rsvp button', () => handleRsvpButton(rsvp.sessionId, rsvp.choice, caller, ctx));
+        work = answer(interaction, 'rsvp button', () => handleRsvpButton(rsvp.sessionId, rsvp.choice, rsvp.startsAt, caller, ctx));
       } else if (verdictId !== null) {
         work = answer(interaction, 'verdict button', () => handleVerdictButton(verdictId, caller, ctx), {
           guildId: config.guildId,

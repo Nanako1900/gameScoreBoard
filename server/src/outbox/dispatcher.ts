@@ -657,7 +657,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
     // A new card only for a session people can still join.
     if (!isUpcoming(session)) return { result: 'skipped', note: 'not open for RSVPs' };
-    const sent = await api.send(channelId, { ...card, nonce: `ob${row.id}`, enforce_nonce: true });
+    const sent = await api.send(channelId, { ...card, nonce: nonceFor(row), enforce_nonce: true });
     await pool.query(
       `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
        VALUES ('session', $1, 'card', $2, $3)

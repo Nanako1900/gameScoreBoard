@@ -34,15 +34,23 @@ const READ_ONLY_TEXT = '系统维护中（只读），请稍后再试。';
 
 export type RsvpChoice = 'going' | 'maybe' | 'out';
 const RSVP_LABEL: Record<RsvpChoice, string> = { going: '来', maybe: '可能', out: '不来' };
-const RSVP_BUTTON = /^v1:rsvp:(\d{1,15}):(going|maybe|out)$/;
+const RSVP_BUTTON = /^v1:rsvp:(\d{1,15}):(going|maybe|out):(\d{1,15})$/;
 
-export function rsvpButtonId(sessionId: number, choice: RsvpChoice): string {
-  return `v1:rsvp:${sessionId}:${choice}`;
+/**
+ * An RSVP button carries the start time it was shown with (ms): an invitation
+ * DM is never edited, so after a move its buttons would otherwise answer for
+ * people about a time they never saw — setRsvp refuses that (409).
+ */
+export function rsvpButtonId(session: Pick<SessionDetail, 'id' | 'starts_at'>, choice: RsvpChoice): string {
+  return `v1:rsvp:${session.id}:${choice}:${parseTimestamp(session.starts_at)}`;
 }
 
-export function parseRsvpButton(customId: string): { sessionId: number; choice: RsvpChoice } | null {
+export function parseRsvpButton(customId: string): { sessionId: number; choice: RsvpChoice; startsAt: string } | null {
   const match = RSVP_BUTTON.exec(customId);
-  return match ? { sessionId: Number(match[1]), choice: match[2] as RsvpChoice } : null;
+  if (!match) return null;
+  const shown = new Date(Number(match[3]));
+  if (Number.isNaN(shown.getTime())) return null;
+  return { sessionId: Number(match[1]), choice: match[2] as RsvpChoice, startsAt: shown.toISOString() };
 }
 
 /** The session exactly as the web shows it; null if it is gone. */
@@ -74,7 +82,7 @@ function rsvpRow(session: SessionDetail, frontendUrl: string): APIActionRowCompo
         type: ComponentType.Button as const,
         style: styles[choice],
         label: RSVP_LABEL[choice],
-        custom_id: rsvpButtonId(session.id, choice),
+        custom_id: rsvpButtonId(session, choice),
       })),
       { type: ComponentType.Button, style: ButtonStyle.Link, label: web.label, url: web.url },
     ],
@@ -198,9 +206,11 @@ function webLink(frontendUrl: string): APIButtonComponent {
 }
 
 /** An RSVP button on a card or an invitation. */
+/** A button press: `shownStartsAt` is the start time the button was made for. */
 export async function handleRsvpButton(
   sessionId: number,
   choice: RsvpChoice,
+  shownStartsAt: string,
   caller: { id: string; username: string },
   ctx: BotContext,
 ): Promise<BotReply> {
@@ -208,9 +218,15 @@ export async function handleRsvpButton(
   const user = await boundUser(ctx.db, caller.id);
   if (!user) return ephemeralReply(NOT_LINKED);
   try {
-    const session = await setRsvp(ctx.db, user, sessionId, choice);
+    const session = await setRsvp(ctx.db, user, sessionId, choice, shownStartsAt);
     return ephemeralReply(`已登记：**${RSVP_LABEL[choice]}**。现在来 ${seats(session)}。`);
   } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      // The session moved since this button was made.
+      const now = await loadSession(ctx.db, sessionId);
+      const when = now ? `现在是 ${discordTime(now.starts_at, 'F')}（${discordTime(now.starts_at, 'R')}）。` : '';
+      return ephemeralReply(`🔁 这个约局改时间了，${when}请用约局频道里更新后的卡片或「改时间了」私信里的按钮，按新时间重新选。`);
+    }
     if (error instanceof ApiError) return ephemeralReply(safeLine(error.message, LIMITS.content));
     throw error;
   }
