@@ -55,7 +55,9 @@ export interface Env {
   SESSION_SECRET: string;
   APP_URL?: string;          // optional; else derive from request origin
   RESET_TZ_OFFSET?: string;  // hours, default "8"
-  ADMIN_USERNAMES?: string;  // comma-separated usernames -> is_admin on login
+  ADMIN_SUBJECT_IDS?: string; // comma-separated OAuth subject ids -> is_admin on login
+  ADMIN_USERNAMES?: string;  // deprecated; ignored once ADMIN_SUBJECT_IDS is set
+  READ_ONLY?: string;        // '1' | 'true' = maintenance: writes + /auth/callback -> 503
 
   // AI 裁决 — all overridable at runtime from app_settings EXCEPT AI_API_KEY.
   AI_ENABLED?: string;
@@ -214,13 +216,21 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 - `GET /api/users/:id` → `{ user: PublicUser, records: RecordItem[], history: HistoryPoint[] }`.
 - `GET /api/sessions?scope=upcoming|past|mine` → `{ sessions: SessionItem[] }` (`mine` requires auth).
 - `GET /api/sessions/:id` → `{ session: SessionDetail, records: RecordItem[] }`.
-- `GET /api/avatar?u=<https url>` → proxied image (host must be the OAuth domain
-  family, in `AVATAR_ALLOWED_HOSTS`, or an exact stored avatar URL).
+- `GET /api/avatar?u=<https url>` → proxied image (worker/avatar.ts). The host
+  must be exactly the OAuth host or one in `AVATAR_ALLOWED_HOSTS`, or the URL must
+  be an exact stored avatar URL; this app's own hosts, IP literals and localhost
+  are refused. Up to 2 redirects, each re-checked. Only png / jpeg / gif / webp /
+  avif up to 2 MB (else 415 / 502), served with `nosniff` and
+  `Content-Security-Policy: default-src 'none'; sandbox`.
+- CSRF: non-GET requests to `/api/*` and `/auth/*` with a form-like or missing
+  Content-Type must have `Sec-Fetch-Site: same-origin` or an `Origin` equal to
+  the request origin, `APP_URL`, or a `FRONTEND_ORIGIN` entry → else
+  403 `{ error: '请求来源不被允许' }`. JSON requests are left to CORS preflight.
 
 ### Auth
 - `GET /auth/login` → 302 to the provider's `/oauth/authorize`; signed `state` in a short-lived cookie.
 - `GET /auth/callback?code=&state=` → verify state, exchange code, fetch userinfo,
-  upsert user (admin if username ∈ `ADMIN_USERNAMES`), set session cookie,
+  upsert user (admin if `sub` ∈ `ADMIN_SUBJECT_IDS`; while that is unset, if username ∈ `ADMIN_USERNAMES`), set session cookie,
   302 to `/` (`?onboarding=1` when brand new).
 - `POST /auth/logout` → clear cookie, `{ ok: true }`.
 

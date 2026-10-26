@@ -42,12 +42,21 @@ RESET_TZ_OFFSET = "8"
 OAUTH_BASE_URL = "https://nanako.org"
 OAUTH_CLIENT_ID = "4d7e107d75ac6bf7f3c2b7132b036c3f"
 
-# Matched against the RAW OAuth username (not the custom display name), and only
-# ever grants admin — never revokes it. Kept here rather than in the dashboard so
-# a deploy can't silently drop it and leave the board with zero admins, which is
-# exactly what had happened before v2: no admin meant the AI config panel and the
-# appeal queue were both unreachable.
+# Who becomes admin on login. Only ever grants admin — never revokes it. Kept
+# here rather than in the dashboard so a deploy can't silently drop it and leave
+# the board with zero admins, which is exactly what had happened before v2: no
+# admin meant the AI config panel and the appeal queue were both unreachable.
+#
+# ADMIN_SUBJECT_IDS is the OAuth subject id (users.id — an admin can read their
+# own as `user.id` in GET /api/me). Once it is set, ADMIN_USERNAMES is ignored.
+# ADMIN_USERNAMES is deprecated: the "username" it matches falls back to the
+# profile's name / nickname, which the IdP may let anyone edit.
+# ADMIN_SUBJECT_IDS = "<your users.id>"
 ADMIN_USERNAMES = "Hongyu Qi"
+
+# Maintenance mode for the database cutover: every write (and the OAuth
+# callback) answers 503, lazy jobs and cron are skipped. Reads keep working.
+# READ_ONLY = "1"
 
 # --- AI 裁决 (OpenAI-compatible) ---
 # These are defaults only: the admin panel writes to the `app_settings` table,

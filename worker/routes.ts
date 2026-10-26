@@ -4,6 +4,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { csrf } from 'hono/csrf';
 import {
   STATEMENT_WINDOW_HOURS,
   TIERS,
@@ -15,6 +16,7 @@ import {
 } from '../shared/scoring';
 import type { AppEnv, Env, User } from './types';
 import {
+  adminGrantVia,
   adminUpdateUser,
   avatarUrlExists,
   getLeaderboard,
@@ -95,9 +97,12 @@ import {
 } from './oauth';
 
 import { registerAdminRoutes } from './routes-admin';
+import { proxyAvatar } from './avatar';
 import {
+  allowedOrigins,
   cookieConfig,
-  isAllowedAvatarHost,
+  avatarAllowedHosts,
+  isReadOnly,
   isRecordObject,
   optBool,
   optNumber,
@@ -128,6 +133,34 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     })(c, next);
   });
 
+  // --- CSRF ----------------------------------------------------------------
+  // Form posts and body-less POSTs go cross-origin without a CORS preflight, and
+  // once the SPA and the API sit on sibling subdomains every page on the parent
+  // domain counts as same-site, so the SameSite=Lax session cookie rides along.
+  // hono/csrf refuses those unless Sec-Fetch-Site is same-origin or the Origin
+  // is one of ours. JSON requests always preflight, and the CORS middleware
+  // above only answers FRONTEND_ORIGIN.
+  const csrfGuard = csrf({
+    origin: (origin, c) => allowedOrigins(c.env, c.req.url).includes(origin),
+  });
+  app.use('/api/*', csrfGuard);
+  app.use('/auth/*', csrfGuard);
+
+  // --- Maintenance mode ----------------------------------------------------
+  // READ_ONLY=1 during the database cutover: every write is refused, so nothing
+  // lands in D1 after the export. /auth/callback is a GET but upserts the user.
+  // Logout only clears a cookie, so it stays available.
+  app.use('*', async (c, next) => {
+    if (!isReadOnly(c.env)) return next();
+    const path = new URL(c.req.url).pathname;
+    const scoped = path.startsWith('/api/') || path.startsWith('/auth/');
+    const writes = !/^(GET|HEAD|OPTIONS)$/.test(c.req.method) || path === '/auth/callback';
+    if (scoped && writes && path !== '/auth/logout') {
+      throw new ApiError(503, '系统维护中（只读），请稍后再试');
+    }
+    return next();
+  });
+
   // --- Auth middleware: resolve current user from the session cookie ---------
   app.use('*', async (c, next) => {
     let user: User | null = null;
@@ -150,20 +183,22 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     // weekly credit heal (guarded by the weekly_heals primary key) and judging
     // of cases whose statement window lapsed (guarded by a conditional status
     // update). Both are non-blocking, so neither delays this response, and
-    // neither needs a Cron Trigger.
-    c.executionCtx.waitUntil(
-      weeklyHeal(c.env.DB, offset).catch((err) => console.error('lazy weekly heal failed', err)),
-    );
-    c.executionCtx.waitUntil(
-      sweepDueCases(c.env.DB, c.env).catch((err) => console.error('case sweep failed', err)),
-    );
-    // Third lazy job, same idempotency contract: weekly_reports' primary key is
-    // the week, so a Monday-morning rush produces one narrative, not one each.
-    c.executionCtx.waitUntil(
-      ensureWeeklyReport(c.env.DB, c.env, offset).catch((err) =>
-        console.error('weekly report failed', err),
-      ),
-    );
+    // neither needs a Cron Trigger. All three write, so maintenance mode skips them.
+    if (!isReadOnly(c.env)) {
+      c.executionCtx.waitUntil(
+        weeklyHeal(c.env.DB, offset).catch((err) => console.error('lazy weekly heal failed', err)),
+      );
+      c.executionCtx.waitUntil(
+        sweepDueCases(c.env.DB, c.env).catch((err) => console.error('case sweep failed', err)),
+      );
+      // Third lazy job, same idempotency contract: weekly_reports' primary key is
+      // the week, so a Monday-morning rush produces one narrative, not one each.
+      c.executionCtx.waitUntil(
+        ensureWeeklyReport(c.env.DB, c.env, offset).catch((err) =>
+          console.error('weekly report failed', err),
+        ),
+      );
+    }
     const cfg = await loadAiConfig(c.env.DB, c.env);
     return c.json({
       violations: VIOLATIONS,
@@ -238,29 +273,15 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   // Same-origin avatar proxy: upstream avatars (e.g. nanako.org) may carry
   // `Cross-Origin-Resource-Policy: same-site`, which blocks embedding them from
   // another origin. Fetch them server-side and re-serve with permissive CORP.
-  app.get('/api/avatar', async (c) => {
-    const raw = c.req.query('u');
-    if (!raw) throw new ApiError(400, '缺少头像地址');
-    let target: URL;
-    try {
-      target = new URL(raw);
-    } catch {
-      throw new ApiError(400, '无效的头像地址');
-    }
-    if (target.protocol !== 'https:') throw new ApiError(400, '仅支持 https 头像');
-    // Allow if the host is trusted (OAuth domain family / AVATAR_ALLOWED_HOSTS) OR
-    // if this exact URL is a stored user avatar — zero-config for any avatar host.
-    const allowed =
-      isAllowedAvatarHost(c.env, target.hostname) || (await avatarUrlExists(c.env.DB, raw));
-    if (!allowed) throw new ApiError(403, '不允许的头像来源');
-    const upstream = await fetch(target.toString(), { headers: { Accept: 'image/*' } });
-    if (!upstream.ok || !upstream.body) throw new ApiError(502, '头像获取失败');
-    const headers = new Headers();
-    headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'image/jpeg');
-    headers.set('Cache-Control', 'public, max-age=86400');
-    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    return new Response(upstream.body, { status: 200, headers });
-  });
+  // Allowed: the OAuth host, AVATAR_ALLOWED_HOSTS, or this exact URL being some
+  // user's stored avatar. Hardening (types, redirects, size) lives in avatar.ts.
+  app.get('/api/avatar', async (c) =>
+    proxyAvatar(c.req.query('u'), {
+      allowedHosts: avatarAllowedHosts(c.env),
+      selfHosts: allowedOrigins(c.env, c.req.url).map((o) => new URL(o).hostname),
+      isStoredAvatar: (url) => avatarUrlExists(c.env.DB, url),
+    }),
+  );
 
   // --- Authenticated -------------------------------------------------------
   app.get('/api/me', async (c) => {
@@ -533,8 +554,16 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const redirectUri = resolveRedirectUri(env, c.req.raw);
     const accessToken = await exchangeCode(env, code, redirectUri);
     const profile = await fetchUserInfo(env, accessToken);
-    const admins = parseCsvList(env.ADMIN_USERNAMES);
-    const { user, isNew } = await upsertUser(env.DB, profile, admins);
+    const grants = {
+      subjectIds: parseCsvList(env.ADMIN_SUBJECT_IDS),
+      usernames: parseCsvList(env.ADMIN_USERNAMES),
+    };
+    if (adminGrantVia(grants, profile) === 'username') {
+      console.warn(
+        `admin granted by ADMIN_USERNAMES to sub=${profile.id}; set ADMIN_SUBJECT_IDS instead`,
+      );
+    }
+    const { user, isNew } = await upsertUser(env.DB, profile, grants);
 
     const session = await signSession({ sub: user.id }, env.SESSION_SECRET);
     const cfg = cookieConfig(env);

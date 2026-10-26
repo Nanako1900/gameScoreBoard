@@ -15,7 +15,12 @@ export interface Env {
   SESSION_SECRET: string;
   APP_URL?: string; // optional; else derive from request origin
   RESET_TZ_OFFSET?: string; // hours, default "8"
-  ADMIN_USERNAMES?: string; // comma-separated usernames -> is_admin on login
+  /** Comma-separated OAuth subject ids (users.id) -> is_admin on login. */
+  ADMIN_SUBJECT_IDS?: string;
+  /** Deprecated: comma-separated usernames; ignored once ADMIN_SUBJECT_IDS is set. */
+  ADMIN_USERNAMES?: string;
+  /** '1' / 'true' = maintenance mode: every write is refused with 503. */
+  READ_ONLY?: string;
 
   // --- AI 裁决 (any OpenAI-compatible endpoint) --------------------------------
   // Defaults only. `app_settings` rows of the same name override every one of

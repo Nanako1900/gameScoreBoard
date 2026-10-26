@@ -4,9 +4,11 @@
 // idempotent and also run lazily from GET /api/config, so the cron is optional.
 
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv, Env } from './types';
 import { ApiError } from './errors';
+import { isReadOnly } from './http';
 import { weeklyHeal } from './db';
 import { sweepDueCases } from './cases';
 import { registerRoutes } from './routes';
@@ -21,6 +23,11 @@ app.onError((err, c) => {
   if (err instanceof ApiError) {
     return c.json({ error: err.message }, err.status as ContentfulStatusCode);
   }
+  // Thrown by Hono middleware (csrf). Keep the `{ error }` shape the SPA reads.
+  if (err instanceof HTTPException) {
+    const message = err.status === 403 ? '请求来源不被允许' : '请求被拒绝';
+    return c.json({ error: message }, err.status as ContentfulStatusCode);
+  }
   console.error('unhandled worker error', err);
   return c.json({ error: '服务器内部错误' }, 500);
 });
@@ -31,6 +38,7 @@ app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw));
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (isReadOnly(env)) return; // maintenance mode: no writes, not even from cron
     try {
       await weeklyHeal(env.DB, resetOffsetHours(env.RESET_TZ_OFFSET));
     } catch (err) {

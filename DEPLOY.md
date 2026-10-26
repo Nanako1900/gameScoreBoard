@@ -142,14 +142,22 @@ wrangler d1 execute edg-credit --remote --command="SELECT * FROM weekly_heals OR
 
 ## 8. 管理员引导
 
-首次部署后，通过 `ADMIN_USERNAMES` 环境变量（逗号分隔用户名）指定谁在登录时自动获得管理员权限：
+首次部署后，通过 `ADMIN_SUBJECT_IDS` 环境变量（逗号分隔的 OAuth subject id，即 `users.id`）指定谁在登录时自动获得管理员权限：
 
 ```toml
-# wrangler.toml [vars] 段，或用 wrangler secret put ADMIN_USERNAMES
-ADMIN_USERNAMES = "Nanako1900,SomeOtherAdmin"
+# wrangler.toml [vars] 段
+ADMIN_SUBJECT_IDS = "<users.id>,<another users.id>"
 ```
 
-该用户首次通过 OAuth 登录（`/auth/login` → `/auth/callback`）时，Worker 会在 upsert 用户记录时把 `is_admin` 置为 `1`。之后管理员可以通过管理端点（`POST /api/admin/users/:id`）调整任意用户的角色 / 分数，或授予其他人管理员权限。
+subject id 是 OAuth 返回的稳定标识，用户改不了。已登录的人可以在浏览器打开 `/api/me`，看 `user.id`。
+
+`ADMIN_USERNAMES`（逗号分隔用户名）仍然可用，但**已废弃**：它匹配的「用户名」在 IdP 不返回 `username` 时会退回到 `name` / `nickname`，而这两个字段通常用户自己就能改。设置了 `ADMIN_SUBJECT_IDS` 之后，`ADMIN_USERNAMES` 会被完全忽略。
+
+命中的用户通过 OAuth 登录（`/auth/login` → `/auth/callback`）时，Worker 会在 upsert 用户记录时把 `is_admin` 置为 `1`（只授予，从不撤销）。之后管理员可以通过管理端点（`POST /api/admin/users/:id`）调整任意用户的角色 / 分数，或授予其他人管理员权限。
+
+## 8.1 维护模式（只读）
+
+数据库切换期间，在 `wrangler.toml` 的 `[vars]` 里设 `READ_ONLY = "1"` 并部署：所有写请求和 `/auth/callback` 返回 503，`/api/config` 上的惰性任务和 Cron 都会跳过，读接口照常可用。去掉这一行再部署即恢复。
 
 ## 9. 常见问题 (FAQ)
 
