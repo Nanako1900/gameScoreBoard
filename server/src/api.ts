@@ -65,7 +65,7 @@ export interface ApiRuntime {
   fetch(request: Request): Promise<Response>;
   /** One run of the background jobs. Overlapping calls join the running one. */
   runJobs(): Promise<void>;
-  /** Wait (bounded) for waitUntil() work still in flight. */
+  /** Wait (bounded) for a running job and for waitUntil() work still in flight. */
   drain(timeoutMs: number): Promise<void>;
 }
 
@@ -119,15 +119,24 @@ export function createApi(env: Env, options: ApiOptions = {}): ApiRuntime {
       return run;
     },
     async drain(timeoutMs) {
-      if (pending.size === 0) return;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        Promise.allSettled([...pending]),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, timeoutMs);
-        }),
-      ]);
-      clearTimeout(timer);
+      const deadline = Date.now() + timeoutMs;
+      // Running jobs too: a sweep cut off between its claim and its verdict
+      // leaves the case in 'judging' until the stale reclaim. Loop, because
+      // work still running can hand more to waitUntil().
+      for (;;) {
+        const work: Promise<unknown>[] = [...pending, ...(running ? [running] : [])];
+        const left = deadline - Date.now();
+        if (work.length === 0 || left <= 0) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([
+          Promise.allSettled(work).then(() => false),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(true), left);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (timedOut) return;
+      }
     },
   };
 }

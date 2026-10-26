@@ -102,4 +102,14 @@ describe('importD1', () => {
     await expect(importD1(pool, data)).rejects.toThrow();
     for (const table of ['users', 'records', 'weekly_heals']) expect(await count(table)).toBe(0);
   });
+
+  it('rolls back everything when a read-back differs from the export', async () => {
+    // PostgreSQL quietly stores a number given for a text column as text;
+    // only the read-back checksum notices — and it is a JS error, not a SQL
+    // one, so the transaction must be rolled back explicitly.
+    const data = exportFixture();
+    data.weekly_reports[0].narrative = 42;
+    await expect(importD1(pool, data)).rejects.toThrow(/weekly_reports: read-back mismatch/);
+    for (const table of ['users', 'records', 'weekly_heals', 'weekly_reports']) expect(await count(table)).toBe(0);
+  });
 });

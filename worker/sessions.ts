@@ -113,7 +113,7 @@ SELECT sp.*,
 FROM session_players sp
 JOIN users u ON u.id = sp.user_id
 WHERE sp.session_id = ?
-ORDER BY sp.rsvp ASC, sp.rsvp_at ASC`;
+ORDER BY sp.rsvp ASC, sp.rsvp_at ASC, sp.user_id ASC`;
 
 // --- Reads -------------------------------------------------------------------
 

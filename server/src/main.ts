@@ -1,16 +1,14 @@
 // Node entry point for the Coolify container. One long-lived process: an HTTP
 // server split by Host (app.ts) serving
 //   * the Discord share page, kept fresh by a background poller;
-//   * the scoreboard API (when DATABASE_URL is set), with a timer for the jobs
-//     the Worker's cron used to run.
+//   * the scoreboard API (once API_HOST is set), with a timer for the jobs the
+//     Worker's cron used to run.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import pg from 'pg';
-import { createApi, buildEnv } from './api';
 import { createApp, type HostedApp } from './app';
-import { asD1, installTypeParsers, PgD1Database } from './db/d1';
+import { createBackend } from './backend';
 import { hostSet } from './hosts';
 import {
   createShareApp,
@@ -21,7 +19,6 @@ import {
 } from './share';
 
 const SHUTDOWN_GRACE_MS = 10_000;
-const DEFAULT_JOBS_INTERVAL_MS = 60_000;
 
 function main(): void {
   const port = Number(process.env.PORT ?? 8787);
@@ -57,58 +54,29 @@ function main(): void {
   };
 
   // --- Scoreboard API (PostgreSQL) -----------------------------------------
-  let pool: pg.Pool | null = null;
-  let api: ReturnType<typeof createApi> | null = null;
-  let jobsTimer: ReturnType<typeof setInterval> | null = null;
-  const apiHosts = hostSet(process.env.API_HOST);
-  if (process.env.DATABASE_URL) {
-    installTypeParsers();
-    pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: Number(process.env.PG_POOL_MAX ?? 10),
-      // The Worker's SQL binds zone-less 'YYYY-MM-DD HH:MM:SS' strings meant as UTC.
-      options: '-c TimeZone=UTC -c statement_timeout=30000',
-    });
-    pool.on('error', (error) => console.error('idle PostgreSQL client error', error));
-    api = createApi(buildEnv(process.env, asD1(new PgD1Database(pool))));
-    if ((process.env.JOBS_ENABLED ?? 'true').trim().toLowerCase() !== 'false') {
-      const interval = Number(process.env.JOBS_INTERVAL_MS ?? DEFAULT_JOBS_INTERVAL_MS);
-      void api.runJobs();
-      jobsTimer = setInterval(() => void api?.runJobs(), interval);
-    }
-  }
+  // Only once API_HOST names a hostname; a broken API config answers 503 on
+  // those hostnames instead of crashing the share page (backend.ts).
+  const backend = createBackend(process.env);
+  backend?.startJobs();
 
   const app = createApp({
     share,
-    api: api && apiHosts.size > 0 ? { hosts: apiHosts, fetch: api.fetch } : null,
-    status: async () => {
-      const report: Record<string, unknown> = { ok: true };
-      if (pool) {
-        try {
-          await pool.query('SELECT 1');
-          report.db = 'ok';
-        } catch (error) {
-          report.ok = false;
-          report.db = error instanceof Error ? error.message : String(error);
-        }
-      }
-      return report;
-    },
+    api: backend?.part ?? null,
+    status: async () => (backend ? { ...(await backend.status()) } : { ok: true }),
   });
 
   const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
-    const hosts = [...shareHosts, ...(api ? apiHosts : [])].join(', ');
+    const hosts = [...shareHosts, ...(backend?.part.hosts ?? [])].join(', ');
     console.log(`listening on :${info.port} (${hosts})`);
   });
 
   const shutdown = (signal: string): void => {
     console.log(`${signal}: shutting down`);
     poller.stop();
-    if (jobsTimer) clearInterval(jobsTimer);
+    backend?.stopJobs();
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
     server.close(async () => {
-      await api?.drain(SHUTDOWN_GRACE_MS / 2);
-      await pool?.end().catch(() => undefined);
+      await backend?.close(SHUTDOWN_GRACE_MS / 2);
       process.exit(0);
     });
   };

@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
+import { checkOut } from './db/d1';
 
 export type Row = Record<string, unknown>;
 export type Export = Record<string, Row[]>;
@@ -141,7 +142,8 @@ export async function importD1(
   data: Export,
   sequences: Record<string, number> = {},
 ): Promise<ImportResult> {
-  const client = await pool.connect();
+  const tx = await checkOut(pool);
+  const { client } = tx;
   try {
     await client.query('BEGIN');
     const report = await preflight(client, data);
@@ -186,9 +188,9 @@ export async function importD1(
     await client.query('COMMIT');
     return { preflight: report, checksums, sequences: nextIds };
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    if (!tx.broken) await client.query('ROLLBACK').catch(() => undefined);
     throw error;
   } finally {
-    client.release();
+    tx.release();
   }
 }

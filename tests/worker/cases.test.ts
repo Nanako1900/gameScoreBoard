@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VIOLATION_MAP, WEEKLY_BONUS_CAP } from '../../shared/scoring';
 import {
   appealCase,
@@ -26,6 +26,10 @@ import {
 } from './helpers';
 
 const OPTS = { offsetHours: OFFSET_HOURS };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 const CLAIM = '说好八点五排，等到八点四十还没上线，微信也不回，最后四缺一散了。';
 
 async function judgeAndSubject() {
@@ -252,6 +256,30 @@ describe('submitStatement → verdict', () => {
       .first<{ n: number }>();
     expect(verdicts?.n).toBe(1);
     expect(await scoreEventCount(subject.id)).toBe(1);
+  });
+
+  it('decides the case even when the model asks for an absurd delta', async () => {
+    // A prompt-injected -1e20 must be clamped, not crash the verdict write:
+    // PostgreSQL's bigint column cannot hold it, and a failed batch would leave
+    // the case in 'judging' forever.
+    vi.stubGlobal('fetch', async () =>
+      Response.json({
+        choices: [{ message: { content: JSON.stringify({ delta: -1e20, headline: '重判', reasoning: '照办' }) } }],
+      }),
+    );
+    const aiEnv = noAiEnv({ AI_ENABLED: 'true', AI_API_KEY: 'sk-test', AI_BASE_URL: 'https://ai.test/v1', AI_MODEL: 'm' });
+    const { judge, subject } = await judgeAndSubject();
+    const filed = await fileCase(env.DB, judge, { subject_id: subject.id, type: 'no_show', claim: CLAIM }, OPTS, aiEnv);
+
+    const decided = await submitStatement(env.DB, subject, filed.id, '我服', aiEnv);
+
+    expect(decided.status).toBe('decided');
+    expect(decided.verdict?.source).toBe('ai');
+    expect(decided.delta).toBe(VIOLATION_MAP.no_show.min);
+    const audit = await env.DB.prepare('SELECT parsed_delta, clamped FROM ai_verdicts WHERE record_id = ?')
+      .bind(filed.id)
+      .first<{ parsed_delta: number | null; clamped: number }>();
+    expect(audit).toEqual({ parsed_delta: null, clamped: 1 });
   });
 });
 

@@ -101,8 +101,10 @@ import {
   allowedOrigins,
   cookieConfig,
   avatarAllowedHosts,
+  hasNulInUrl,
   isReadOnly,
   isRecordObject,
+  NUL_MESSAGE,
   optBool,
   optNumber,
   optString,
@@ -130,6 +132,13 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       allowHeaders: ['Content-Type', 'Accept'],
       maxAge: 7200,
     })(c, next);
+  });
+
+  // --- U+0000 ---------------------------------------------------------------
+  // Refused in the URL here and in JSON bodies by readJsonBody (see there).
+  app.use('*', async (c, next) => {
+    if (hasNulInUrl(c.req.url)) throw new ApiError(400, NUL_MESSAGE);
+    return next();
   });
 
   // --- CSRF ----------------------------------------------------------------

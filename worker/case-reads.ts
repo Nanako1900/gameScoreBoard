@@ -127,7 +127,7 @@ export async function listRecords(
     binds.push(filters.pendingFor);
   }
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
-  const limit = Math.max(1, Math.min(200, filters.limit ?? 50));
+  const limit = Math.max(1, Math.min(200, Math.floor(filters.limit ?? 50)));
   binds.push(limit);
   const sql = `${RECORD_SELECT}${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ?`;
   const rows = await db

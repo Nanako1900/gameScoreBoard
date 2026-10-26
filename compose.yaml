@@ -20,7 +20,9 @@ services:
       - pgdata:/var/lib/postgresql/data
     mem_limit: 512m
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U edg -d edg"]
+      # Over TCP: during first-time init the entrypoint runs a socket-only
+      # server, which a socket check would already call healthy.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U edg -d edg"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -32,10 +34,15 @@ services:
 
   # One-shot: apply server/migrations, then exit. The app only starts after this
   # exits 0, so a failed migration never meets live traffic. Also the container
-  # the D1 import runs in (docs/DEPLOY-CUTOVER.md).
+  # the D1 import runs in (docs/DEPLOY-CUTOVER.md). Images built before P3a have
+  # no migrations: then it does nothing, so rolling APP_TAG back to one of them
+  # (or deploying this file before the new image is pushed) still starts the app.
   migrate:
     image: ghcr.io/nanako1900/gamescoreboard:${APP_TAG:-latest}
-    command: ["node", "server/dist/migrate-main.js"]
+    command:
+      - sh
+      - -c
+      - if [ -f server/dist/migrate-main.js ]; then exec node server/dist/migrate-main.js; fi; echo "this image has no migrations, nothing to do"
     restart: "no"
     environment:
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
@@ -63,10 +70,12 @@ services:
       INVITE_CODE: ${INVITE_CODE:-}
       SNAPSHOT_FILE: /data/share-snapshot.json
       # Scoreboard API (formerly the gamescoreboard Worker). Leave API_HOST empty
-      # until the cutover: the database and the job timer only matter once the
-      # api hostname actually points here.
+      # until the cutover: then no API is built at all, and none of the secrets
+      # below are needed yet. With API_HOST set but a secret missing, the api
+      # hostnames answer 503 — the share page keeps working either way.
       API_HOST: ${API_HOST:-}
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
+      # Timer for heal, overdue judging and the weekly report (1/true/yes).
       JOBS_ENABLED: ${JOBS_ENABLED:-false}
       APP_URL: ${APP_URL:-https://api.nanako.org}
       FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
@@ -78,7 +87,10 @@ services:
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
       SESSION_SECRET: ${SESSION_SECRET}
       ADMIN_SUBJECT_IDS: ${ADMIN_SUBJECT_IDS:-}
-      ADMIN_USERNAMES: ${ADMIN_USERNAMES:-}
+      # Same as the Worker's wrangler.toml: logging in re-grants admin to this
+      # name, so the board can never be left without one. Ignored once
+      # ADMIN_SUBJECT_IDS is set.
+      ADMIN_USERNAMES: "${ADMIN_USERNAMES:-Hongyu Qi}"
       AI_API_KEY: ${AI_API_KEY:-}
       AI_ENABLED: ${AI_ENABLED:-true}
       AVATAR_ALLOWED_HOSTS: ${AVATAR_ALLOWED_HOSTS:-}

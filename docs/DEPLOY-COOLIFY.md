@@ -1,8 +1,8 @@
 # 部署到 Coolify（Docker Compose）
 
-> 适用于 P1 起的 Node 后端（`server/`）。当前这一期只承载 Discord 分享页
-> `discord.nanako.org`；API（P3a）和 Discord bot（P4）之后会加进同一个
-> `compose.yaml`。整体方案见 [DESIGN-v4-discord-coolify.md](DESIGN-v4-discord-coolify.md)。
+> 适用于 P1 起的 Node 后端（`server/`）。承载 Discord 分享页 `discord.nanako.org`；
+> 同一个 `compose.yaml` 里还有 API（P3a）的 PostgreSQL，但 `API_HOST` 为空时 API 不启动，
+> 切换步骤见 [DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)。
 
 ## 组成
 
@@ -10,7 +10,7 @@
 |---|---|
 | `Dockerfile` | 一个镜像给所有 Node 服务用。多阶段构建，运行层只有生产依赖和打包后的 `server/dist` |
 | `.github/workflows/image.yml` | PR 上只构建（验证 Dockerfile）；合并到 `main` 后推送 `ghcr.io/nanako1900/gamescoreboard:<sha>` 和 `:latest` |
-| `compose.yaml` | Coolify 部署的 stack：`app`（Node）+ `cloudflared`（出站隧道） |
+| `compose.yaml` | Coolify 部署的 stack：`postgres` + `migrate`（一次性，跑完退出）+ `app`（Node）+ `cloudflared`（出站隧道） |
 
 ## 一次性准备（需要你在各家后台操作）
 
@@ -28,6 +28,8 @@
    | `INVITE_CODE` | 一个**永不过期**的邀请码（`discord.gg/` 后面那段）。留空则用 widget 的轮换邀请 |
    | `APP_TAG` | 可选；默认 `latest`，回滚时填旧的 git sha |
    | `SHARE_HOST` / `SITE_URL` / `SITE_NAME` / `GUILD_ID` | 默认值已经是现在线上的配置，一般不用改。`SHARE_HOST` 可以逗号分隔多个主机名 |
+   | `SERVICE_PASSWORD_POSTGRES` | Coolify 自动生成，不用填 |
+   | API 的变量（`API_HOST`、`OAUTH_CLIENT_SECRET`、`SESSION_SECRET`、`AI_API_KEY`…） | 切换 API 时才需要，见 [DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)。之前留空即可，分享页不依赖它们 |
 
 ## 把 discord.nanako.org 从 Worker 切到 Coolify
 
@@ -63,4 +65,5 @@ Cloudflare 默认不缓存 HTML，需要加一条 Cache Rule：Hostname 等于 `
 ## 部署与回滚
 
 - Coolify 的 compose 部署是先停后起，每次大约中断 30–60 秒，尽量深夜操作。
-- 回滚：把 `APP_TAG` 改回上一个 git sha，重新部署。
+- 回滚：把 `APP_TAG` 改回上一个 git sha，重新部署。P3a 之前的镜像没有数据库迁移，`migrate` 会直接跳过；
+  但 API 切到 Coolify 之后只能回到 P3a 及以后的镜像，更早的没有 API。

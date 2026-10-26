@@ -5,8 +5,15 @@
 //
 //   node scripts/compare-api.mjs <old-base> <new-base> [--new-host api.nanako.org]
 //
+// --new-host: send this Host (and TLS SNI) to <new-base>, e.g. to check the app
+// by IP or over an SSH tunnel before DNS points at it:
+//   node scripts/compare-api.mjs https://api.nanako.org http://127.0.0.1:8787 --new-host api-next.nanako.org
+//
 // The PG port keeps D1's exact output (timestamps, 0/1 flags, ordering), so the
 // comparison is strict: any difference is reported.
+
+import http from 'node:http';
+import https from 'node:https';
 
 const [oldBase, newBase, ...rest] = process.argv.slice(2);
 if (!oldBase || !newBase) {
@@ -16,11 +23,40 @@ if (!oldBase || !newBase) {
 const hostFlag = rest.indexOf('--new-host');
 const newHost = hostFlag >= 0 ? rest[hostFlag + 1] : undefined;
 
+/**
+ * GET with an explicit Host (and TLS SNI): fetch() silently drops a Host
+ * header, so comparing against the app by IP / through an SSH tunnel before
+ * DNS points at it needs node:http(s).
+ * @param {string} url @param {string} host
+ * @returns {Promise<{ status: number, type: string, text: string }>}
+ */
+function getWithHost(url, host) {
+  const target = new URL(url);
+  const client = target.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = client.request(
+      target,
+      { method: 'GET', headers: { Accept: 'application/json', Host: host }, servername: host },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, type: String(res.headers['content-type'] ?? ''), text }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 /** @param {string} base @param {string} path @param {string | undefined} host */
 async function get(base, path, host) {
-  const res = await fetch(`${base.replace(/\/$/, '')}${path}`, {
-    headers: { Accept: 'application/json', ...(host ? { Host: host } : {}) },
-  });
+  const url = `${base.replace(/\/$/, '')}${path}`;
+  if (host) {
+    const res = await getWithHost(url, host);
+    return { status: res.status, body: res.type.includes('json') ? JSON.parse(res.text) : res.text };
+  }
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
   return { status: res.status, body: res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text() };
 }
 

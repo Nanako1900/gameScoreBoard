@@ -168,6 +168,42 @@ export interface PoolLike extends Queryable {
   connect(): Promise<pg.PoolClient>;
 }
 
+export interface CheckedOut {
+  client: pg.PoolClient;
+  /** True once the connection itself failed: don't bother rolling back on it. */
+  readonly broken: boolean;
+  /** Back to the pool — or, if the connection broke, closed for good. */
+  release(): void;
+}
+
+/**
+ * Check a client out of the pool for a multi-statement transaction.
+ *
+ * The pool only listens for errors on idle clients. One that is checked out
+ * emits 'error' when its connection drops (postgres restarted, OOM-killed,
+ * pg_terminate_backend), and an unheard 'error' event crashes the whole
+ * process — the share page with it. The query in flight rejects anyway, so
+ * the listener only has to remember that the connection is gone.
+ */
+export async function checkOut(pool: PoolLike): Promise<CheckedOut> {
+  const client = await pool.connect();
+  let failure: Error | undefined;
+  const onError = (error: Error): void => {
+    failure = error;
+  };
+  client.on('error', onError);
+  return {
+    client,
+    get broken() {
+      return failure !== undefined;
+    },
+    release() {
+      client.off('error', onError);
+      client.release(failure);
+    },
+  };
+}
+
 export class PgD1Database {
   constructor(readonly queryable: PoolLike) {}
 
@@ -177,18 +213,18 @@ export class PgD1Database {
 
   /** D1 batches are atomic: one transaction, rolled back as a whole on any error. */
   async batch(statements: readonly PgPreparedStatement[]): Promise<D1Result[]> {
-    const client = await this.queryable.connect();
+    const tx = await checkOut(this.queryable);
     try {
-      await client.query('BEGIN');
+      await tx.client.query('BEGIN');
       const results: D1Result[] = [];
-      for (const statement of statements) results.push(await statement.runOn(client));
-      await client.query('COMMIT');
+      for (const statement of statements) results.push(await statement.runOn(tx.client));
+      await tx.client.query('COMMIT');
       return results;
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
+      if (!tx.broken) await tx.client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      tx.release();
     }
   }
 }
