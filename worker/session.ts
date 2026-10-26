@@ -142,6 +142,25 @@ export interface CookieConfig {
   sameSite?: string;
   /** Optional cookie Domain, e.g. '.example.com' to span sibling subdomains. */
   domain?: string;
+  /**
+   * Prefix both cookie names with `__Host-`: the browser then rejects any copy
+   * that carries a Domain, so a sibling subdomain can neither plant nor
+   * overwrite them. Incompatible with `domain`.
+   */
+  hostOnly?: boolean;
+}
+
+export interface CookieNames {
+  session: string;
+  state: string;
+}
+
+const HOST_PREFIX = '__Host-';
+
+/** Cookie names for this deployment (see CookieConfig.hostOnly). */
+export function cookieNames(cfg?: CookieConfig): CookieNames {
+  const prefix = cfg?.hostOnly ? HOST_PREFIX : '';
+  return { session: `${prefix}${SESSION_COOKIE}`, state: `${prefix}${STATE_COOKIE}` };
 }
 
 /**
@@ -156,19 +175,19 @@ function baseAttrs(cfg?: CookieConfig): string {
 }
 
 export function buildSessionCookie(token: string, cfg?: CookieConfig): string {
-  return `${SESSION_COOKIE}=${token}; ${baseAttrs(cfg)}; Max-Age=${SESSION_MAX_AGE_SEC}`;
+  return `${cookieNames(cfg).session}=${token}; ${baseAttrs(cfg)}; Max-Age=${SESSION_MAX_AGE_SEC}`;
 }
 
 export function buildClearSessionCookie(cfg?: CookieConfig): string {
-  return `${SESSION_COOKIE}=; ${baseAttrs(cfg)}; Max-Age=0`;
+  return `${cookieNames(cfg).session}=; ${baseAttrs(cfg)}; Max-Age=0`;
 }
 
 export function buildStateCookie(value: string, cfg?: CookieConfig): string {
-  return `${STATE_COOKIE}=${value}; ${baseAttrs(cfg)}; Max-Age=${STATE_MAX_AGE_SEC}`;
+  return `${cookieNames(cfg).state}=${value}; ${baseAttrs(cfg)}; Max-Age=${STATE_MAX_AGE_SEC}`;
 }
 
 export function buildClearStateCookie(cfg?: CookieConfig): string {
-  return `${STATE_COOKIE}=; ${baseAttrs(cfg)}; Max-Age=0`;
+  return `${cookieNames(cfg).state}=; ${baseAttrs(cfg)}; Max-Age=0`;
 }
 
 /** Read a single cookie value from the request's Cookie header. */

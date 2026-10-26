@@ -58,6 +58,7 @@ export interface Env {
   ADMIN_SUBJECT_IDS?: string; // comma-separated OAuth subject ids -> is_admin on login
   ADMIN_USERNAMES?: string;  // deprecated; ignored once ADMIN_SUBJECT_IDS is set
   READ_ONLY?: string;        // '1' | 'true' = maintenance: writes + /auth/callback -> 503
+  HOST_ONLY_COOKIES?: string; // '1' = __Host-edg_session / __Host-edg_oauth_state (no Domain)
 
   // AI 裁决 — all overridable at runtime from app_settings EXCEPT AI_API_KEY.
   AI_ENABLED?: string;
@@ -70,7 +71,8 @@ export interface Env {
   SESSION_ORGANIZER_CAN_FILE?: string; // 'false' = organizers may only record attendance
 
   // Split deployment (see DEPLOY-EDGEONE.md)
-  FRONTEND_ORIGIN?: string; FRONTEND_URL?: string;
+  FRONTEND_ORIGIN?: string;
+  FRONTEND_URL?: string;     // login returns here; when set (and not this origin), non-API paths 302 here (no-store)
   COOKIE_SAMESITE?: string; COOKIE_DOMAIN?: string;
   AVATAR_ALLOWED_HOSTS?: string;
 }

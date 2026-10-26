@@ -44,6 +44,8 @@ export interface Env {
   FRONTEND_URL?: string; // absolute SPA URL that /auth/callback redirects to after login
   COOKIE_SAMESITE?: string; // 'Lax' (default) | 'None' | 'Strict'
   COOKIE_DOMAIN?: string; // e.g. '.example.com' to share the cookie across sibling subdomains
+  /** '1' = __Host- cookie names (host-only, no Domain). For the Pages + api.<domain> split. */
+  HOST_ONLY_COOKIES?: string;
 
   // Extra hostnames allowed for the /api/avatar image proxy (comma-separated).
   // The OAuth provider's registrable domain is always allowed automatically.

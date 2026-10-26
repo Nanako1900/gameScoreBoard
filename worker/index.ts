@@ -8,7 +8,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv, Env } from './types';
 import { ApiError } from './errors';
-import { isReadOnly } from './http';
+import { isReadOnly, legacySpaRedirect } from './http';
 import { weeklyHeal } from './db';
 import { sweepDueCases } from './cases';
 import { registerRoutes } from './routes';
@@ -32,8 +32,18 @@ app.onError((err, c) => {
   return c.json({ error: '服务器内部错误' }, 500);
 });
 
-// SPA fallback: delegate non-API requests to the static assets.
-app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw));
+// SPA fallback: delegate non-API requests to the static assets — or, once the
+// SPA has moved to FRONTEND_URL (Cloudflare Pages), send old links there.
+// Temporary and uncacheable on purpose: browsers keep a 301 forever, so after a
+// rollback anyone who had seen it would keep landing on the new host.
+app.all('*', (c) => {
+  const target = legacySpaRedirect(c.env, c.req.url);
+  if (target) {
+    c.header('Cache-Control', 'no-store');
+    return c.redirect(target, 302);
+  }
+  return c.env.ASSETS.fetch(c.req.raw);
+});
 
 export default {
   fetch: app.fetch,
