@@ -644,12 +644,16 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       }
     } else if (posted) {
       // The session channel was changed: take the old card down (its buttons
-      // would keep working, and it would never be updated again).
+      // would keep working, and it would never be updated again) — if the bot
+      // still can: an old channel it may no longer see must not keep the new
+      // one from getting its card.
       try {
         await api.remove(posted.channel_id, posted.message_id);
       } catch (error) {
         const code = errorCode(error);
-        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) {
+          log.warn(`outbox ${row.id}: could not take down the old card in ${posted.channel_id}: ${describe(error)}`);
+        }
       }
       await pool.query("DELETE FROM discord_messages WHERE entity = 'session' AND entity_id = $1 AND purpose = 'card'", [
         String(sessionId),

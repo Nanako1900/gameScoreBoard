@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { appealCase, judgeAndDecide, overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
-import { cancelSession, createSession, MAX_OPEN_SESSIONS, setRsvp, updateSession } from '../../worker/sessions';
+import { cancelSession, createSession, MAX_OPEN_SESSIONS, MAX_SESSIONS_PER_DAY, setRsvp, updateSession } from '../../worker/sessions';
 import { fileCase } from '../../worker/case-filing';
 import { scoreMutation, weeklyHeal } from '../../worker/db';
 import { WEEKLY_BONUS_CAP } from '../../shared/scoring';
@@ -342,5 +342,24 @@ describe('concurrent score changes on PostgreSQL', () => {
     expect(refused.map((r) => r.reason.status)).toEqual([429]);
     const made = await pool.query("SELECT COUNT(*)::int AS n FROM game_sessions WHERE organizer_id = 'org'");
     expect(made.rows[0].n).toBe(MAX_OPEN_SESSIONS);
+  });
+
+  it(`a burst of creates stops at ${MAX_SESSIONS_PER_DAY} a day, too`, async () => {
+    const organizer = await seedUser({ id: 'org' });
+    // Sessions made today that have already started: not open, but made today.
+    for (let i = 0; i < MAX_SESSIONS_PER_DAY - 1; i += 1) {
+      await env.DB.prepare("INSERT INTO game_sessions (organizer_id, title, starts_at) VALUES ('org', ?, ?)")
+        .bind(`局${i}`, new Date(Date.now() - 60_000).toISOString())
+        .run();
+    }
+    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
+    const results = await queuedBehind(
+      'UPDATE users SET score = score WHERE id = $1',
+      ['org'],
+      Array.from({ length: 3 }, () => () => createSession(env.DB, organizer, { starts_at: startsAt }, OFFSET_HOURS)),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const made = await pool.query("SELECT COUNT(*)::int AS n FROM game_sessions WHERE organizer_id = 'org'");
+    expect(made.rows[0].n).toBe(MAX_SESSIONS_PER_DAY);
   });
 });

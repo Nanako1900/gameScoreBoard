@@ -9,10 +9,12 @@
 -- (entity_id '<id>:starting') so a card stuck in retries cannot hold it up.
 --
 -- Bursty changes are coalesced, not queued one by one: the card has ONE
--- refresh event per session, re-armed a moment out on every change (delivery
--- renders the current state anyway), and "the time changed" is one DM per
--- (session, person), re-armed a few minutes out — an RSVP toggled 60 times, or
--- a session moved 10 times, is one edit and one DM.
+-- refresh event per session, due a moment after the first change of a burst
+-- (delivery renders the current state anyway; a steady stream of changes
+-- cannot hold it off), and "the time changed" is one DM per (session, person),
+-- due a few minutes after the first move — an RSVP toggled 60 times, or a
+-- session moved 10 times, is one edit and one DM. Once delivered, the next
+-- change is a new event (outbox_schedule keeps the sent one: budgets count it).
 --
 -- Notifications skip the organizer on the assumption that they made the
 -- change; when an admin cancels or moves someone else's session, the organizer
@@ -32,7 +34,7 @@ $$;
 CREATE OR REPLACE FUNCTION outbox_session_card(p_session_id bigint) RETURNS void
 LANGUAGE sql AS $$
   SELECT outbox_schedule('session.card', 'session', p_session_id::text, 'session:' || p_session_id || ':card',
-                         jsonb_build_object('session_id', p_session_id), now() + interval '2 seconds');
+                         jsonb_build_object('session_id', p_session_id), now() + interval '2 seconds', true);
 $$;
 
 /**
@@ -69,7 +71,9 @@ BEGIN
   ends := starts + make_interval(mins => COALESCE(s.duration_min, 120)::int);
   -- Not again for an end that has already come (and been reminded of).
   IF ends > now() OR NOT EXISTS (
-       SELECT 1 FROM outbox WHERE dedupe_key = 'dm:session:' || sid || ':rollcall' AND processed_at IS NOT NULL) THEN
+       SELECT 1 FROM outbox
+        WHERE (dedupe_key = 'dm:session:' || sid || ':rollcall' OR dedupe_key LIKE 'dm:session:' || sid || ':rollcall:was:%')
+          AND processed_at IS NOT NULL) THEN
     PERFORM outbox_schedule('dm.session.rollcall', 'user', s.organizer_id, 'dm:session:' || sid || ':rollcall', ref, ends);
   END IF;
 END;
@@ -104,22 +108,33 @@ BEGIN
 
     IF NEW.status = 'cancelled' AND OLD.status = 'open' AND outbox_iso(NEW.starts_at) > now() THEN
       -- Tell everyone still in it — a yes, a maybe, or an invitation not yet
-      -- answered (a move puts the yeses back there) — while it is still ahead:
-      -- cancelling one that already happened is bookkeeping, not news.
+      -- answered (a move puts the yeses back there), if the bot ever told them
+      -- about it — while it is still ahead: cancelling one that already
+      -- happened is bookkeeping, not news.
       INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
       SELECT 'dm.session.cancelled', 'user', sp.user_id, 'dm:session:' || sid || ':cancelled:' || sp.user_id, ref
         FROM session_players sp
-       WHERE sp.session_id = NEW.id AND sp.rsvp IN ('going', 'maybe', 'invited') AND sp.user_id <> NEW.organizer_id
+       WHERE sp.session_id = NEW.id AND sp.user_id <> NEW.organizer_id
+         AND (sp.rsvp IN ('going', 'maybe')
+              OR (sp.rsvp = 'invited' AND EXISTS (
+                    SELECT 1 FROM outbox o
+                     WHERE o.entity = 'user' AND o.entity_id = sp.user_id AND o.result = 'sent'
+                       AND o.kind IN ('dm.session.invited', 'dm.session.changed')
+                       AND o.payload->>'session_id' = sid)))
       ON CONFLICT (dedupe_key) DO NOTHING;
     ELSIF NEW.status = 'open' AND NEW.starts_at IS DISTINCT FROM OLD.starts_at THEN
       -- One "the time changed" DM per person, however often it moves — to
       -- everyone in it: a move asks them all to answer again, a no included.
+      -- A few minutes out (a burst of moves is one DM), but before the start.
       FOR player IN
         SELECT sp.user_id FROM session_players sp
          WHERE sp.session_id = NEW.id AND sp.user_id <> NEW.organizer_id
       LOOP
         PERFORM outbox_schedule('dm.session.changed', 'user', player.user_id,
-                                'dm:session:' || sid || ':changed:' || player.user_id, ref, now() + interval '3 minutes');
+                                'dm:session:' || sid || ':changed:' || player.user_id, ref,
+                                GREATEST(now(), LEAST(now() + interval '3 minutes',
+                                                      outbox_iso(NEW.starts_at) - interval '1 minute')),
+                                true);
       END LOOP;
       PERFORM outbox_session_reminders(NEW, true);
     ELSIF NEW.status = 'open' AND NEW.duration_min IS DISTINCT FROM OLD.duration_min THEN

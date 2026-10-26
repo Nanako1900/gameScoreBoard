@@ -225,7 +225,10 @@ export async function handleRsvpButton(
       // The session moved since this button was made.
       const now = await loadSession(ctx.db, sessionId);
       const when = now ? `现在是 ${discordTime(now.starts_at, 'F')}（${discordTime(now.starts_at, 'R')}）。` : '';
-      return ephemeralReply(`🔁 这个约局改时间了，${when}请用约局频道里更新后的卡片或「改时间了」私信里的按钮，按新时间重新选。`);
+      const where = ctx.sessionCards ? '约局频道里更新后的卡片、或网页' : '网页';
+      return ephemeralReply(`🔁 这个约局改时间了，${when}请在${where}上按新时间重新选。`, {
+        buttons: [linkButton('去网页', joinUrl(ctx.frontendUrl, '/'))],
+      });
     }
     if (error instanceof ApiError) return ephemeralReply(safeLine(error.message, LIMITS.content));
     throw error;
