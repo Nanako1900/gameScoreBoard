@@ -180,6 +180,7 @@ function main(): void {
         verdictChannelId: config.verdictChannelId,
         sessionChannelId: config.sessionChannelId,
         frontendUrl: config.frontendUrl,
+        offsetHours: ctx.offsetHours,
       },
       createListener: () => new pg.Client({ connectionString: config.databaseUrl, options: '-c TimeZone=UTC' }),
       describeError,
@@ -187,8 +188,8 @@ function main(): void {
     dispatcher.start();
     console.log(
       config.verdictChannelId
-        ? `posting verdicts to channel ${config.verdictChannelId}`
-        : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts are not posted',
+        ? `posting verdicts and weekly reports to channel ${config.verdictChannelId}`
+        : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts and weekly reports are not posted',
     );
     console.log(
       config.sessionChannelId

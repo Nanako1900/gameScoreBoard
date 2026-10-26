@@ -334,6 +334,12 @@ fields) and answer `Cache-Control: private, no-store`.
 - Generation is idempotent via the `weekly_reports` primary key, and the row is
   claimed with the deterministic fallback text BEFORE the AI call, so a
   Monday-morning rush produces one narrative rather than one per visitor.
+- Last week's report is written from **Monday 10:30** board time on (not at
+  midnight), so a case filed late on Sunday is judged within its week.
+  本周之星 / 鸽王 count neither the weekly heal nor an admin's direct corrections.
+- On the Node backend, a newly written report is posted to the Discord verdict
+  channel (once per week, the latest finished week only) and a rewrite edits
+  that post.
 
 ### Admin (is_admin)
 - `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative

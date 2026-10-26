@@ -25,6 +25,23 @@ import {
   type SessionDmKind,
 } from '../discord/sessions';
 import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
+import {
+  CANNOT_DM,
+  STALE_MS,
+  UNKNOWN_CHANNEL,
+  UNKNOWN_MESSAGE,
+  errorCode,
+  errorStatus,
+  nonceFor,
+  type ChannelApi,
+  type DispatcherConfig,
+  type OutboxRow,
+  type Outcome,
+} from './kit';
+
+import { deliverReport, REPORT_KINDS } from './report-delivery';
+
+export { STALE_MS, type ChannelApi, type DispatcherConfig } from './kit';
 
 const POLL_MS = 30_000;
 const RECONNECT_MS = 5_000;
@@ -35,8 +52,6 @@ const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_S = 3_600;
 /** A refusal (401/403) waits this long, without using up an attempt: the fix is a human's. */
 const REFUSED_RETRY_S = 300;
-/** Never posted and older than this: not worth announcing any more (bot was down for a day). */
-export const STALE_MS = 24 * 3_600_000;
 /** This many 401/403 within a minute pause delivery: a reset token or a lost permission. */
 const AUTH_FAILURES_TO_PAUSE = 5;
 const AUTH_WINDOW_MS = 60_000;
@@ -75,27 +90,6 @@ function budgetFor(kind: string): Budget | null {
 /** News (not to-dos) that could not go out within this long is not worth sending late. */
 const NEWS_KINDS: ReadonlySet<DmKind> = new Set(['dm.decided', 'dm.overridden', 'dm.revoked', 'dm.appealed']);
 
-// Discord JSON error codes.
-const UNKNOWN_CHANNEL = 10003;
-const UNKNOWN_MESSAGE = 10008;
-/** "Cannot send messages to this user": DMs closed, or no server in common. */
-const CANNOT_DM = 50007;
-
-export interface ChannelApi {
-  send(channelId: string, message: ChannelMessage & { nonce: string; enforce_nonce: true }): Promise<{ id: string }>;
-  edit(channelId: string, messageId: string, message: ChannelMessage): Promise<void>;
-  remove(channelId: string, messageId: string): Promise<void>;
-  /** The DM channel with this Discord user (opened if need be). */
-  openDm(discordUserId: string): Promise<string>;
-}
-
-export interface DispatcherConfig {
-  /** null: verdict events are marked skipped, nothing is posted. */
-  verdictChannelId: string | null;
-  /** Where session cards go (P7); null or absent: no cards. */
-  sessionChannelId?: string | null;
-  frontendUrl: string;
-}
 
 export interface DispatcherDeps {
   /** Plain pg for the outbox tables. */
@@ -110,28 +104,10 @@ export interface DispatcherDeps {
   describeError?: (error: unknown) => string;
 }
 
-interface OutboxRow {
-  id: number;
-  kind: string;
-  entity: string;
-  entity_id: string;
-  payload: Record<string, unknown>;
-  claim_token: string;
-  attempts: number;
-  created_at: Date;
-  refused_since: Date | null;
-}
 
 /** The record events this version delivers; anything else waits for a newer one. */
 const RECORD_KINDS: ReadonlySet<string> = new Set(['case.decided', 'case.overridden', 'case.revoked', 'case.removed']);
 
-type Outcome =
-  | { result: 'sent' | 'skipped' | 'dead'; note: string | null }
-  /**
-   * `refused`: Discord said 401/403 — retried every few minutes without counting
-   * the attempt; `unhandled`: this version has no handler — left for a newer one.
-   */
-  | { result: 'retry'; note: string; refused?: boolean; unhandled?: boolean };
 
 export interface Dispatcher {
   start(): void;
@@ -140,25 +116,6 @@ export interface Dispatcher {
   stop(): Promise<void>;
 }
 
-function errorStatus(error: unknown): number | null {
-  const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === 'number' ? status : null;
-}
-
-function errorCode(error: unknown): number | null {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'number' ? code : null;
-}
-
-/**
- * Discord returns the first message instead of a second one for a repeated
- * nonce (a send retried after a crash between sending and recording it). An
- * event re-armed for later (a reminder whose deadline moved) is a new send:
- * re-arming resets created_at, so the nonce changes with it. At most 25 chars.
- */
-function nonceFor(row: OutboxRow): string {
-  return `ob${row.id}.${row.created_at.getTime().toString(36)}`;
-}
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { pool, db, api, config } = deps;
@@ -709,7 +666,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             ? await deliverDm(row)
             : row.entity === 'session'
               ? await deliverSession(row)
-              : unhandled(row);
+              : row.entity === 'report' && REPORT_KINDS.has(row.kind)
+                ? await deliverReport(row, { pool, db, api, config })
+                : unhandled(row);
     } catch (error) {
       outcome = outcomeOf(error, row);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);

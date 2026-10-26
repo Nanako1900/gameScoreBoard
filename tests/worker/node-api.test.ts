@@ -23,8 +23,11 @@ const BASE_ENV = {
   AI_ENABLED: 'false',
 };
 
-const api = (extra: Record<string, string> = {}) =>
-  createApi(buildEnv({ ...BASE_ENV, ...extra }, testEnv.DB), { onError: () => undefined });
+/** Some Wednesday noon at UTC+8: past the report's Monday 10:30, whatever the real time. */
+const REPORT_DUE = Date.parse('2026-10-28T04:00:00Z');
+
+const api = (extra: Record<string, string> = {}, now?: () => number) =>
+  createApi(buildEnv({ ...BASE_ENV, ...extra }, testEnv.DB), { onError: () => undefined, now: now ?? (() => REPORT_DUE) });
 
 async function heals(): Promise<number> {
   const row = await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM weekly_heals').first<{ n: number }>();
@@ -209,6 +212,15 @@ describe('runJobs — the timer that replaces Cloudflare cron', () => {
   it('writes last week’s report, which only ever ran lazily on the Worker', async () => {
     await lastWeekActivity();
     await api().runJobs();
+    expect(await reports()).toBe(1);
+  });
+
+  it('writes it only from Monday 10:30 on (board time)', async () => {
+    await lastWeekActivity();
+    // Monday 10:29 and 10:30 at UTC+8.
+    await api({}, () => Date.parse('2026-10-26T02:29:00Z')).runJobs();
+    expect(await reports()).toBe(0);
+    await api({}, () => Date.parse('2026-10-26T02:30:00Z')).runJobs();
     expect(await reports()).toBe(1);
   });
 

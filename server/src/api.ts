@@ -71,6 +71,8 @@ export interface ApiRuntime {
 
 export interface ApiOptions {
   onError?: (context: string, error: unknown) => void;
+  /** The clock the weekly report's Monday 10:30 is read from (tests). */
+  now?: () => number;
 }
 
 export function createApi(env: Env, options: ApiOptions = {}): ApiRuntime {
@@ -101,7 +103,7 @@ export function createApi(env: Env, options: ApiOptions = {}): ApiRuntime {
     // Heal + overdue judging: exactly what the Worker's cron handler does.
     await worker.scheduled(controller, env, ctx);
     // The weekly report only ever ran lazily on GET /api/config; run it too.
-    await ensureWeeklyReport(env.DB, env, resetOffsetHours(env.RESET_TZ_OFFSET)).catch((error: unknown) =>
+    await ensureWeeklyReport(env.DB, env, resetOffsetHours(env.RESET_TZ_OFFSET), options.now?.()).catch((error: unknown) =>
       onError('weekly report failed', error),
     );
   }

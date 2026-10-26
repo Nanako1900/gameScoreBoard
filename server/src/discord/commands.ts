@@ -20,6 +20,7 @@ import { listMyInvites } from '../../../worker/sessions';
 import type { RecordItem, SessionItem, User } from '../../../worker/types';
 import { boundUser, linkByDiscordId, unlinkAccounts } from './links';
 import { handleYue, YUE_SLOTS } from './sessions';
+import { reportEmbed } from './report';
 
 export { boundUser };
 import {
@@ -35,7 +36,6 @@ import {
   webUrl,
   publicReply,
   safeLine,
-  safeText,
 } from './render';
 import type {
   BotContext,
@@ -166,13 +166,6 @@ async function resolveTarget(input: CommandInput, ctx: BotContext): Promise<Targ
 function unboundTarget(target: Target): BotReply {
   if (target.self) return ephemeralReply(NOT_LINKED);
   return ephemeralReply(`${safeLine(target.ref.username, NAME_MAX)} 还没有绑定 Nanako 账号。`);
-}
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** A stored YYYY-MM-DD as-is; anything else is not shown. */
-function dateOnly(value: string | null | undefined): string {
-  return value && DATE.test(value) ? value : '—';
 }
 
 export function violationLabel(type: string): string {
@@ -355,35 +348,7 @@ async function handleTodo(input: CommandInput, ctx: BotContext): Promise<BotRepl
 async function handleReport(_input: CommandInput, ctx: BotContext): Promise<BotReply> {
   const report = await getLatestReport(ctx.db);
   if (!report) return ephemeralReply('还没有战报。');
-  const s = report.stats;
-  const fields: BotEmbedField[] = [
-    { name: '开局', value: `${s.sessionsPlayed} 局`, inline: true },
-    { name: '立案', value: `${s.casesFiled} 起`, inline: true },
-    { name: '合计扣分', value: String(s.totalPenalty), inline: true },
-    {
-      name: '出勤率',
-      value: s.attendanceRate === null ? '—' : `${Math.round(s.attendanceRate * 100)}%`,
-      inline: true,
-    },
-  ];
-  if (s.star) {
-    fields.push({ name: '🏆 本周之星', value: `${safeLine(s.star.name, NAME_MAX)}（${formatDelta(s.star.delta)}）`, inline: true });
-  }
-  if (s.pigeon) {
-    fields.push({ name: '🕊️ 本周鸽王', value: `${safeLine(s.pigeon.name, NAME_MAX)}（${formatDelta(s.pigeon.delta)}）`, inline: true });
-  }
-  return publicReply(undefined, {
-    embeds: [
-      {
-        title: `📰 周报 · ${dateOnly(report.week_start)} – ${dateOnly(s.weekEnd)}`,
-        description: safeText(report.narrative, LIMITS.embedDescription),
-        color: GOLD,
-        fields,
-        footer: { text: report.source === 'ai' ? '数字由系统统计，文字由 AI 撰写' : '数字由系统统计' },
-      },
-    ],
-    buttons: [webButton(ctx, '在网页查看')],
-  });
+  return publicReply(undefined, { embeds: [reportEmbed(report)], buttons: [webButton(ctx, '在网页查看')] });
 }
 
 async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotReply> {
