@@ -146,6 +146,9 @@ export async function importD1(
   const { client } = tx;
   try {
     await client.query('BEGIN');
+    // History, not news: the outbox triggers (0004_dm.sql) skip this transaction,
+    // or every imported open case would DM its subject "you were just filed".
+    await client.query("SET LOCAL edg.importing = 'on'");
     const report = await preflight(client, data);
     if (report.unknown.length > 0) {
       throw new ImportError(`export has tables/columns this schema lacks: ${report.unknown.join(', ')}`);

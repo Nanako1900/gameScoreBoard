@@ -86,6 +86,12 @@ describe('toCommandInput', () => {
     const { interaction } = fakeInteraction({ commandName: 'top' });
     expect(toCommandInput(interaction).targetUser).toBeNull();
   });
+
+  it('reads /notify’s on/off choice', () => {
+    const { interaction, fake } = fakeInteraction({ commandName: 'notify' });
+    Object.assign(fake.options, { getString: vi.fn((name: string) => (name === 'state' ? 'off' : null)) });
+    expect(toCommandInput(interaction)).toMatchObject({ commandName: 'notify', state: 'off' });
+  });
 });
 
 describe('toReplyOptions', () => {

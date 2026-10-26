@@ -54,7 +54,7 @@ export function parseVerdictButton(customId: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function isPenalty(type: string): boolean {
+export function isPenalty(type: string): boolean {
   const def = Object.prototype.hasOwnProperty.call(VIOLATION_MAP, type) ? VIOLATION_MAP[type] : undefined;
   return def?.kind === 'penalty';
 }

@@ -46,6 +46,7 @@ import type {
 // --- Command definitions -----------------------------------------------------
 
 const CHAT_INPUT = 1;
+const STRING_OPTION = 3;
 const USER_OPTION = 6;
 
 interface CommandOption {
@@ -53,6 +54,7 @@ interface CommandOption {
   name: string;
   description: string;
   required?: boolean;
+  choices?: Array<{ name: string; value: string }>;
 }
 
 export interface CommandDefinition {
@@ -85,6 +87,23 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述和待回应的约局' },
   { type: CHAT_INPUT, name: 'report', description: '最新一期周报' },
+  {
+    type: CHAT_INPUT,
+    name: 'notify',
+    description: '私信提醒开关：被立案、快截止、出判决时私信你',
+    options: [
+      {
+        type: STRING_OPTION,
+        name: 'state',
+        description: '开还是关',
+        required: true,
+        choices: [
+          { name: '开', value: 'on' },
+          { name: '关', value: 'off' },
+        ],
+      },
+    ],
+  },
 ];
 
 // --- Shared pieces -----------------------------------------------------------
@@ -329,6 +348,23 @@ async function handleReport(_input: CommandInput, ctx: BotContext): Promise<BotR
   });
 }
 
+async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotReply> {
+  if (ctx.readOnly) return ephemeralReply(READ_ONLY_TEXT);
+  const link = await linkByDiscordId(ctx.db, input.caller.id);
+  if (!link) return ephemeralReply(NOT_LINKED);
+  const on = input.state !== 'off';
+  // Also clears a "DMs closed" mark: whoever asks for DMs gets one more try.
+  await ctx.db
+    .prepare("UPDATE discord_links SET notify_dm = ?, dm_ok = 1, updated_at = datetime('now') WHERE discord_user_id = ?")
+    .bind(on ? 1 : 0, input.caller.id)
+    .run();
+  return ephemeralReply(
+    on
+      ? '已打开私信提醒：被立案、陈述快截止、出判决时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
+      : '已关闭私信提醒。网页上仍能看到一切；想重新打开用 /notify 开。',
+  );
+}
+
 type Handler = (input: CommandInput, ctx: BotContext) => Promise<BotReply>;
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
@@ -339,6 +375,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   verdicts: handleVerdicts,
   todo: handleTodo,
   report: handleReport,
+  notify: handleNotify,
 };
 
 /**

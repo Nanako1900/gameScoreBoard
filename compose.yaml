@@ -142,6 +142,10 @@ services:
       # P5: the private channel verdicts are posted to (#edg-信誉分). Empty:
       # nothing is posted. See docs/DEPLOY-DISCORD.md, "判决播报".
       DISCORD_VERDICT_CHANNEL_ID: ${DISCORD_VERDICT_CHANNEL_ID:-}
+      # P6: a statement written in Discord is judged on the spot, by the same
+      # AI as the web — so the bot needs the same key.
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_ENABLED: ${AI_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy

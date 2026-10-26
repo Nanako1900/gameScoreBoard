@@ -14,7 +14,8 @@
 
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
-import { isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
+import { dmStillRelevant, isDmKind, renderDm, type DmKind } from '../discord/dm';
+import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
 
 const POLL_MS = 30_000;
 const RECONNECT_MS = 5_000;
@@ -32,14 +33,23 @@ const AUTH_FAILURES_TO_PAUSE = 5;
 const AUTH_WINDOW_MS = 60_000;
 const PAUSE_MS = 5 * 60_000;
 
+/** New DMs one person gets per 24 h; past it they are skipped (the web has it all). */
+export const DM_BUDGET = 10;
+/** News (not to-dos) that could not go out within this long is not worth sending late. */
+const NEWS_KINDS: ReadonlySet<DmKind> = new Set(['dm.decided', 'dm.overridden', 'dm.revoked', 'dm.appealed']);
+
 // Discord JSON error codes.
 const UNKNOWN_CHANNEL = 10003;
 const UNKNOWN_MESSAGE = 10008;
+/** "Cannot send messages to this user": DMs closed, or no server in common. */
+const CANNOT_DM = 50007;
 
 export interface ChannelApi {
   send(channelId: string, message: ChannelMessage & { nonce: string; enforce_nonce: true }): Promise<{ id: string }>;
   edit(channelId: string, messageId: string, message: ChannelMessage): Promise<void>;
   remove(channelId: string, messageId: string): Promise<void>;
+  /** The DM channel with this Discord user (opened if need be). */
+  openDm(discordUserId: string): Promise<string>;
 }
 
 export interface DispatcherConfig {
@@ -118,10 +128,13 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
            WHERE o.processed_at IS NULL
              AND o.available_at <= now()
              AND (o.claimed_at IS NULL OR o.claimed_at < now() - interval '${CLAIM_TIMEOUT}')
+             -- In order per entity, but a reminder scheduled for later (never
+             -- tried yet) does not hold up what comes after it.
              AND NOT EXISTS (
                SELECT 1 FROM outbox e
                 WHERE e.entity = o.entity AND e.entity_id = o.entity_id
-                  AND e.processed_at IS NULL AND e.id < o.id)
+                  AND e.processed_at IS NULL AND e.id < o.id
+                  AND (e.available_at <= now() OR e.attempts > 0))
            ORDER BY o.id
            LIMIT 1
            FOR UPDATE SKIP LOCKED)
@@ -268,10 +281,90 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return { result: 'sent', note: null };
   }
 
+  /** New DMs this person got in the last 24 h (edits of an earlier DM not counted). */
+  async function dmsToday(userId: string): Promise<number> {
+    const res = await pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM outbox
+        WHERE entity = 'user' AND entity_id = $1 AND result = 'sent' AND kind <> 'dm.withdrawn'
+          AND processed_at > now() - interval '1 day'`,
+      [userId],
+    );
+    return res.rows[0]?.n ?? 0;
+  }
+
+  /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
+  async function deliverDm(row: OutboxRow): Promise<Outcome> {
+    if (!isDmKind(row.kind)) return { result: 'skipped', note: `no handler for ${row.kind}` };
+    const kind = row.kind;
+    const recordId = Number(row.payload.record_id);
+    if (!Number.isSafeInteger(recordId)) return { result: 'skipped', note: 'no record in the payload' };
+
+    const link = (
+      await pool.query<{ discord_user_id: string; notify_dm: number; dm_ok: number }>(
+        'SELECT discord_user_id, notify_dm, dm_ok FROM discord_links WHERE user_id = $1',
+        [row.entity_id],
+      )
+    ).rows[0];
+    if (!link) return { result: 'skipped', note: 'recipient has no Discord binding' };
+    if (!link.notify_dm) return { result: 'skipped', note: 'recipient turned DMs off (/notify)' };
+    if (!link.dm_ok) return { result: 'skipped', note: 'recipient does not accept DMs from the bot' };
+
+    const record = await getRecordItemById(db, recordId);
+    if (!record || !isPenalty(record.type)) return { result: 'skipped', note: 'nothing to say about this record' };
+    if (!dmStillRelevant(kind, record)) return { result: 'skipped', note: 'no longer true' };
+    if (NEWS_KINDS.has(kind) && Date.now() - row.created_at.getTime() > STALE_MS) {
+      return { result: 'skipped', note: 'stale: older than 24 h' };
+    }
+    const message = renderDm(kind, record, config.frontendUrl);
+    if (!message) return { result: 'skipped', note: 'nothing to say' };
+
+    if (kind === 'dm.withdrawn') {
+      // Rewrite the filing DM in place (its 写陈述 button goes); never a new DM.
+      const filed = await messageFor('record', String(recordId), 'dm:filed');
+      if (!filed) return { result: 'skipped', note: 'the filing was never DMed' };
+      try {
+        await api.edit(filed.channel_id, filed.message_id, message);
+      } catch (error) {
+        const code = errorCode(error);
+        if (code === UNKNOWN_MESSAGE || code === UNKNOWN_CHANNEL) return { result: 'skipped', note: 'filing DM is gone' };
+        throw error;
+      }
+      return { result: 'sent', note: null };
+    }
+
+    if ((await dmsToday(row.entity_id)) >= DM_BUDGET) return { result: 'skipped', note: 'daily DM budget used up' };
+    try {
+      const channelId = await api.openDm(link.discord_user_id);
+      const sent = await api.send(channelId, { ...message, nonce: `ob${row.id}`, enforce_nonce: true });
+      if (kind === 'dm.filed') {
+        await pool.query(
+          `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
+           VALUES ('record', $1, 'dm:filed', $2, $3)
+           ON CONFLICT (entity, entity_id, purpose)
+           DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
+          [String(recordId), channelId, sent.id],
+        );
+      }
+    } catch (error) {
+      // Not a refusal of the bot as a whole: this one person's DMs are shut.
+      if (errorCode(error) === CANNOT_DM) {
+        await pool.query('UPDATE discord_links SET dm_ok = 0 WHERE user_id = $1', [row.entity_id]);
+        return { result: 'skipped', note: 'DMs closed (50007)' };
+      }
+      throw error;
+    }
+    return { result: 'sent', note: null };
+  }
+
   async function handle(row: OutboxRow): Promise<void> {
     let outcome: Outcome;
     try {
-      outcome = row.entity === 'record' ? await deliverRecord(row) : { result: 'skipped', note: `no handler for ${row.entity}` };
+      outcome =
+        row.entity === 'record'
+          ? await deliverRecord(row)
+          : row.entity === 'user'
+            ? await deliverDm(row)
+            : { result: 'skipped', note: `no handler for ${row.entity}` };
     } catch (error) {
       outcome = outcomeOf(error);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);

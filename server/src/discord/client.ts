@@ -17,6 +17,7 @@ import {
   type APIEmbed,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type ModalSubmitInteraction,
   type InteractionReplyOptions,
   type REST,
   type User,
@@ -26,8 +27,8 @@ import type { BotContext, BotEmbed, BotReply, CommandInput, DiscordUserRef } fro
 
 export type CommandHandler = (input: CommandInput, ctx: BotContext) => Promise<BotReply>;
 
-/** What respond() can answer: a slash command or a button press. */
-export type Answerable = ChatInputCommandInteraction | ButtonInteraction;
+/** What respond() can answer: a slash command, a button press, a submitted modal. */
+export type Answerable = ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction;
 
 export const ERROR_TEXT = '出错了，请稍后再试';
 export const WRONG_GUILD_TEXT = '这个 bot 只在 EDG 服务器里用。';
@@ -71,10 +72,13 @@ function toUserRef(user: Pick<User, 'id' | 'username'>): DiscordUserRef {
 export function toCommandInput(interaction: ChatInputCommandInteraction): CommandInput {
   // null when the command has no `user` option or it was left out.
   const target = interaction.options.getUser('user');
+  // Only /notify has it.
+  const state = interaction.commandName === 'notify' ? interaction.options.getString('state') : null;
   return {
     commandName: interaction.commandName,
     caller: toUserRef(interaction.user),
     targetUser: target ? toUserRef(target) : null,
+    ...(state !== null ? { state } : {}),
   };
 }
 
@@ -395,6 +399,10 @@ export function restChannelApi(rest: REST): ChannelApi {
     },
     async remove(channelId, messageId) {
       await rest.delete(Routes.channelMessage(channelId, messageId));
+    },
+    async openDm(discordUserId) {
+      const channel = (await rest.post(Routes.userChannels(), { body: { recipient_id: discordUserId } })) as { id: string };
+      return channel.id;
     },
   };
 }
