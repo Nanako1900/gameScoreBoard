@@ -262,7 +262,9 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
   the subject argued against the lesser charge, so re-sentencing is an admin override.
 - `POST /api/records/:id/escalate/dismiss` → `{ record }`. Keep the lesser charge.
 - `POST /api/records/:id/reclassify` `{ type }` → `{ record }`. Filing judge or
-  admin overrides the AI's category, pre-verdict, penalties only.
+  admin overrides the AI's category, pre-verdict, penalties only. A roll-call case
+  (filed by settling a session) may only move between `no_show` and
+  `no_show_group` unless an admin does it — the charge follows the roll call.
 - `POST /api/records/:id/statement` `{ statement }` → `{ record }`. Subject only,
   `awaiting_statement` only, **once**. Claims the case atomically and runs the
   verdict synchronously, so the response already carries the judgment.
@@ -302,12 +304,14 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 - `POST /api/sessions/:id/settle` `{ file: [{ user_id, type?, claim? }], skip_all? }`
   → `{ session, created, skipped }`. Organizer/admin, once (409 afterwards).
   - `skip_all` or an empty `file` settles with **zero** score impact;
+  - only players who answered `going` are filed against — penalties and the
+    `on_time_bonus` alike (an invitee or a `maybe` made no promise);
   - the violation type is always re-derived server-side from stored attendance;
     a client `type` is honoured only for `no_show → no_show_group`;
   - a non-judge organizer may file inside their own session unless
     `SESSION_ORGANIZER_CAN_FILE="false"`;
-  - `organizer_bonus` is granted automatically when ≥ 2 people actually attended,
-    still bounded by `WEEKLY_BONUS_CAP`.
+  - `organizer_bonus` is granted automatically when ≥ 2 people who answered
+    `going` actually attended, still bounded by `WEEKLY_BONUS_CAP`.
 
 ### Weekly report
 - `GET /api/report/latest` → `{ report: WeeklyReport | null }` (public, read-only).

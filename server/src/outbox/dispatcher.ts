@@ -488,16 +488,24 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     if (!purpose) return { result: 'sent', note: null };
 
     // Remember it (a withdrawal or a deletion rewrites it) — unless the record
-    // was deleted while this was being sent: then say so in it straight away.
+    // was deleted while this was being sent. The lock waits out a deletion in
+    // progress (whose trigger saw nothing stored yet); a record that is gone
+    // gets its DM rewritten like any other, as an event, so it is retried.
     const kept = await pool.query(
       `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
-       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5)
+       SELECT 'record', $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM records WHERE id = $5 FOR KEY SHARE)
        ON CONFLICT (entity, entity_id, purpose)
        DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
       [String(recordId), purpose, sent.channelId, sent.messageId, recordId],
     );
     if (kept.rowCount === 0) {
-      await tidy(row, sent.channelId, sent.messageId, removedDm(), 'rewrite a DM about a deleted record');
+      await pool.query(
+        `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+         VALUES ('dm.removed', 'user', $1, 'dm:case:' || $2 || ':removed:' || $3 || ':' || $4,
+                 jsonb_build_object('record_id', $2::bigint, 'purpose', $3::text, 'channel_id', $5::text, 'message_id', $4::text))
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+        [row.entity_id, recordId, purpose, sent.messageId, sent.channelId],
+      );
       return { result: 'sent', note: null };
     }
     // A reminder sent again (its deadline moved): the earlier one loses its

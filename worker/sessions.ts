@@ -378,7 +378,8 @@ export async function updateSession(
   let moved = false;
   if (input.starts_at !== undefined) {
     const startsAt = normalizeStartsAt(input.starts_at);
-    moved = startsAt !== row.starts_at;
+    // The same moment written another way (or stored the old way) is no move.
+    moved = Date.parse(startsAt) !== parseSqlUtc(row.starts_at);
     sets.push('starts_at = ?');
     binds.push(startsAt);
   }
@@ -442,10 +443,10 @@ const MOVED_MESSAGE = '约局时间已经改了，请按新的时间重新确认
 
 /**
  * Answer a session. `seenStartsAt` is the start time the player was shown
- * (the web and the bot's buttons send it): a yes or a maybe is to that time,
- * so if the session has moved since, nothing is written and the answer is a
- * 409 — a stale page or an old invitation DM cannot sign someone up for a
- * time they never saw. A no needs no such care.
+ * (the web and the bot's buttons send it): the answer is to that time, so if
+ * the session has moved since, nothing is written and the answer is a 409 —
+ * a stale page or an old invitation DM cannot sign someone up for a time they
+ * never saw, nor turn down one they were never asked about.
  */
 export async function setRsvp(
   db: D1Database,
@@ -466,12 +467,15 @@ export async function setRsvp(
   if (row.organizer_id === caller.id && rawRsvp !== 'going') {
     throw new ApiError(400, '组织者不能退出自己的局，请直接取消约局');
   }
-  const committing = rawRsvp !== 'out';
-  if (committing && seenStartsAt !== undefined && seenStartsAt !== null) {
-    const seen = typeof seenStartsAt === 'string' ? Date.parse(seenStartsAt) : Number.NaN;
+  const seenGiven = seenStartsAt !== undefined && seenStartsAt !== null;
+  if (seenGiven) {
+    const seen = typeof seenStartsAt === 'string' ? parseSqlUtc(seenStartsAt) : Number.NaN;
     if (!Number.isFinite(seen)) throw new ApiError(400, '开始时间格式无效');
     if (seen !== parseSqlUtc(row.starts_at)) throw new ApiError(409, MOVED_MESSAGE);
   }
+  // A time sent is checked for every answer; without one, a yes or a maybe
+  // still holds only for the time read here.
+  const holdTime = seenGiven || rawRsvp !== 'out';
 
   if (occupiesSlot(rawRsvp) && row.capacity !== null) {
     const existing = await db
@@ -500,10 +504,9 @@ export async function setRsvp(
              WHERE session_id = ? AND rsvp = 'going' AND user_id != ?) < ?)`
     : '1 = 1';
   const seatBinds = capped ? [id, caller.id, id, caller.id, row.capacity] : [];
-  // A yes or maybe also holds only for the time read above (a move in between
-  // put everyone back to 'invited').
-  const sameTime = committing ? 'AND starts_at = ?' : '';
-  const timeBinds = committing ? [row.starts_at] : [];
+  // …and still holds when written (a move in between put everyone back to 'invited').
+  const sameTime = holdTime ? 'AND starts_at = ?' : '';
+  const timeBinds = holdTime ? [row.starts_at] : [];
   const results = await db.batch([
     db.prepare('UPDATE game_sessions SET status = status WHERE id = ?').bind(id),
     db

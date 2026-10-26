@@ -1077,12 +1077,58 @@ describe('setRsvp — an answer is to the time the player saw', () => {
     expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('invited');
   });
 
-  it('a yes to the current time is fine, however it is written; a no needs no time', async () => {
+  it('a yes to the current time is fine, however it is written', async () => {
     const { organizer, a, b } = await cast();
     const session = await openSession(organizer);
     const sameInstant = atUtcPlus8(session.starts_at);
     await expect(setRsvp(env.DB, a, session.id, 'going', sameInstant)).resolves.toMatchObject({ my_rsvp: 'going' });
-    await expect(setRsvp(env.DB, b, session.id, 'out', '2000-01-01T00:00:00.000Z')).resolves.toMatchObject({ my_rsvp: 'out' });
     await expect(setRsvp(env.DB, b, session.id, 'going', 'not a time')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('a no to the old time is no answer to the new one: it is asked again', async () => {
+    const { organizer, d } = await cast();
+    const session = await openSession(organizer, { invite: [d.id] });
+    const seen = session.starts_at;
+    await updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(5)).toISOString() });
+    await expect(setRsvp(env.DB, d, session.id, 'out', seen)).rejects.toMatchObject({ status: 409 });
+    expect((await listMyInvites(env.DB, d.id)).map((s) => s.id)).toEqual([session.id]);
+    // Without a time, a no is simply a no.
+    await expect(setRsvp(env.DB, d, session.id, 'out')).resolves.toMatchObject({ my_rsvp: 'out' });
+  });
+
+  it('a move that lands between reading the session and writing the answer: 409, nothing written', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer, { invite: [a.id], capacity: 4 });
+    let moved = false;
+    // The move runs just before setRsvp's write.
+    const racing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            if (!moved) {
+              moved = true;
+              await updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(5)).toISOString() });
+            }
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await expect(setRsvp(racing, a, session.id, 'going', session.starts_at)).rejects.toMatchObject({ status: 409 });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('invited');
+  });
+
+  it('a start time stored the old way (no T, no zone) reads as the same moment', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer);
+    const stored = new Date(Date.parse(session.starts_at)).toISOString().slice(0, 19).replace('T', ' ');
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(stored, session.id).run();
+    // The page shows it back as it came; that is the current time.
+    await expect(setRsvp(env.DB, a, session.id, 'going', stored)).resolves.toMatchObject({ my_rsvp: 'going' });
+    // Sending the same moment as ISO is no move.
+    await updateSession(env.DB, organizer, session.id, { starts_at: new Date(Date.parse(`${stored.replace(' ', 'T')}Z`)).toISOString() });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('going');
   });
 });

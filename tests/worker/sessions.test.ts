@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { VIOLATION_MAP, WEEKLY_BONUS_CAP } from '../../shared/scoring';
-import { listRecords } from '../../worker/cases';
+import { listRecords, reclassifyCase } from '../../worker/cases';
 import { ApiError } from '../../worker/errors';
 import {
   cancelSession,
@@ -625,6 +625,20 @@ describe('organizer bonus', () => {
     await settleSession(env.DB, organizer, session.id, [{ user_id: silent.id, claim: '组织者随便写的话，凑够字数凑够字数' }], false, noAiEnv(), OFFSET_HOURS);
     expect(await scoreOf(organizer.id)).toBe(80);
     expect(await listRecords(env.DB, { session: session.id })).toEqual([]);
+  });
+
+  it('a roll-call case stays a roll-call case: its organizer, a judge, cannot re-type it away', async () => {
+    const organizer = await seedUser({ id: 'jorg', judge: true });
+    const { a } = await cast();
+    const session = await startedSession(organizer, [a]);
+    await rollCall(env.DB, organizer, session.id, [{ user_id: a.id, attendance: 'no_show' }], OFFSET_HOURS);
+    await settleSession(env.DB, organizer, session.id, [{ user_id: a.id }], false, noAiEnv(), OFFSET_HOURS);
+    const [filed] = await listRecords(env.DB, { session: session.id });
+    expect(filed).toMatchObject({ type: 'no_show', session_id: session.id });
+    // Between 放鸽子 and 团灭级放鸽, as settling allows…
+    await expect(reclassifyCase(env.DB, organizer, filed.id, 'no_show_group')).resolves.toMatchObject({ classified_by: 'human' });
+    // …but no further, though it no longer reads as derived.
+    await expect(reclassifyCase(env.DB, organizer, filed.id, 'late_minor')).rejects.toThrow(/点名/);
   });
 
   it('a maybe who turns up earns no 守约 bonus, and does not count for the organizer', async () => {

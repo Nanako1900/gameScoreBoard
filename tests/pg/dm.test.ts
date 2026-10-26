@@ -48,6 +48,8 @@ async function dueNow(): Promise<void> {
 interface FakeHooks {
   /** Runs before a send is recorded (and may throw to fail it). */
   onSend?: (channelId: string, message: ChannelMessage) => Promise<void> | void;
+  /** Like Discord: a repeated nonce returns the first message instead of a new one. */
+  dedupeNonces?: boolean;
   /** Throw here to fail a removal. */
   onRemove?: (channelId: string, messageId: string) => void;
 }
@@ -58,13 +60,18 @@ function fakeDiscord(hooks: FakeHooks = {}) {
   const failures: unknown[] = [];
   const editFailures: unknown[] = [];
   let next = 0;
+  const byNonce = new Map<string, string>();
   const api: ChannelApi = {
     async send(channelId, message) {
       if (failures.length > 0) throw failures.shift();
+      const earlier = hooks.dedupeNonces ? byNonce.get(message.nonce) : undefined;
+      if (earlier) return { id: earlier };
       await hooks.onSend?.(channelId, message);
       sent.push({ channelId, message });
       next += 1;
-      return { id: `90000000000000${String(next).padStart(4, '0')}` };
+      const id = `90000000000000${String(next).padStart(4, '0')}`;
+      byNonce.set(message.nonce, id);
+      return { id };
     },
     async edit(channelId, messageId, message) {
       if (failures.length > 0) throw failures.shift();
@@ -277,8 +284,7 @@ describe('DM delivery', () => {
     await env.DB.prepare("UPDATE records SET deadline_at = datetime('now', '+90 minutes') WHERE id = ?").bind(filed.id).run();
     const rows = (await pool.query("SELECT kind, available_at FROM outbox WHERE kind IN ('dm.filed', 'dm.deadline')")).rows;
     const at = Object.fromEntries(rows.map((r) => [r.kind, (r.available_at as Date).getTime()]));
-    // records.created_at has whole seconds.
-    expect(at['dm.deadline']).toBeGreaterThanOrEqual(at['dm.filed'] - 1_000);
+    expect(at['dm.deadline']).toBeGreaterThanOrEqual(at['dm.filed']);
   });
 
   it('a re-sent reminder takes the button off the earlier one', async () => {
@@ -370,6 +376,73 @@ describe('DM delivery', () => {
     await dispatcher(discord.api).runOnce();
     expect(discord.edits.map((e) => text(e.message))).toEqual([expect.stringContaining('这条记录已删除')]);
     expect((await pool.query("SELECT 1 FROM discord_messages WHERE entity = 'record'")).rowCount).toBe(0);
+  });
+
+  it('a record deleted while its DM was on the way, and the rewrite failing once: it is retried', async () => {
+    const { judge, subject } = await people();
+    await file(judge, subject);
+    await pool.query("DELETE FROM outbox WHERE kind = 'dm.deadline'");
+    await dueNow();
+    const discord = fakeDiscord({
+      onSend: async (_channel, message) => {
+        if (text(message).includes('有人给你立案了')) await adminUpdateUser(env.DB, 'judge', { delete: true });
+      },
+    });
+    discord.failEdit(discordError(503, 0));
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    expect(discord.edits).toEqual([]);
+    await dueNow();
+    await d.runOnce();
+    expect(discord.edits.map((e) => text(e.message))).toEqual([expect.stringContaining('这条记录已删除')]);
+  });
+
+  it('a deletion still in progress when the DM is remembered: it waits for it, and rewrites the DM', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await pool.query("DELETE FROM outbox WHERE kind = 'dm.deadline'");
+    await dueNow();
+    const deleter = await pool.connect();
+    let committed: Promise<unknown> = Promise.resolve();
+    try {
+      const discord = fakeDiscord({
+        onSend: async () => {
+          // Deleted in another transaction that has not committed yet when the
+          // dispatcher records the DM (its trigger saw nothing stored).
+          await deleter.query('BEGIN');
+          await deleter.query('DELETE FROM records WHERE id = $1', [filed.id]);
+          committed = new Promise((resolve) => setTimeout(resolve, 300)).then(() => deleter.query('COMMIT'));
+        },
+      });
+      await dispatcher(discord.api).runOnce();
+      await committed;
+      await dispatcher(discord.api).runOnce();
+      expect((await pool.query("SELECT 1 FROM discord_messages WHERE entity = 'record'")).rowCount).toBe(0);
+      expect(discord.edits.map((e) => text(e.message))).toEqual([expect.stringContaining('这条记录已删除')]);
+    } finally {
+      await committed;
+      deleter.release();
+    }
+  });
+
+  it('a reminder sent again after a crash (Discord matching the nonce) keeps its own button', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord({ dedupeNonces: true });
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
+    await dueNow();
+    await d.runOnce();
+    const editsAfterResend = discord.edits.length;
+    // The bot died after remembering the new reminder, before marking it done:
+    // it is claimed again and sent with the same nonce — the same message.
+    await pool.query(
+      "UPDATE outbox SET processed_at = NULL, result = NULL, claimed_at = now() - interval '10 minutes', available_at = now() WHERE kind = 'dm.deadline'",
+    );
+    await d.runOnce();
+    expect(discord.edits).toHaveLength(editsAfterResend);
   });
 
   it('rewrites the statement DMs on withdrawal even after the subject unbound', async () => {
@@ -816,6 +889,44 @@ describe('refusals, kept and counted right', () => {
     await dispatcher(fakeDiscord().api).runOnce();
     const [row] = (await pool.query("SELECT result FROM outbox WHERE kind = 'dm.from.the.future'")).rows;
     expect(row.result).toBe('dead');
+  });
+
+  it('fresh events are tried before retries of refused ones', async () => {
+    const { judge, subject } = await people();
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload, refused_since)
+       VALUES ('case.removed', 'record', '999', 'stuck:1',
+               jsonb_build_object('channel_id', '200000000000000009', 'message_id', '300000000000000001'), now() - interval '1 hour')`,
+    );
+    const order: string[] = [];
+    const discord = fakeDiscord({
+      onSend: () => void order.push('fresh'),
+      onRemove: () => {
+        order.push('stuck');
+        throw discordError(403, 50001, 'Missing Access');
+      },
+    });
+    await file(judge, subject);
+    await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'dm.filed'");
+    await dispatcher(discord.api).runOnce();
+    expect(order).toEqual(['fresh', 'stuck']);
+  });
+
+  it('a 401 stops delivery even on a retry of something already refused', async () => {
+    await people();
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload, refused_since)
+       SELECT 'case.removed', 'record', g::text, 'stuck:' || g,
+              jsonb_build_object('channel_id', '200000000000000009', 'message_id', (300000000000000000 + g)::text),
+              now() - interval '1 hour'
+         FROM generate_series(1, 2) g`,
+    );
+    const discord = fakeDiscord({
+      onRemove: () => {
+        throw discordError(401, 0, 'Unauthorized');
+      },
+    });
+    expect(await dispatcher(discord.api).runOnce()).toBe(1);
   });
 
   it('corrections stuck on a refused channel neither pause delivery nor hold up what is new', async () => {

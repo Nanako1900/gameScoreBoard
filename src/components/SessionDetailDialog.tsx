@@ -61,9 +61,14 @@ export function SessionDetailDialog({
       onChanged();
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '操作失败');
-      // Moved since it loaded: show the new time to answer to.
-      if (err instanceof ApiError && err.status === 409) await load();
+      const message = err instanceof ApiError ? err.message : '操作失败';
+      // Moved since it loaded: show the new time to answer to (and tell the
+      // lists behind), then say why — a successful reload clears the error.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        onChanged();
+      }
+      setError(message);
     } finally {
       setBusy(false);
     }

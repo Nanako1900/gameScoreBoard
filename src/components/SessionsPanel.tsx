@@ -66,8 +66,10 @@ export function SessionsPanel({
       );
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '报名失败');
-      if (err instanceof ApiError && err.status === 409) void load(); // moved: show the new time
+      const message = err instanceof ApiError ? err.message : '报名失败';
+      // Moved: show the new time, then say why (a successful reload clears the error).
+      if (err instanceof ApiError && err.status === 409) await load();
+      setError(message);
     } finally {
       setBusyId(null);
     }
