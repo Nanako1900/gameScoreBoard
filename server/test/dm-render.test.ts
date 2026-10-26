@@ -1,6 +1,6 @@
 import { ModalBuilder } from 'discord.js';
 import { describe, expect, it } from 'vitest';
-import { dmStillRelevant, renderDm } from '../src/discord/dm';
+import { dmStillRelevant, renderDm, scoreAdjustedDm } from '../src/discord/dm';
 import { parseCaseButton, parseCaseModal, toModal } from '../src/discord/case-actions';
 import type { RecordItem } from '../../worker/types';
 
@@ -104,5 +104,18 @@ describe('case buttons and modals', () => {
     expect(String(input.placeholder).length).toBeLessThanOrEqual(100);
     // discord.js's own validation of the whole shape (throws on anything Discord would refuse).
     expect(() => new ModalBuilder(modal).toJSON()).not.toThrow();
+  });
+});
+
+describe('scoreAdjustedDm', () => {
+  it('says old → new, and nothing to press but the web', () => {
+    const up = scoreAdjustedDm({ delta: 15, resulting_score: 85 }, 'https://score.example');
+    expect(JSON.stringify(up.embeds)).toContain('70 → 85');
+    expect(up.allowed_mentions).toEqual({ parse: [] });
+    const buttons = up.components.flatMap((row) => row.components) as unknown as Array<Record<string, unknown>>;
+    expect(buttons).toEqual([expect.objectContaining({ url: 'https://score.example/' })]);
+    const down = scoreAdjustedDm({ delta: -10, resulting_score: 50 }, 'https://score.example');
+    expect(JSON.stringify(down.embeds)).toContain('60 → 50');
+    expect(down.embeds[0].color).not.toBe(up.embeds[0].color);
   });
 });

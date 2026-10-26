@@ -10,6 +10,7 @@ import {
   overrideCase,
   revokeRecord,
   setJudge,
+  setScore,
   withdrawCase,
 } from '../api';
 import { parseTimestamp } from '../lib/time';
@@ -19,6 +20,7 @@ import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
 import { VerdictCard } from './VerdictCard';
 import { HistoryChart } from './HistoryChart';
+import { AdminScoreForm } from './AdminScoreForm';
 import './player-detail.css';
 
 interface PlayerDetailProps {
@@ -42,6 +44,8 @@ interface DetailState {
 const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 /** busyId while the judge role is being changed (record ids are positive). */
 const JUDGE_BUSY = -1;
+/** busyId while the score is being set by hand. */
+const SCORE_BUSY = -2;
 
 /** Post-verdict reversal: any admin, or the reporter within 15 minutes. */
 function canRevoke(record: RecordItem, me: User | null): boolean {
@@ -179,6 +183,15 @@ export function PlayerDetail({
                 )}
               </div>
               <p className="pd__blurb">{tier.blurb}</p>
+              {me?.is_admin === true && (
+                <AdminScoreForm
+                  key={data.user.score}
+                  username={data.user.username}
+                  score={data.user.score}
+                  busy={busyId === SCORE_BUSY}
+                  onSubmit={(next) => void run(SCORE_BUSY, () => setScore(userId, next))}
+                />
+              )}
             </div>
           </header>
 

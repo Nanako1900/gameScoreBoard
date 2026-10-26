@@ -212,3 +212,17 @@ export function renderDm(kind: DmKind, record: RecordItem, frontendUrl: string):
       );
   }
 }
+
+/** An admin set the recipient's score by hand (P8): what it was, what it is. */
+export function scoreAdjustedDm(change: { delta: number; resulting_score: number }, frontendUrl: string): ChannelMessage {
+  const before = change.resulting_score - change.delta;
+  return message(
+    {
+      title: '🛠️ 管理员调整了你的信誉分',
+      description: `**${before} → ${change.resulting_score}**（${formatDelta(change.delta)}）`,
+      color: change.delta > 0 ? GOLD : RED,
+      footer: { text: '这是管理员手动调整，不是判决；有疑问请联系管理员。' },
+    },
+    [linkButton('在网页查看', webUrl(frontendUrl))],
+  );
+}

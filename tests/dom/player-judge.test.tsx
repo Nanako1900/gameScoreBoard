@@ -125,3 +125,34 @@ describe('PlayerDetail — the escalation buttons', () => {
   });
 });
 
+describe('PlayerDetail — setting a score by hand', () => {
+  it('lets an admin set it in two steps, and posts only the score', async () => {
+    const posts = stubBackend(false);
+    const user = userEvent.setup();
+    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, '75');
+    await user.click(screen.getByRole('button', { name: '改分' }));
+    expect(screen.getByText(/私信通知本人/)).toBeInTheDocument();
+    expect(posts).toEqual([]);
+    await user.click(screen.getByRole('button', { name: '确认改分' }));
+    await waitFor(() => expect(posts).toEqual([{ path: '/api/admin/users/p', body: { score: 75 } }]));
+  });
+
+  it('refuses a score off the scale, and shows no such form to anyone else', async () => {
+    stubBackend(false);
+    const user = userEvent.setup();
+    const { unmount } = render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
+    await user.clear(input);
+    await user.type(input, '101');
+    expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
+    unmount();
+    render(<PlayerDetail userId="p" me={{ ...ME, is_admin: false }} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('spinbutton', { name: '调整分数' })).not.toBeInTheDocument();
+  });
+});
+

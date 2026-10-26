@@ -42,6 +42,7 @@ import {
 
 import { deliverReport, REPORT_KINDS } from './report-delivery';
 import { deliverEscalation, deliverRecharged, ESCALATION_KINDS } from './escalation-delivery';
+import { deliverScoreAdjusted, SCORE_KIND } from './score-delivery';
 
 export { STALE_MS, type ChannelApi, type DispatcherConfig } from './kit';
 
@@ -62,7 +63,8 @@ const PAUSE_MS = 5 * 60_000;
 /**
  * Reminders and to-dos one person gets per 24 h; past it they are skipped (the
  * web has it all). Outcomes — a verdict, an override, a revoke, an appeal to
- * review — are never budgeted: they are what the reminders were for. Each is
+ * review, an admin's score correction — are never budgeted: they are what the
+ * reminders were for. Each is
  * at most one per case (or needs an admin), and cases need a judge, or the
  * subject's own 'going' to a session.
  */
@@ -459,6 +461,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
+    if (row.kind === SCORE_KIND) return deliverScoreAdjusted(row, { pool, config, recipient, sendDm });
     if (row.kind === 'dm.recharged' || ESCALATION_KINDS.has(row.kind)) {
       const tools = { pool, db, config, recipient, sendDm, rewrite, messageFor, rememberDm };
       return row.kind === 'dm.recharged' ? deliverRecharged(row, tools) : deliverEscalation(row, tools);

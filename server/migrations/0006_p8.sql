@@ -123,3 +123,26 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+
+-- An admin set someone's score by hand: tell them (old → new). Only real
+-- changes, and only admin corrections — verdicts, revokes and overrides have
+-- DMs of their own; the weekly heal and bonuses are in the weekly report.
+CREATE OR REPLACE FUNCTION score_events_outbox() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('edg.importing', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  PERFORM outbox_emit('dm.score.adjusted', 'user', NEW.user_id, 'dm:score:' || NEW.id,
+                      jsonb_build_object('score_event_id', NEW.id, 'delta', NEW.delta, 'resulting_score', NEW.resulting_score),
+                      NULL);
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS score_events_outbox ON score_events;
+CREATE TRIGGER score_events_outbox
+  AFTER INSERT ON score_events
+  FOR EACH ROW WHEN (NEW.reason = 'admin_adjust' AND NEW.delta <> 0)
+  EXECUTE FUNCTION score_events_outbox();

@@ -347,6 +347,9 @@ fields) and answer `Cache-Control: private, no-store`.
 - `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative
   for `YYYY-MM-DD` (a local Monday); recomputes the stats too.
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
+  `score` sets it by hand (clamped to 0–100, logged as `admin_adjust`); on the
+  Node backend a real change DMs the player if they are bound (old → new). The
+  player page offers it to admins (type the number, then confirm).
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
   `decided`/`appealed` only; delta is clamped to the violation range; the score
   moves by the difference so the record ends up worth exactly the new delta.

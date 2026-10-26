@@ -30,7 +30,7 @@ function record(over: Partial<RecordItem> = {}): RecordItem {
 describe('the escalation DM', () => {
   it('offers the two choices as buttons of their own, and the case’s page', () => {
     const m = renderEscalationDm(record(), 'https://score.example');
-    const buttons = m.components.flatMap((row) => row.components) as Array<Record<string, unknown>>;
+    const buttons = m.components.flatMap((row) => row.components) as unknown as Array<Record<string, unknown>>;
     expect(buttons.map((b) => b.custom_id ?? b.url)).toEqual(['v1:esc:7:ok', 'v1:esc:7:no', 'https://score.example/?case=7']);
     expect(buttons[0].style).toBe(4); // danger
     expect(m.allowed_mentions).toEqual({ parse: [] });
