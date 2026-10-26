@@ -1,0 +1,51 @@
+# Coolify stack (New Resource → Docker Compose). See docs/DEPLOY-COOLIFY.md.
+#
+# P1: the Discord share page only. PostgreSQL, the migration job, the API and
+# the bot join this file in later phases. Secrets come from Coolify's
+# environment variables (mark them runtime-only, not build variables).
+
+services:
+  app:
+    image: ghcr.io/nanako1900/gamescoreboard:${APP_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8787"
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      # Discord share page (formerly the discord-share Worker)
+      SHARE_HOST: ${SHARE_HOST:-discord.nanako.org}
+      SITE_URL: ${SITE_URL:-https://discord.nanako.org}
+      SITE_NAME: ${SITE_NAME:-Nanako's Community}
+      GUILD_ID: ${GUILD_ID:-1114391825336250432}
+      # A never-expiring invite code. Empty = the widget's rotating invite.
+      INVITE_CODE: ${INVITE_CODE:-}
+    healthcheck:
+      # /healthz answers before Host routing and checks liveness only.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8787/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    mem_limit: 256m
+    stop_grace_period: 15s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Outbound-only tunnel: no inbound ports on the host, origin IP never exposed.
+  # Public hostnames are configured in the Cloudflare dashboard and point at
+  # http://app:8787. Drop this service if you use Coolify's own Tunnel setup.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.3
+    command: ["tunnel", "--no-autoupdate", "run"]
+    restart: unless-stopped
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: *logging

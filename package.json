@@ -4,14 +4,17 @@
   "version": "1.0.0",
   "type": "module",
   "description": "EDG 信誉分 — 仿王者荣耀信誉分的开黑守约计分板 (Cloudflare Workers + D1)",
+  "workspaces": [
+    "server"
+  ],
   "scripts": {
     "dev:web": "vite",
     "dev": "wrangler dev",
     "build": "vite build",
     "preview": "vite build && wrangler dev",
     "deploy": "vite build && wrangler deploy",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
-    "test": "npm run test:unit && npm run test:dom && npm run test:worker",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "test": "npm run test:unit && npm run test:dom && npm run test:worker && npm run test:server",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:worker": "vitest run --config vitest.workers.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
@@ -22,7 +25,8 @@
     "cf-typegen": "wrangler types",
     "db:migrate3:local": "wrangler d1 execute edg-credit --local --file=./migrations/003_v3_quick_flows.sql",
     "db:migrate3:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/003_v3_quick_flows.sql",
-    "test:dom": "vitest run --config vitest.dom.config.ts"
+    "test:dom": "vitest run --config vitest.dom.config.ts",
+    "test:server": "vitest run --config vitest.server.config.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",
