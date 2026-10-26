@@ -8,19 +8,26 @@
 // kept here so they are testable without starting the process.
 
 import {
+  Routes,
   ButtonStyle,
   ComponentType,
   MessageFlags,
   type APIActionRowComponent,
   type APIButtonComponentWithURL,
   type APIEmbed,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type InteractionReplyOptions,
+  type REST,
   type User,
 } from 'discord.js';
+import type { ChannelApi } from '../outbox/dispatcher';
 import type { BotContext, BotEmbed, BotReply, CommandInput, DiscordUserRef } from './types';
 
 export type CommandHandler = (input: CommandInput, ctx: BotContext) => Promise<BotReply>;
+
+/** What respond() can answer: a slash command or a button press. */
+export type Answerable = ChatInputCommandInteraction | ButtonInteraction;
 
 export const ERROR_TEXT = '出错了，请稍后再试';
 export const WRONG_GUILD_TEXT = '这个 bot 只在 EDG 服务器里用。';
@@ -71,7 +78,7 @@ export function toCommandInput(interaction: ChatInputCommandInteraction): Comman
   };
 }
 
-function toEmbed(embed: BotEmbed): APIEmbed {
+export function toEmbed(embed: BotEmbed): APIEmbed {
   const fields = (embed.fields ?? []).slice(0, LIMITS.fields).map((field) => ({
     name: nonEmpty(clip(field.name, LIMITS.fieldName)),
     value: nonEmpty(clip(field.value, LIMITS.fieldValue)),
@@ -153,7 +160,7 @@ function isDeadInteraction(error: unknown): boolean {
 }
 
 async function deliver(
-  interaction: ChatInputCommandInteraction,
+  interaction: Answerable,
   options: InteractionReplyOptions,
   deferred: boolean,
 ): Promise<void> {
@@ -194,7 +201,20 @@ export async function respond(
   handler: CommandHandler,
   options: RespondOptions = {},
 ): Promise<void> {
-  const command = `/${interaction.commandName}`;
+  await answer(interaction, `/${interaction.commandName}`, () => handler(toCommandInput(interaction), ctx), options);
+}
+
+/**
+ * The same, for any interaction: `run` produces the reply, `label` names the
+ * interaction in the logs (a command, a button).
+ */
+export async function answer(
+  interaction: Answerable,
+  label: string,
+  run: () => Promise<BotReply>,
+  options: RespondOptions = {},
+): Promise<void> {
+  const command = label;
   if (options.guildId !== undefined && interaction.guildId !== options.guildId) {
     // Commands are only registered in our guild, but a stray global command or
     // a second install must never read scores out to another server.
@@ -207,7 +227,7 @@ export async function respond(
   }
   // Settled as data, so a rejection while we are busy deferring is never unhandled.
   const settled: Promise<Outcome> = Promise.resolve()
-    .then(() => handler(toCommandInput(interaction), ctx))
+    .then(run)
     .then(
       (reply) => ({ ok: true as const, reply }),
       (error: unknown) => ({ ok: false as const, error }),
@@ -265,6 +285,8 @@ export interface BotConfig {
   /** Origin without a trailing slash, e.g. https://api.nanako.org. */
   appUrl: string;
   frontendUrl: string;
+  /** Where verdicts are posted (P5); null leaves the broadcast off. */
+  verdictChannelId: string | null;
 }
 
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -308,13 +330,19 @@ export function readBotConfig(env: Record<string, string | undefined>): BotConfi
   const appUrl = url('APP_URL');
   const frontendUrl = url('FRONTEND_URL');
 
+  const channel = get('DISCORD_VERDICT_CHANNEL_ID');
+  if (channel && !SNOWFLAKE.test(channel)) {
+    problems.push(`DISCORD_VERDICT_CHANNEL_ID must be a channel id (17–20 digits) or empty, got "${channel}"`);
+  }
+  const verdictChannelId = channel || null;
+
   if (problems.length > 0) {
     // Bad values are echoed to help fixing them, so a token pasted into the
     // wrong variable (GUILD_ID, say) would be too — scrub it.
     const message = `invalid bot configuration: ${problems.join('; ')}`;
     throw new Error((token ? message.split(token).join('[redacted]') : message).replace(BOT_TOKEN, '[redacted]'));
   }
-  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl };
+  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl, verdictChannelId };
 }
 
 export const GATEWAY_BOT_URL = 'https://discord.com/api/v10/gateway/bot';
@@ -351,4 +379,19 @@ export async function fetchSessionBudget(token: string, fetchImpl: FetchLike = f
     throw new Error('GET /gateway/bot: no session_start_limit in the response');
   }
   return { total, remaining, resetAfterMs: resetAfter };
+}
+
+// --- Channel messages (the outbox dispatcher) ---------------------------------
+
+/** Posting and editing channel messages through the logged-in client's REST. */
+export function restChannelApi(rest: REST): ChannelApi {
+  return {
+    async send(channelId, message) {
+      const sent = (await rest.post(Routes.channelMessages(channelId), { body: message })) as { id: string };
+      return { id: sent.id };
+    },
+    async edit(channelId, messageId, message) {
+      await rest.patch(Routes.channelMessage(channelId, messageId), { body: message });
+    },
+  };
 }

@@ -15,6 +15,8 @@ const TABLES = [
   'app_settings',
   'discord_links',
   'link_audit',
+  'outbox',
+  'discord_messages',
   'users',
 ];
 

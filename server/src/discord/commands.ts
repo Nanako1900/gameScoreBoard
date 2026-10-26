@@ -103,12 +103,12 @@ function scoreColor(score: number): number {
 }
 
 /** The web app has no per-page URLs yet, so every web link opens its front page. */
-function webButton(ctx: BotContext, label = '打开网页'): BotLinkButton {
+export function webButton(ctx: BotContext, label = '打开网页'): BotLinkButton {
   return linkButton(label, joinUrl(ctx.frontendUrl, '/'));
 }
 
 /** The Nanako user bound to this Discord account, or null. */
-async function boundUser(db: D1Database, discordUserId: string): Promise<User | null> {
+export async function boundUser(db: D1Database, discordUserId: string): Promise<User | null> {
   const link = await linkByDiscordId(db, discordUserId);
   if (!link) return null;
   const row = await getUserById(db, link.user_id);
@@ -140,14 +140,14 @@ function dateOnly(value: string | null | undefined): string {
   return value && DATE.test(value) ? value : '—';
 }
 
-function violationLabel(type: string): string {
+export function violationLabel(type: string): string {
   // Own keys only: a stray type like 'constructor' must not hit Object.prototype.
   const def = Object.prototype.hasOwnProperty.call(VIOLATION_MAP, type) ? VIOLATION_MAP[type] : undefined;
   return def ? `${def.emoji} **${def.label}**` : '❔ **未知类型**';
 }
 
 /** Decided with no statement by the AI or the fallback: the subject never answered. */
-function judgedInAbsence(record: RecordItem): boolean {
+export function judgedInAbsence(record: RecordItem): boolean {
   return record.statement === null && (record.verdict?.source === 'ai' || record.verdict?.source === 'fallback');
 }
 

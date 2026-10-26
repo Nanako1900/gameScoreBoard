@@ -139,6 +139,9 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-https://score.nanako.org}
       # Same switch as the app's: /unlink refuses while it is on.
       READ_ONLY: ${READ_ONLY:-}
+      # P5: the private channel verdicts are posted to (#edg-信誉分). Empty:
+      # nothing is posted. See docs/DEPLOY-DISCORD.md, "判决播报".
+      DISCORD_VERDICT_CHANNEL_ID: ${DISCORD_VERDICT_CHANNEL_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
