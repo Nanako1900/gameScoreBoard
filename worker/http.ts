@@ -15,11 +15,26 @@ export function isRecordObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
-/** True if any string (or key) anywhere in a parsed JSON value contains U+0000. */
-function containsNul(v: unknown): boolean {
-  if (typeof v === 'string') return v.includes('\u0000');
-  if (Array.isArray(v)) return v.some(containsNul);
-  if (isRecordObject(v)) return Object.entries(v).some(([k, x]) => k.includes('\u0000') || containsNul(x));
+/**
+ * True if any string (or key) anywhere in a parsed JSON value contains U+0000.
+ * Walks with its own stack: `[[[[…]]]]` 20 000 deep parses fine but would
+ * overflow a recursive walk.
+ */
+function containsNul(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      if (v.includes('\u0000')) return true;
+    } else if (Array.isArray(v)) {
+      stack.push(...v);
+    } else if (isRecordObject(v)) {
+      for (const [k, x] of Object.entries(v)) {
+        if (k.includes('\u0000')) return true;
+        stack.push(x);
+      }
+    }
+  }
   return false;
 }
 

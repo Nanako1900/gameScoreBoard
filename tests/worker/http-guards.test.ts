@@ -351,10 +351,23 @@ describe('U+0000 and out-of-range ids are refused at the edge', () => {
 
   it('refuses NUL nested anywhere in the body, keys included', async () => {
     await seedUser({ id: 'judge', judge: true });
-    for (const body of [{ claim: ['ok', { deep: 'a\u0000' }] }, { 'k\u0000': 1 }]) {
-      const res = await postAs('judge', '/api/records', JSON.stringify(body));
+    await seedUser({ id: 'p', score: 50 });
+    // Otherwise valid filings: only the NUL can make them fail.
+    const valid = { subject_id: 'p', type: 'on_time_bonus' };
+    for (const extra of [{ tags: ['ok', { deep: 'a\u0000' }] }, { 'k\u0000': 1 }]) {
+      const res = await postAs('judge', '/api/records', JSON.stringify({ ...valid, ...extra }));
       expect(res.status).toBe(400);
+      expect(await errorOf(res)).toBe('请求包含非法字符');
     }
+    const ok = await postAs('judge', '/api/records', JSON.stringify(valid));
+    expect(ok.status).toBe(200);
+  });
+
+  it('survives a body nested far deeper than any real one', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    const deep = `${'['.repeat(20_000)}${']'.repeat(20_000)}`;
+    const res = await postAs('judge', '/api/records', deep);
+    expect(res.status).toBe(400);
   });
 
   it('refuses a percent-encoded NUL in the path or the query', async () => {

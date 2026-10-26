@@ -12,7 +12,7 @@ import pg from 'pg';
 import { buildEnv, ConfigError, createApi } from './api';
 import type { HostedApp } from './app';
 import { asD1, installTypeParsers, PgD1Database } from './db/d1';
-import { envFlag, envInt } from './env';
+import { envFlag, envInt, MAX_TIMER_MS } from './env';
 import { hostSet } from './hosts';
 
 const DEFAULT_JOBS_INTERVAL_MS = 60_000;
@@ -74,7 +74,7 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   const interval = envInt(
     processEnv.JOBS_INTERVAL_MS,
     DEFAULT_JOBS_INTERVAL_MS,
-    { name: 'JOBS_INTERVAL_MS', min: MIN_JOBS_INTERVAL_MS },
+    { name: 'JOBS_INTERVAL_MS', min: MIN_JOBS_INTERVAL_MS, max: MAX_TIMER_MS },
     warn,
   );
   let timer: ReturnType<typeof setInterval> | null = null;

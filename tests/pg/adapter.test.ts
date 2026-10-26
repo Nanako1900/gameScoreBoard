@@ -1,7 +1,8 @@
 // What the D1-compatible adapter (server/src/db/d1.ts) does that only
 // PostgreSQL needs, so the shared worker suite cannot cover it.
 
-import { describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { describe, expect, inject, it } from 'vitest';
 import { migrate } from '../../server/src/db/migrate';
 import { env, pool } from './cloudflare-test';
 
@@ -37,10 +38,39 @@ describe('PgD1Database', () => {
   });
 });
 
+const MIGRATIONS = new URL('../../server/migrations', import.meta.url).pathname;
+
 describe('migrate', () => {
   it('accepts the C-collated test database and is idempotent', async () => {
-    const result = await migrate(pool, new URL('../../server/migrations', import.meta.url).pathname);
+    const result = await migrate(pool, MIGRATIONS);
     expect(result.applied).toEqual([]);
     expect(result.skipped.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a database whose text does not sort by code point, before touching it', async (ctx) => {
+    const name = 'edg_collation_test';
+    await pool.query(`DROP DATABASE IF EXISTS ${name}`);
+    // ICU where the server has it, else a libc locale; skip if it has neither.
+    const created = await pool
+      .query(`CREATE DATABASE ${name} TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' LOCALE 'C'`)
+      .then(() => true)
+      .catch(() =>
+        pool
+          .query(`CREATE DATABASE ${name} TEMPLATE template0 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8'`)
+          .then(() => true)
+          .catch(() => false),
+      );
+    if (!created) ctx.skip();
+    const url = new URL(inject('pgUrl'));
+    url.pathname = `/${name}`;
+    const other = new pg.Pool({ connectionString: url.toString(), max: 1 });
+    try {
+      await expect(migrate(other, MIGRATIONS)).rejects.toThrow(/collation .* it must be C/);
+      const tables = await other.query("SELECT COUNT(*)::int AS n FROM pg_tables WHERE tablename = 'schema_migrations'");
+      expect(tables.rows[0].n).toBe(0);
+    } finally {
+      await other.end();
+      await pool.query(`DROP DATABASE IF EXISTS ${name}`);
+    }
   });
 });

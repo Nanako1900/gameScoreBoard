@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { createBackend } from '../src/backend';
-import { envFlag, envInt } from '../src/env';
+import { envFlag, envInt, MAX_TIMER_MS } from '../src/env';
 
 const API_ENV = {
   API_HOST: 'api.example.com',
@@ -118,5 +118,8 @@ describe('envFlag / envInt', () => {
     expect(warn).not.toHaveBeenCalled();
     for (const junk of ['0', '10', 'abc', '1.5', '-60000']) expect(envInt(junk, 60_000, rule, warn)).toBe(60_000);
     expect(warn).toHaveBeenCalledTimes(5);
+    // Past Node's timer limit setInterval would fire every 1 ms.
+    expect(envInt('3000000000', 60_000, { ...rule, max: MAX_TIMER_MS }, warn)).toBe(60_000);
+    expect(warn).toHaveBeenCalledTimes(6);
   });
 });

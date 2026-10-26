@@ -46,7 +46,7 @@
 | T−5 | 打开一次网站（触发 `GET /api/config` 上的惰性判决），让只读前已经过期的案件先判掉 |
 | T0 | **Worker 只读**：`wrangler.toml` 的 `[vars]` 加 `READ_ONLY = "1"`，部署。之后所有写请求 503，惰性任务和 Cron 停止 |
 | T+1 | 等 60 秒以上（比最长的在途请求更久：AI 调用 20 秒 × 2） |
-| T+2 | **顺延截止时间（在 D1 上，导出之前）**：只读期间被告没法写陈述，把只读开始后到窗口结束前到期的案件顺延（按实际窗口调整 `+1 hour`）：<br>`npx wrangler d1 execute edg-credit --remote --command "UPDATE records SET deadline_at = datetime(deadline_at, '+1 hour') WHERE status = 'awaiting_statement' AND deadline_at >= datetime('now', '-5 minutes') AND deadline_at < datetime('now', '+1 hour')"`<br>下限排除只读之前就已过期的案件；在 D1 上做，导出的数据和只读的 Worker 才一致，T+10 的对拍才有意义 |
+| T+2 | **顺延截止时间（在 D1 上，导出之前，只执行一次）**：只读期间被告没法写陈述，把 T0 之后到窗口结束前到期的案件顺延（按实际窗口调整 `+1 hour`）。把 `<T0>` 换成 T0 的 **UTC** 时间，格式 `2026-11-04 18:00:00`：<br>`npx wrangler d1 execute edg-credit --remote --command "UPDATE records SET deadline_at = datetime(deadline_at, '+1 hour') WHERE status = 'awaiting_statement' AND deadline_at >= '<T0>' AND deadline_at < datetime('<T0>', '+1 hour')"`<br>下限用 T0 本身而不是执行时刻：晚几分钟执行也不会漏掉 T0 之后到期的案件，而只读之前就已过期的照常缺席判决。重复执行会再顺延一次，所以**只跑一次**（不确定是否成功时，先用 `SELECT id, deadline_at FROM records WHERE status = 'awaiting_statement'` 看一眼）。在 D1 上做，导出的数据和只读的 Worker 才一致，T+10 的对拍才有意义 |
 | T+3 | **导出**（在你本机，已 `wrangler login`）：`node scripts/d1-export.mjs export/`。只读，逐表 SELECT |
 | T+5 | **导入**：把 `export/` 传到 Coolify 主机，然后 `docker compose run --rm -v "$PWD/export:/import:ro" migrate node server/dist/import-d1-main.js /import`。导入在一个事务里完成并逐表回读校验，任何不一致整体回滚 |
 | T+8 | **预检**：Coolify 里设 `API_HOST=api-next.nanako.org,api.nanako.org`（`JOBS_ENABLED` 仍为 `false`），重新部署。`api.nanako.org` 此时还解析到 Worker，先列进来，T+13 切 DNS 时就不用再部署 |
