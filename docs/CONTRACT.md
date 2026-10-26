@@ -143,24 +143,31 @@ interface RecordItem {
   reporter: { id: string; username: string; avatar_url: string | null };
   type: ViolationType;           // v3: usually chosen by the AI, always validated
   delta: number;                 // signed, actually applied; 0 before a verdict
-  note: string | null;           // judge's short note — PUBLIC, like every field here
+  note: string | null;           // judge's short note — PUBLIC, like every field not marked PRIVATE
   claim: string | null;          // judge's account of the facts (required for penalties)
   claim_summary: string | null;  // AI's one-line condensation; the feed headline
   classified_by: 'ai' | 'fallback' | 'human' | 'derived';
   escalation_suggested: boolean; // AI wants no_show_group; a judge must co-sign
   session_id: number | null;     // originating 约局, if any
-  statement: string | null;      // the subject's one statement
-  statement_at: string | null;
-  appeal_reason: string | null;  // why the subject contested; shown to the reviewing admin
+  statement: string | null;      // PRIVATE: the subject's one statement
+  statement_at: string | null;   // public: whether (and when) they spoke up
+  appeal_reason: string | null;  // PRIVATE: why the subject contested; for the reviewing admin
   deadline_at: string | null;    // statement window close (sqlite datetime, UTC)
   status: CaseStatus;
   verdict: {
     source: 'ai' | 'fallback' | 'manual' | 'admin_override';
-    headline: string; reasoning: string;
-    factors: { kind: 'mitigating' | 'aggravating'; text: string }[];
+    headline: string; reasoning: string;                         // PRIVATE
+    factors: { kind: 'mitigating' | 'aggravating'; text: string }[]; // PRIVATE
   } | null;
   range: { min: number; max: number; base: number };
   created_at: string;
+  // PRIVATE fields are for the case's subject, its reporter, judges and admins.
+  // For anyone else (logged out included) every response blanks them —
+  // statement / appeal_reason null, headline / reasoning '' and factors [] —
+  // and sets `redacted: true` (whatever was there, so it never tells whether
+  // an appeal reason exists). The verdict's words are covered because the AI
+  // writes them after reading the statement and often quotes it.
+  redacted: boolean;
 }
 
 interface SessionItem {
@@ -206,6 +213,10 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 `{ "error": string }` with an appropriate 4xx/5xx status.
 
 ### Public (no auth)
+
+Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`,
+`/api/sessions/:id`) shape each case for the caller (see `RecordItem`'s PRIVATE
+fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/config`
   → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt }`
   Also fires (non-blocking) three idempotent jobs: the weekly heal, the

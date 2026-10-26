@@ -85,6 +85,12 @@ export interface RecordItem {
   verdict: Verdict | null;
   range: SentencingRange;
   created_at: string;
+  /**
+   * The statement, the appeal reason and the verdict's words are only for the
+   * subject, the reporter, judges and admins: for anyone else the API blanks
+   * them and sets this. (Absent from an older API: nothing was hidden.)
+   */
+  redacted?: boolean;
 }
 
 export interface HistoryPoint {

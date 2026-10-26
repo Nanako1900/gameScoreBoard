@@ -211,7 +211,7 @@ export interface RecordItem {
   reporter: RecordActor;
   type: ViolationType;
   delta: number;
-  /** Judge's short note. Public, like every other field here. */
+  /** Judge's short note. Public, like the fields here not marked private. */
   note: string | null;
   claim: string | null;
   /** AI's one-line condensation of `claim`; the feed's headline. */
@@ -220,9 +220,10 @@ export interface RecordItem {
   /** AI pointed at the group-wipe charge; a judge must co-sign it. */
   escalation_suggested: boolean;
   session_id: number | null;
+  /** Private (see RecordView): the subject's own words. */
   statement: string | null;
   statement_at: string | null;
-  /** Why the subject contested the verdict — the admin needs it to review. */
+  /** Private: why the subject contested the verdict — the admin needs it to review. */
   appeal_reason: string | null;
   deadline_at: string | null;
   status: CaseStatus;
@@ -230,6 +231,17 @@ export interface RecordItem {
   /** Sentencing range for this case's type, so the UI can draw the scale. */
   range: { min: number; max: number; base: number };
   created_at: string;
+}
+
+/**
+ * A case as the web API returns it to one viewer. The statement, the appeal
+ * reason and the verdict's words (headline, reasoning, factors — written after
+ * reading the statement, often quoting it) are only for the subject, the
+ * reporter, judges and admins; anyone else gets them blanked and `redacted`.
+ * The outcome (type, delta, status, who) stays public.
+ */
+export interface RecordView extends RecordItem {
+  redacted: boolean;
 }
 
 export interface HistoryPoint {

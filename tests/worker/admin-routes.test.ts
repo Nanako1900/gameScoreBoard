@@ -871,6 +871,7 @@ describe('POST /api/admin/records/:id/override', () => {
         base: VIOLATION_MAP.no_show.base,
       },
       created_at: expect.stringMatching(SQLITE_DATETIME),
+      redacted: false,
     });
 
     expect(await scoreOf('subject')).toBe(91);

@@ -16,7 +16,7 @@ import {
   type APIEmbed,
 } from 'discord.js';
 import { VIOLATION_MAP } from '../../../shared/scoring';
-import { getRecordItemById } from '../../../worker/case-reads';
+import { canReadPrivate, getRecordItemById } from '../../../worker/case-reads';
 import type { RecordItem } from '../../../worker/types';
 import { toEmbed } from './client';
 import { judgedInAbsence, violationLabel, webButton } from './commands';
@@ -121,9 +121,7 @@ export async function handleVerdictButton(recordId: number, caller: DiscordUserR
   const record = await getRecordItemById(ctx.db, recordId);
   if (!record || !isPostable(record)) return ephemeralReply('这条判决不存在了。');
   const viewer = await boundUser(ctx.db, caller.id);
-  const involved =
-    viewer !== null &&
-    (viewer.id === record.subject.id || viewer.id === record.reporter.id || viewer.is_judge || viewer.is_admin);
+  const involved = canReadPrivate(record, viewer);
 
   const embed = verdictEmbed(record);
   if (involved && record.verdict) {

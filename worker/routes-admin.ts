@@ -7,7 +7,7 @@ import { VIOLATION_MAP } from '../shared/scoring';
 import type { AppEnv } from './types';
 import { ApiError } from './errors';
 import { adminUpdateUser } from './db';
-import { overrideCase } from './cases';
+import { overrideCase, redactRecord } from './cases';
 import { regenerateReport } from './report';
 import {
   AI_SETTING_KEYS,
@@ -69,7 +69,7 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
       delta,
       requireString(body.reason, 'reason'),
     );
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.get('/api/admin/ai-config', async (c) => {

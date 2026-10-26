@@ -19,6 +19,8 @@ const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
   admin_override: { label: '管理员改判', tone: 'override' },
 };
 
+const PRIVATE_TO = '只有当事人、立案人、裁判和管理员能看';
+
 /**
  * A case, told as a story: 案由 → 双方陈述 → 判词 → 量刑尺.
  *
@@ -36,6 +38,7 @@ export function VerdictCard({
   const judging = status === 'judging';
   const voided = status === 'revoked' || status === 'withdrawn';
   const badge = verdict ? SOURCE_BADGE[verdict.source] : null;
+  const hidden = record.redacted === true;
 
   return (
     <article className={`vc vc--${status}`}>
@@ -84,6 +87,10 @@ export function VerdictCard({
           <span className="vc__quote-who">{record.subject.username} 的说明</span>
           <p>{record.statement}</p>
         </blockquote>
+      ) : hidden && record.statement_at ? (
+        <p className="vc__hidden">
+          <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
+        </p>
       ) : (
         !pending && (
           <p className="vc__absent">该选手没有在期限内说明情况，按缺席裁决。</p>
@@ -102,11 +109,17 @@ export function VerdictCard({
       {verdict && (
         <div className="vc__verdict">
           <div className="vc__verdict-head">
-            <h5 className="vc__headline">{verdict.headline}</h5>
+            {hidden ? (
+              <p className="vc__hidden">
+                <span aria-hidden="true">🔒</span> 判词{PRIVATE_TO}
+              </p>
+            ) : (
+              <h5 className="vc__headline">{verdict.headline}</h5>
+            )}
             {badge && <span className={`vc__source vc__source--${badge.tone}`}>{badge.label}</span>}
           </div>
-          {verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
-          {verdict.factors.length > 0 && (
+          {!hidden && verdict.reasoning && <p className="vc__reason">{verdict.reasoning}</p>}
+          {!hidden && verdict.factors.length > 0 && (
             <ul className="vc__factors">
               {verdict.factors.map((f, i) => (
                 <li
@@ -124,7 +137,7 @@ export function VerdictCard({
 
       {status === 'appealed' && (
         <>
-          {record.appeal_reason && (
+          {!hidden && record.appeal_reason && (
             <blockquote className="vc__quote vc__quote--appeal">
               <span className="vc__quote-who">申诉理由</span>
               <p>{record.appeal_reason}</p>

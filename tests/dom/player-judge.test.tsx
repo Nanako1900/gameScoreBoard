@@ -83,6 +83,7 @@ describe('PlayerDetail — the escalation buttons', () => {
     verdict: null,
     range: { min: -20, max: -10, base: -15 },
     created_at: '2026-10-26 12:00:00',
+    redacted: false,
   };
 
   function stubCase(): void {

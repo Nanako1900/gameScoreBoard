@@ -11,7 +11,7 @@ import {
   type ViolationDef,
   type ViolationType,
 } from '../shared/scoring';
-import type { RecordItem, RecordJoinRow, RecordRow, User, VerdictFactor } from './types';
+import type { RecordItem, RecordJoinRow, RecordRow, RecordView, User, VerdictFactor } from './types';
 import { ApiError } from './errors';
 import type { ClassifiedBy } from './ai/classify';
 
@@ -49,6 +49,36 @@ function parseFactors(raw: string | null): VerdictFactor[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Who may read a case's private parts (see RecordView): its subject, its
+ * reporter, judges and admins — the same people the bot's 看判词 shows them to.
+ */
+export function canReadPrivate(
+  record: Pick<RecordItem, 'subject' | 'reporter'>,
+  viewer: Pick<User, 'id' | 'is_judge' | 'is_admin'> | null,
+): boolean {
+  return (
+    viewer !== null &&
+    (viewer.id === record.subject.id || viewer.id === record.reporter.id || viewer.is_judge || viewer.is_admin)
+  );
+}
+
+/** The case as `viewer` may see it — a new object; the input is left as it is. */
+export function redactRecord(record: RecordItem, viewer: User | null): RecordView {
+  if (canReadPrivate(record, viewer)) return { ...record, redacted: false };
+  return {
+    ...record,
+    statement: null,
+    appeal_reason: null,
+    verdict: record.verdict ? { ...record.verdict, headline: '', reasoning: '', factors: [] } : null,
+    redacted: true,
+  };
+}
+
+export function redactRecords(records: readonly RecordItem[], viewer: User | null): RecordView[] {
+  return records.map((record) => redactRecord(record, viewer));
 }
 
 export function defFor(type: string): ViolationDef {

@@ -2,7 +2,7 @@
 // loads the current user; per-route guards enforce judge/subject/admin rules.
 // All external input arrives as `unknown` and is narrowed before use.
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { csrf } from 'hono/csrf';
 import {
@@ -38,6 +38,8 @@ import {
   fileCases,
   getRecordItemById,
   listRecords,
+  redactRecord,
+  redactRecords,
   overrideCase,
   pendingCounts,
   reclassifyCase,
@@ -128,6 +130,11 @@ function decodeCookieValue(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The response depends on who asks (redacted cases): no shared cache may keep it. */
+function privateToViewer(c: Context<AppEnv>): void {
+  c.header('Cache-Control', 'private, no-store');
 }
 
 export function registerRoutes(app: Hono<AppEnv>): void {
@@ -258,18 +265,21 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       session: sessionRaw ? parseId(sessionRaw, '约局') : undefined,
       pendingFor: mine === 'pending' && caller ? caller.id : undefined,
     });
-    return c.json({ records });
+    privateToViewer(c);
+    return c.json({ records: redactRecords(records, caller) });
   });
 
   app.get('/api/records/:id', async (c) => {
     const record = await getRecordItemById(c.env.DB, parseId(c.req.param('id'), '记录'));
     if (!record) throw new ApiError(404, '记录不存在');
-    return c.json({ record });
+    privateToViewer(c);
+    return c.json({ record: redactRecord(record, c.get('user')) });
   });
 
   app.get('/api/users/:id', async (c) => {
     const profile = await getUserProfile(c.env.DB, c.req.param('id'));
-    return c.json(profile);
+    privateToViewer(c);
+    return c.json({ ...profile, records: redactRecords(profile.records, c.get('user')) });
   });
 
   app.get('/api/sessions', async (c) => {
@@ -290,7 +300,8 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       caller?.id ?? null,
     );
     const records = await listRecords(c.env.DB, { session: session.id, limit: 100 });
-    return c.json({ session, records });
+    privateToViewer(c);
+    return c.json({ session, records: redactRecords(records, caller) });
   });
 
   // Same-origin avatar proxy: upstream avatars (e.g. nanako.org) may carry
@@ -373,7 +384,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
         { offsetHours },
         c.env,
       );
-      return c.json(result);
+      return c.json({ ...result, records: redactRecords(result.records, caller) });
     }
 
     const record = await fileCase(
@@ -388,19 +399,20 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       { offsetHours },
       c.env,
     );
-    return c.json({ record, records: [record], failed: [] });
+    const view = redactRecord(record, caller);
+    return c.json({ record: view, records: [view], failed: [] });
   });
 
   app.post('/api/records/:id/escalate', async (c) => {
     const caller = requireUser(c.get('user'));
     const record = await confirmEscalation(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/escalate/dismiss', async (c) => {
     const caller = requireUser(c.get('user'));
     const record = await dismissEscalation(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/reclassify', async (c) => {
@@ -412,7 +424,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       parseId(c.req.param('id'), '记录'),
       requireString(body.type, 'type'),
     );
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/statement', async (c) => {
@@ -425,13 +437,13 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       requireString(body.statement, 'statement'),
       c.env,
     );
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/withdraw', async (c) => {
     const caller = requireUser(c.get('user'));
     const record = await withdrawCase(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/appeal', async (c) => {
@@ -443,7 +455,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       parseId(c.req.param('id'), '记录'),
       optString(body.reason),
     );
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   // Legacy alias kept so an older cached SPA bundle keeps working after deploy.
@@ -455,13 +467,13 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       parseId(c.req.param('id'), '记录'),
       undefined,
     );
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   app.post('/api/records/:id/revoke', async (c) => {
     const caller = requireUser(c.get('user'));
     const record = await revokeCase(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
-    return c.json({ record });
+    return c.json({ record: redactRecord(record, caller) });
   });
 
   // --- Sessions ------------------------------------------------------------

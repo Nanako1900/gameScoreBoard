@@ -112,10 +112,17 @@
 }
 
 .vc__absent,
+.vc__hidden,
 .vc__pending,
 .vc__flag {
   font-size: var(--text-sm);
   color: var(--muted);
+}
+
+/* Words the viewer may not read (statement, verdict): say they exist, quietly. */
+.vc__hidden {
+  font-style: italic;
+  color: var(--faint);
 }
 
 .vc__pending {
