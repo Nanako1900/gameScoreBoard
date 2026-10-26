@@ -218,11 +218,17 @@ function normalizeOptionalText(raw: unknown, max: number): string | null {
   return t.length === 0 ? null : t.slice(0, max);
 }
 
+/** A little slack for clocks and a form left open: "now" is still fine. */
+const STARTS_AT_GRACE_MS = 5 * 60_000;
+
 function normalizeStartsAt(raw: unknown): string {
   if (typeof raw !== 'string') throw new ApiError(400, '缺少开始时间');
   const ms = Date.parse(raw);
   if (!Number.isFinite(ms)) throw new ApiError(400, '开始时间格式无效');
   if (ms > Date.now() + SESSION_MAX_LEAD_MS) throw new ApiError(400, '开始时间太远了（最多 90 天）');
+  // A session that "already started" could be roll-called at once, before
+  // anyone had a chance to answer — or to change their answer.
+  if (ms < Date.now() - STARTS_AT_GRACE_MS) throw new ApiError(400, '开始时间已经过了');
   return new Date(ms).toISOString();
 }
 
@@ -359,6 +365,9 @@ export async function updateSession(
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status !== 'open') throw new ApiError(400, '已取消 / 已结算的约局不能再修改');
+  // Once it has started, attendance is what happened: moving it now would let
+  // players re-answer around a roll call (or the claims quote a new title).
+  if (parseSqlUtc(row.starts_at) <= Date.now()) throw new ApiError(400, '约局已开始，不能再修改');
 
   const sets: string[] = [];
   const binds: unknown[] = [];
@@ -366,9 +375,12 @@ export async function updateSession(
     sets.push('title = ?');
     binds.push(normalizeTitle(input.title));
   }
+  let moved = false;
   if (input.starts_at !== undefined) {
+    const startsAt = normalizeStartsAt(input.starts_at);
+    moved = startsAt !== row.starts_at;
     sets.push('starts_at = ?');
-    binds.push(normalizeStartsAt(input.starts_at));
+    binds.push(startsAt);
   }
   if (input.game !== undefined) {
     sets.push('game = ?');
@@ -388,10 +400,21 @@ export async function updateSession(
   }
   if (sets.length > 0) {
     binds.push(id);
-    await db
-      .prepare(`UPDATE game_sessions SET ${sets.join(', ')} WHERE id = ?`)
-      .bind(...binds)
-      .run();
+    const statements = [db.prepare(`UPDATE game_sessions SET ${sets.join(', ')} WHERE id = ?`).bind(...binds)];
+    if (moved) {
+      // A yes to one time is not a yes to another: everyone but the organizer
+      // answers again (and so can never be roll-called for a time they did
+      // not agree to — a no-show penalty needs a 'going').
+      statements.push(
+        db
+          .prepare(
+            `UPDATE session_players SET rsvp = 'invited', rsvp_at = datetime('now')
+              WHERE session_id = ? AND user_id <> ? AND rsvp IN ('going', 'maybe')`,
+          )
+          .bind(id, row.organizer_id),
+      );
+    }
+    await db.batch(statements);
   }
   return getSessionDetail(db, id, caller.id);
 }
@@ -593,8 +616,10 @@ export function buildDrafts(session: SessionDetail, offsetHours: number): CaseDr
     if (!def) continue;
     // The organizer can't file against themselves; their bonus is handled separately.
     if (p.user.id === session.organizer.id) continue;
-    // Same rule as planFilings: only a promise can be broken.
+    // Same rules as planFilings: only a promise can be broken, and a bonus
+    // needs at least an answer.
     if (def.kind === 'penalty' && p.rsvp !== 'going') continue;
+    if (def.kind === 'bonus' && p.rsvp !== 'going' && p.rsvp !== 'maybe') continue;
     drafts.push({
       user_id: p.user.id,
       username: p.user.username,
@@ -684,8 +709,11 @@ function planFilings(
     // A penalty only for someone who said they would come: 放鸽子 is "答应了没来".
     // Someone merely invited (or a maybe) made no promise — and without this an
     // organizer could invite anyone, mark them absent and so file a case, with
-    // its DM, against a person who never agreed to anything.
-    if (VIOLATION_MAP[derived]?.kind === 'penalty' && player.rsvp !== 'going') continue;
+    // its DM, against a person who never agreed to anything. A bonus at least
+    // needs an answer: it would carry the organizer's text onto their profile.
+    const kind = VIOLATION_MAP[derived]?.kind;
+    if (kind === 'penalty' && player.rsvp !== 'going') continue;
+    if (kind === 'bonus' && player.rsvp !== 'going' && player.rsvp !== 'maybe') continue;
     const requested =
       typeof entry.type === 'string' && entry.type.length > 0
         ? (entry.type as ViolationType)
@@ -842,8 +870,10 @@ async function awardOrganizerBonus(
   const def = VIOLATION_MAP.organizer_bonus;
   if (!def) return;
 
+  // Only people who answered count: an invitee who never replied could
+  // otherwise be marked present to farm this bonus without them.
   const attended = [...players.values()].filter(
-    (p) => p.attendance === 'on_time' || p.attendance === 'late',
+    (p) => (p.attendance === 'on_time' || p.attendance === 'late') && (p.rsvp === 'going' || p.rsvp === 'maybe'),
   ).length;
   if (attended < ORGANIZER_BONUS_MIN_ATTENDEES) return;
 

@@ -604,25 +604,29 @@ describe('updateSession — session status', () => {
     ).rejects.toMatchObject({ status: 403, message: NOT_ORGANIZER });
   });
 
-  it.todo(
-    'BUG: updateSession does not refuse a session that has already started — it only checks ' +
-      "status !== 'open' (worker/sessions.ts:357). Reproduced: after roll call marks a player " +
-      'no_show, the organizer can move starts_at back into the future; setRsvp (sessions.ts:422) ' +
-      "only checks starts_at, so the player can then switch to 'out' while attendance stays " +
-      'no_show. The organizer can also retitle the session the settle-time claims quote',
-  );
+  it('refuses to change a session that has already started', async () => {
+    const { organizer } = await cast();
+    const session = await openSession(organizer);
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 60_000).toISOString(), session.id)
+      .run();
+    await expect(updateSession(env.DB, organizer, session.id, { title: '改名' })).rejects.toThrow(/已开始/);
+    await expect(
+      updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(60)).toISOString() }),
+    ).rejects.toThrow(/已开始/);
+  });
 
-  it.todo(
-    'BUG: updateSession accepts a starts_at in the past — normalizeStartsAt has an upper bound ' +
-      'only (worker/sessions.ts:220-226). An organizer can pull a future session whose players ' +
-      'said "going" behind now, which freezes their RSVPs and unlocks roll call + settlement ' +
-      'against them immediately (reproduced: rollCall then returns a no_show draft). ' +
-      'createSession accepts a past starts_at the same way',
-  );
+  it('refuses a start time in the past, on create and on update', async () => {
+    const { organizer } = await cast();
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    await expect(createSession(env.DB, organizer, { starts_at: past }, 8)).rejects.toThrow(/已经过了/);
+    const session = await openSession(organizer);
+    await expect(updateSession(env.DB, organizer, session.id, { starts_at: past })).rejects.toThrow(/已经过了/);
+  });
 });
 
 describe('updateSession — effect on the roster', () => {
-  it('reschedules without touching anybody’s rsvp, rsvp_at or attendance', async () => {
+  it('reschedules: everyone who had answered yes or maybe must answer again; out stays out', async () => {
     const { organizer, a, b, c, d } = await cast();
     const session = await openSession(organizer, { invite: [a.id, b.id, c.id] });
     await setRsvp(env.DB, a, session.id, 'going');
@@ -644,10 +648,23 @@ describe('updateSession — effect on the roster', () => {
       capacity: 10,
     });
 
-    expect(await playerRows(session.id)).toEqual(before);
-    expect(out.counts).toEqual({ invited: 1, going: 2, maybe: 1, out: 1 });
+    // A yes to one time is not a yes to another (and only a 'going' can be
+    // roll-called as a no-show), so a and b are back to 'invited'.
+    const after = await playerRows(session.id);
+    expect(after.map((p) => [p.user_id, p.rsvp])).toEqual([
+      ['a', 'invited'],
+      ['b', 'invited'],
+      ['c', 'invited'],
+      ['d', 'out'],
+      ['org', 'going'],
+    ]);
+    expect(out.counts).toEqual({ invited: 3, going: 1, maybe: 0, out: 1 });
     expect(out.players).toHaveLength(5);
     expect(out.players.every((p) => p.attendance === null && p.record_id === null)).toBe(true);
+    // Retitling alone changes nobody's answer.
+    await setRsvp(env.DB, a, session.id, 'going');
+    await updateSession(env.DB, organizer, session.id, { title: '又改名' });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('going');
   });
 
   it('keeps a still-invited player’s invite alive at the new time', async () => {

@@ -604,6 +604,29 @@ describe('settleSession', () => {
 });
 
 describe('organizer bonus', () => {
+  it('counts only people who answered: an invitee marked present proves nothing', async () => {
+    const { organizer } = await cast();
+    const silent = await seedUser({ id: 'silent' });
+    await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
+    const session = await createSession(env.DB, organizer, { title: '周五五排', starts_at: FUTURE, invite: [silent.id] }, OFFSET_HOURS);
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(PAST, session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: silent.id, attendance: 'on_time' },
+        { user_id: organizer.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    // No 守约 bonus draft for someone who never answered either.
+    expect(roll.drafts.find((d) => d.user_id === silent.id)).toBeUndefined();
+    await settleSession(env.DB, organizer, session.id, [{ user_id: silent.id, claim: '组织者随便写的话，凑够字数凑够字数' }], false, noAiEnv(), OFFSET_HOURS);
+    expect(await scoreOf(organizer.id)).toBe(80);
+    expect(await listRecords(env.DB, { session: session.id })).toEqual([]);
+  });
+
   it('is awarded once the session provably happened', async () => {
     const { organizer, a, b } = await cast();
     await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();

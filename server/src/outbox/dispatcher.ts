@@ -14,7 +14,7 @@
 
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
-import { dmStillRelevant, isDmKind, renderDm, type DmKind } from '../discord/dm';
+import { dmStillRelevant, isDmKind, removedDm, renderDm, type DmKind } from '../discord/dm';
 import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
 
 const POLL_MS = 30_000;
@@ -36,8 +36,9 @@ const PAUSE_MS = 5 * 60_000;
 /**
  * Reminders and to-dos one person gets per 24 h; past it they are skipped (the
  * web has it all). Outcomes — a verdict, an override, a revoke, an appeal to
- * review — are never budgeted: they are what the reminders were for, and are
- * bounded anyway by the cases one person can be filed (5 a day).
+ * review — are never budgeted: they are what the reminders were for. Each is
+ * at most one per case (or needs an admin), and cases need a judge, or the
+ * subject's own 'going' to a session.
  */
 export const DM_BUDGET = 20;
 const BUDGETED: ReadonlySet<string> = new Set(['dm.filed', 'dm.deadline']);
@@ -86,12 +87,19 @@ interface OutboxRow {
   claim_token: string;
   attempts: number;
   created_at: Date;
+  refused_since: Date | null;
 }
+
+/** The record events this version delivers; anything else waits for a newer one. */
+const RECORD_KINDS: ReadonlySet<string> = new Set(['case.decided', 'case.overridden', 'case.revoked', 'case.removed']);
 
 type Outcome =
   | { result: 'sent' | 'skipped' | 'dead'; note: string | null }
-  /** `refused`: Discord said 401/403 — retried later without counting the attempt. */
-  | { result: 'retry'; note: string; refused?: boolean };
+  /**
+   * `refused`: Discord said 401/403 — retried every few minutes without counting
+   * the attempt; `unhandled`: this version has no handler — left for a newer one.
+   */
+  | { result: 'retry'; note: string; refused?: boolean; unhandled?: boolean };
 
 export interface Dispatcher {
   start(): void;
@@ -140,28 +148,43 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
                SELECT 1 FROM outbox e
                 WHERE e.entity = o.entity AND e.entity_id = o.entity_id
                   AND e.processed_at IS NULL AND e.id < o.id
-                  AND (e.available_at <= now() OR e.attempts > 0))
+                  AND (e.available_at <= now() OR e.attempts > 0 OR e.refused_since IS NOT NULL))
            ORDER BY o.id
            LIMIT 1
            FOR UPDATE SKIP LOCKED)
-      RETURNING id, kind, entity, entity_id, payload, claim_token, attempts, created_at`,
+      RETURNING id, kind, entity, entity_id, payload, claim_token, attempts, created_at, refused_since`,
     );
     return res.rows[0] ?? null;
   }
 
   async function finish(row: OutboxRow, outcome: Outcome): Promise<void> {
-    const stale = Date.now() - row.created_at.getTime() > STALE_MS;
-    if (outcome.result === 'retry' && (outcome.refused ? !stale : row.attempts < MAX_ATTEMPTS)) {
+    if (outcome.result === 'retry' && (outcome.refused || outcome.unhandled)) {
       // A refusal is usually a permission someone forgot to give the bot: it
       // gets fixed eventually, so it waits without spending its attempts — for
-      // up to a day, after which it is given up like anything else.
-      const delay = outcome.refused ? REFUSED_RETRY_S : Math.min(MAX_BACKOFF_S, 5 * 2 ** row.attempts);
+      // a day counted from the first refusal. Corrections to the channel (an
+      // edit, a removal) never give up: a revoked penalty must not stay up.
+      // An unhandled event waits a day from its creation for a newer bot.
+      const since = outcome.refused ? (row.refused_since ?? new Date()) : row.created_at;
+      const keep = outcome.refused && row.entity === 'record' && RECORD_KINDS.has(row.kind);
+      if (keep || Date.now() - since.getTime() <= STALE_MS) {
+        if (keep && Date.now() - since.getTime() > STALE_MS) {
+          log.error(`outbox ${row.id} (${row.kind} record:${row.entity_id}) refused for over a day: ${outcome.note}`);
+        }
+        await pool.query(
+          `UPDATE outbox SET claim_token = NULL, claimed_at = NULL, attempts = attempts - 1,
+                  refused_since = CASE WHEN $5 THEN COALESCE(refused_since, now()) ELSE refused_since END,
+                  available_at = now() + make_interval(secs => $3), last_error = $4
+            WHERE id = $1 AND claim_token = $2`,
+          [row.id, row.claim_token, REFUSED_RETRY_S, outcome.note, outcome.refused === true],
+        );
+        return;
+      }
+    } else if (outcome.result === 'retry' && row.attempts < MAX_ATTEMPTS) {
       await pool.query(
         `UPDATE outbox SET claim_token = NULL, claimed_at = NULL,
-                attempts = attempts - $5::int,
                 available_at = now() + make_interval(secs => $3), last_error = $4
           WHERE id = $1 AND claim_token = $2`,
-        [row.id, row.claim_token, delay, outcome.note, outcome.refused ? 1 : 0],
+        [row.id, row.claim_token, Math.min(MAX_BACKOFF_S, 5 * 2 ** row.attempts), outcome.note],
       );
       return;
     }
@@ -243,6 +266,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   async function deliverRecord(row: OutboxRow): Promise<Outcome> {
+    if (!RECORD_KINDS.has(row.kind)) return unhandled(row);
     if (row.kind === 'case.removed') return removePost(row);
     const channelId = config.verdictChannelId;
     if (!channelId) return { result: 'skipped', note: 'no verdict channel configured' };
@@ -357,11 +381,70 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   /** A DM about one case to the person it concerns (P6); entity_id is their users.id. */
+  /** Rewrite DMs already sent (no new notification); 50007 marks DMs closed. */
+  async function rewrite(
+    userId: string,
+    targets: ReadonlyArray<{ channel_id: string; message_id: string }>,
+    message: ChannelMessage,
+  ): Promise<Outcome | number> {
+    let edited = 0;
+    for (const target of targets) {
+      try {
+        await api.edit(target.channel_id, target.message_id, message);
+        edited += 1;
+      } catch (error) {
+        const code = errorCode(error);
+        if (code === CANNOT_DM) return dmsClosed(userId);
+        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+      }
+    }
+    return edited;
+  }
+
+  async function statementDms(recordId: number): Promise<Array<{ channel_id: string; message_id: string }>> {
+    const found: Array<{ channel_id: string; message_id: string }> = [];
+    for (const purpose of Object.values(STATEMENT_DMS)) {
+      const posted = await messageFor('record', String(recordId), purpose);
+      if (posted) found.push(posted);
+    }
+    return found;
+  }
+
+  /** The record was deleted with its user: say so in the DMs that quoted it. */
+  async function deliverDmRemoved(row: OutboxRow): Promise<Outcome> {
+    const { channel_id: channelId, message_id: messageId, purpose } = row.payload;
+    if (typeof channelId !== 'string' || typeof messageId !== 'string' || typeof purpose !== 'string') {
+      return { result: 'skipped', note: 'no message in the payload' };
+    }
+    const done = await rewrite(row.entity_id, [{ channel_id: channelId, message_id: messageId }], removedDm());
+    if (typeof done !== 'number') return done;
+    await pool.query("DELETE FROM discord_messages WHERE entity = 'record' AND entity_id = $1 AND purpose = $2", [
+      String(row.payload.record_id),
+      purpose,
+    ]);
+    return { result: 'sent', note: null };
+  }
+
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
+    if (row.kind === 'dm.removed') return deliverDmRemoved(row);
     if (!isDmKind(row.kind)) return unhandled(row);
     const kind = row.kind;
     const recordId = Number(row.payload.record_id);
     if (!Number.isSafeInteger(recordId)) return { result: 'skipped', note: 'no record in the payload' };
+
+    if (kind === 'dm.withdrawn') {
+      // Rewrite the DMs that asked for a statement (filing, reminder) in place:
+      // their 写陈述 button goes. Never a new DM — so not subject to /notify or
+      // the binding: it only edits what was already sent.
+      const record = await getRecordItemById(db, recordId);
+      if (!record || record.status !== 'withdrawn') return { result: 'skipped', note: 'no longer true' };
+      const message = renderDm(kind, record, config.frontendUrl);
+      const targets = await statementDms(recordId);
+      if (!message || targets.length === 0) return { result: 'skipped', note: 'no statement DM to rewrite' };
+      const done = await rewrite(row.entity_id, targets, message);
+      if (typeof done !== 'number') return done;
+      return done > 0 ? { result: 'sent', note: null } : { result: 'skipped', note: 'statement DMs are gone' };
+    }
 
     const to = await recipient(row.entity_id);
     if (isOutcome(to)) return to;
@@ -379,28 +462,15 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const message = renderDm(kind, record, config.frontendUrl);
     if (!message) return { result: 'skipped', note: 'nothing to say' };
 
-    if (kind === 'dm.withdrawn') {
-      // Rewrite the DMs that asked for a statement (filing, reminder) in place:
-      // their 写陈述 button goes. Never a new DM.
-      let edited = 0;
-      for (const purpose of Object.values(STATEMENT_DMS)) {
-        const posted = await messageFor('record', String(recordId), purpose);
-        if (!posted) continue;
-        try {
-          await api.edit(posted.channel_id, posted.message_id, message);
-          edited += 1;
-        } catch (error) {
-          const code = errorCode(error);
-          if (code === CANNOT_DM) return dmsClosed(row.entity_id);
-          if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
-        }
-      }
-      return edited > 0 ? { result: 'sent', note: null } : { result: 'skipped', note: 'no statement DM to rewrite' };
-    }
+    const purpose = STATEMENT_DMS[kind];
+    const earlier = purpose ? await messageFor('record', String(recordId), purpose) : null;
 
     const sent = await sendDm(row, to, message);
     if (isOutcome(sent)) return sent;
-    const purpose = STATEMENT_DMS[kind];
+    // A reminder sent again (its deadline moved): the earlier one loses its
+    // button, so only the current DM offers 写陈述 (and a withdrawal, which
+    // rewrites the stored one, leaves no live button behind).
+    if (earlier) await rewrite(row.entity_id, [earlier], { ...message, components: [] });
     if (purpose) {
       await pool.query(
         `INSERT INTO discord_messages (entity, entity_id, purpose, channel_id, message_id)
@@ -420,7 +490,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
    * ends it if nobody ever can.
    */
   function unhandled(row: OutboxRow): Outcome {
-    return { result: 'retry', note: `no handler for ${row.entity} ${row.kind}`, refused: true };
+    return { result: 'retry', note: `no handler for ${row.entity} ${row.kind}`, unhandled: true };
   }
 
   async function handle(row: OutboxRow): Promise<void> {

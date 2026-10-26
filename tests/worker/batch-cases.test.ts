@@ -370,3 +370,20 @@ describe('batch filing feeds the normal trial flow', () => {
     expect(await scoreOf(players[1].id)).toBe(100);
   });
 });
+
+describe('reclassify needs a judge', () => {
+  it('refuses the reporter of a roll-call case who is not a judge', async () => {
+    const organizer = await seedUser({ id: 'org' });
+    await seedUser({ id: 'v' });
+    // A roll-call case: filed by the session's organizer, who is no judge.
+    const row = await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, claim, status, classified_by, deadline_at)
+       VALUES ('v', 'org', 'late_minor', '迟到了一分钟迟到了一分钟', 'awaiting_statement', 'derived', datetime('now', '+1 day'))`,
+    ).run();
+    const id = Number(row.meta.last_row_id);
+    await expect(reclassifyCase(env.DB, organizer, id, 'no_show_group')).rejects.toMatchObject({ status: 403 });
+    const judge = await seedUser({ id: 'j', judge: true });
+    await env.DB.prepare("UPDATE records SET reporter_id = 'j' WHERE id = ?").bind(id).run();
+    await expect(reclassifyCase(env.DB, judge, id, 'late_major')).resolves.toMatchObject({ type: 'late_major' });
+  });
+});

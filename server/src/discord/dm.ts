@@ -73,6 +73,11 @@ function web(frontendUrl: string): Button {
   return linkButton('在网页查看', joinUrl(frontendUrl, '/'));
 }
 
+/** What a DM about a case becomes when the case is deleted (with its user). */
+export function removedDm(): ChannelMessage {
+  return message({ title: '🗑️ 这条记录已删除', description: '相关的账号和记录已被管理员删除。', color: GREY }, []);
+}
+
 /** Whether this DM still says something true about the case right now. */
 export function dmStillRelevant(kind: DmKind, record: RecordItem, now = Date.now()): boolean {
   switch (kind) {

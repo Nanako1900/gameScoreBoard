@@ -10,6 +10,10 @@
 -- (50007); back to true when they next use the bot or /notify.
 ALTER TABLE discord_links ADD COLUMN IF NOT EXISTS dm_ok bigint NOT NULL DEFAULT 1;
 
+-- When Discord first refused (401/403) to deliver this event: retries are
+-- counted from here, not from when the event was created.
+ALTER TABLE outbox ADD COLUMN IF NOT EXISTS refused_since timestamptz;
+
 /** A stored 'YYYY-MM-DD HH:MM:SS' (UTC) as timestamptz; NULL if it is not one. */
 CREATE OR REPLACE FUNCTION outbox_utc(value text) RETURNS timestamptz
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -39,7 +43,8 @@ LANGUAGE sql AS $$
   VALUES (p_kind, p_entity, p_entity_id, p_dedupe, p_payload, p_at)
   ON CONFLICT (dedupe_key) DO UPDATE
     SET available_at = excluded.available_at, processed_at = NULL, result = NULL,
-        claim_token = NULL, claimed_at = NULL, attempts = 0, last_error = NULL;
+        claim_token = NULL, claimed_at = NULL, attempts = 0, last_error = NULL,
+        refused_since = NULL, created_at = now();
 $$;
 
 CREATE OR REPLACE FUNCTION records_outbox() RETURNS trigger
@@ -97,9 +102,10 @@ BEGIN
     ON CONFLICT (dedupe_key) DO NOTHING;
 
   ELSIF NEW.status = 'awaiting_statement' AND NEW.deadline_at IS DISTINCT FROM OLD.deadline_at THEN
-    -- The deadline moved (e.g. extended over an outage): move the reminder too.
-    remind := outbox_utc(NEW.deadline_at) - interval '2 hours';
-    IF remind > now() THEN
+    -- The deadline moved (e.g. extended over an outage): move the reminder too
+    -- — at once, if the new deadline is already less than 2 hours away.
+    IF outbox_utc(NEW.deadline_at) > now() THEN
+      remind := GREATEST(outbox_utc(NEW.deadline_at) - interval '2 hours', now());
       PERFORM outbox_schedule('dm.deadline', 'user', NEW.subject_id, 'dm:case:' || rid || ':deadline', dm, remind);
     END IF;
 
@@ -117,3 +123,33 @@ DROP TRIGGER IF EXISTS records_outbox ON records;
 CREATE TRIGGER records_outbox
   AFTER INSERT OR UPDATE OF status, delta, deadline_at ON records
   FOR EACH ROW EXECUTE FUNCTION records_outbox();
+
+-- A record deleted (its user was): besides its channel post (0003), the DMs
+-- about it — the filing and the reminder, which quote the accusation — are
+-- rewritten to say so. The record is gone by then, so the message ids travel.
+CREATE OR REPLACE FUNCTION records_outbox_removed() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  posted record;
+BEGIN
+  FOR posted IN
+    SELECT purpose, channel_id, message_id FROM discord_messages
+     WHERE entity = 'record' AND entity_id = OLD.id::text
+  LOOP
+    IF posted.purpose = 'verdict' THEN
+      INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+      VALUES ('case.removed', 'record', OLD.id::text, 'case:' || OLD.id || ':removed',
+              jsonb_build_object('channel_id', posted.channel_id, 'message_id', posted.message_id))
+      ON CONFLICT (dedupe_key) DO NOTHING;
+    ELSE
+      INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+      VALUES ('dm.removed', 'user', OLD.subject_id, 'dm:case:' || OLD.id || ':removed:' || posted.purpose,
+              jsonb_build_object('record_id', OLD.id, 'purpose', posted.purpose,
+                                 'channel_id', posted.channel_id, 'message_id', posted.message_id))
+      ON CONFLICT (dedupe_key) DO NOTHING;
+    END IF;
+  END LOOP;
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;

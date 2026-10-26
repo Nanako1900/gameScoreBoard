@@ -58,6 +58,7 @@ function fakeDiscord() {
       return { id: `90000000000000${String(next).padStart(4, '0')}` };
     },
     async edit(channelId, messageId, message) {
+      if (failures.length > 0) throw failures.shift();
       edits.push({ channelId, messageId, message });
     },
     async remove() {},
@@ -236,6 +237,60 @@ describe('DM delivery', () => {
     expect(discord.edits).toEqual([]);
   });
 
+  it('a deadline cut to under 2 hours away gets its reminder at once', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime('now', '+90 minutes') WHERE id = ?").bind(filed.id).run();
+    const [row] = (await pool.query("SELECT available_at <= now() + interval '1 minute' AS soon FROM outbox WHERE kind = 'dm.deadline'")).rows;
+    expect(row.soon).toBe(true);
+  });
+
+  it('a re-sent reminder takes the button off the earlier one', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    const first = discord.sent.findIndex((m) => text(m.message).includes('陈述快截止了'));
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
+    await dueNow();
+    await d.runOnce();
+    const firstId = `90000000000000${String(first + 1).padStart(4, '0')}`;
+    const stripped = discord.edits.find((e) => e.messageId === firstId);
+    expect(stripped?.message.components).toEqual([]);
+  });
+
+  it('rewrites the statement DMs on withdrawal even if the subject has since turned DMs off', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await handleCommand({ commandName: 'notify', caller: SUBJECT_DC, targetUser: null, state: 'off' }, ctx);
+    await withdrawCase(env.DB, judge, filed.id);
+    await d.runOnce();
+    expect(discord.edits).toHaveLength(2);
+  });
+
+  it('a deleted user’s DMs about a case are rewritten to say it is gone', async () => {
+    const { judge, subject } = await people();
+    await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await adminUpdateUser(env.DB, 'subject', { delete: true });
+    await d.runOnce();
+    expect(discord.edits).toHaveLength(2);
+    for (const e of discord.edits) {
+      expect(text(e.message)).toContain('已删除');
+      expect(text(e.message)).not.toContain('SECRETCLAIM');
+    }
+    expect((await pool.query("SELECT 1 FROM discord_messages WHERE purpose LIKE 'dm:%'")).rowCount).toBe(0);
+  });
+
   it('re-arms a reminder that already went out when the deadline is extended', async () => {
     const { judge, subject } = await people();
     const filed = await file(judge, subject);
@@ -400,10 +455,76 @@ describe('DM delivery', () => {
     discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
     await d.runOnce();
     expect((await dmEvents())[0].result).toBeNull();
-    await pool.query("UPDATE outbox SET available_at = now(), created_at = now() - interval '25 hours'");
+    // A day of refusals later (counted from the first one, not from creation):
+    await pool.query("UPDATE outbox SET available_at = now(), refused_since = now() - interval '25 hours'");
     discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
     await d.runOnce();
     expect((await dmEvents())[0].result).toBe('dead');
+  });
+
+  it('an event already old when first refused still gets its day of retries', async () => {
+    const { judge, subject } = await people();
+    await file(judge, subject);
+    await pool.query("DELETE FROM outbox WHERE kind = 'dm.deadline'");
+    await pool.query("UPDATE outbox SET available_at = now(), created_at = now() - interval '3 days'");
+    const discord = fakeDiscord();
+    discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
+    await dispatcher(discord.api).runOnce();
+    const [row] = (await pool.query('SELECT result, refused_since IS NOT NULL AS refused FROM outbox')).rows;
+    expect(row).toEqual({ result: null, refused: true });
+  });
+
+  it('a corrected verdict in the channel is never given up on, however long Discord refuses', async () => {
+    const { judge, admin, subject } = await people();
+    const filed = await file(judge, subject);
+    await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
+    const discord = fakeDiscord();
+    const channel = createDispatcher({
+      pool,
+      db: env.DB,
+      api: discord.api,
+      config: { verdictChannelId: '200000000000000009', frontendUrl: FRONTEND },
+      log: quiet,
+    });
+    await channel.runOnce();
+    await revokeCase(env.DB, admin, filed.id);
+    await pool.query("UPDATE outbox SET refused_since = now() - interval '3 days' WHERE kind = 'case.revoked'");
+    discord.fail(Object.assign(new Error('Missing Permissions'), { status: 403, code: 50013 }));
+    await channel.runOnce();
+    const [row] = (await pool.query("SELECT result FROM outbox WHERE kind = 'case.revoked'")).rows;
+    expect(row.result).toBeNull(); // still waiting for the permission, not dead
+  });
+
+  it('a refused event keeps its place: what came after it waits', async () => {
+    const { judge, admin, subject } = await people();
+    const filed = await file(judge, subject);
+    await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
+    await pool.query("DELETE FROM outbox WHERE kind IN ('dm.filed', 'dm.deadline')");
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
+    await d.runOnce(); // dm.decided refused
+    await overrideCase(env.DB, admin, filed.id, -8, '情有可原');
+    await d.runOnce();
+    // The override does not overtake the verdict it corrects.
+    expect(discord.sent).toEqual([]);
+    await pool.query('UPDATE outbox SET available_at = now() WHERE processed_at IS NULL');
+    await d.runOnce();
+    // Told by their titles (both render the case as it is now).
+    expect(discord.sent.map((m) => (m.message.embeds[0].title?.startsWith('⚖️ 判决') ? 'verdict' : 'override'))).toEqual([
+      'verdict',
+      'override',
+    ]);
+  });
+
+  it('leaves a record event it cannot handle for a newer bot', async () => {
+    await people();
+    await pool.query(
+      `INSERT INTO outbox (kind, entity, entity_id, dedupe_key) VALUES ('case.from.the.future', 'record', '1', 'future:r1')`,
+    );
+    await dispatcher(fakeDiscord().api).runOnce();
+    const [row] = (await pool.query("SELECT result FROM outbox WHERE dedupe_key = 'future:r1'")).rows;
+    expect(row.result).toBeNull();
   });
 
   it('leaves an event it cannot handle for a newer bot instead of dropping it', async () => {
