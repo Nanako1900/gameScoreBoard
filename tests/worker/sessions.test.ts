@@ -133,6 +133,14 @@ describe('rsvp', () => {
     await expect(setRsvp(env.DB, a, other.id, 'going')).rejects.toThrow(/不接受报名/);
   });
 
+  it('cancelling an already-cancelled session is not an error', async () => {
+    const { organizer } = await cast();
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
+    await cancelSession(env.DB, organizer, session.id);
+    const again = await cancelSession(env.DB, organizer, session.id);
+    expect(again.status).toBe('cancelled');
+  });
+
   it('will not let the organizer quietly bail on their own session', async () => {
     const { organizer } = await cast();
     const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);

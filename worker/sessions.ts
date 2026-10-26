@@ -30,6 +30,7 @@ import {
 import type {
   CaseDraft,
   Env,
+  RecordItem,
   SessionDetail,
   SessionItem,
   SessionPlayer,
@@ -38,9 +39,9 @@ import type {
   User,
 } from './types';
 import { ApiError } from './errors';
-import { getUserById, scoreMutation } from './db';
+import { appliedDeltaSql, getUserById, scoreMutation } from './db';
 import { fileCase } from './cases';
-import { fitsWeeklyBonusCap } from './case-limits';
+import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limits';
 import { parseSqlUtc } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 
@@ -403,10 +404,13 @@ export async function cancelSession(
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status === 'settled') throw new ApiError(400, '已结算的约局不能取消');
-  await db
+  // Cancelling twice is not a conflict: it is already what was asked for.
+  if (row.status === 'cancelled') return getSessionDetail(db, id, caller.id);
+  const res = await db
     .prepare("UPDATE game_sessions SET status = 'cancelled' WHERE id = ? AND status = 'open'")
     .bind(id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '约局状态已变化，请刷新后重试');
   return getSessionDetail(db, id, caller.id);
 }
 
@@ -442,15 +446,38 @@ export async function setRsvp(
     }
   }
 
-  await db
-    .prepare(
-      `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
-       VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(session_id, user_id) DO UPDATE SET
-         rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
-    )
-    .bind(id, caller.id, rawRsvp)
-    .run();
+  // The check above is the friendly fast path; this is the one that holds.
+  // The seat count is re-checked inside the write itself, after a no-op
+  // UPDATE has taken the session's row lock on PostgreSQL (so RSVPs to one
+  // session queue up instead of racing for the last seat; D1 serialises
+  // batches anyway). Two players cannot both take the last seat.
+  const capped = occupiesSlot(rawRsvp) && row.capacity !== null;
+  // Same rule as the fast path: someone already holding a seat may re-confirm
+  // even when a lowered capacity is now below the going count.
+  const seatFree = capped
+    ? `(EXISTS (SELECT 1 FROM session_players WHERE session_id = ? AND user_id = ? AND rsvp = 'going')
+        OR (SELECT COUNT(*) FROM session_players
+             WHERE session_id = ? AND rsvp = 'going' AND user_id != ?) < ?)`
+    : '1 = 1';
+  const seatBinds = capped ? [id, caller.id, id, caller.id, row.capacity] : [];
+  const results = await db.batch([
+    db.prepare('UPDATE game_sessions SET status = status WHERE id = ?').bind(id),
+    db
+      .prepare(
+        `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
+         SELECT ?, ?, ?, datetime('now')
+          WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = ? AND status = 'open') AND ${seatFree}
+         ON CONFLICT(session_id, user_id) DO UPDATE SET
+           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
+      )
+      .bind(id, caller.id, rawRsvp, id, ...seatBinds),
+  ]);
+  if ((results[1]?.meta?.changes ?? 0) === 0) {
+    // Cancelled (or closed) while we were checking, or the last seat went.
+    const now = await getSessionRow(db, id);
+    if (now.status !== 'open') throw new ApiError(400, '这个约局已经不接受报名了');
+    throw new ApiError(400, '人数已满');
+  }
   return getSessionDetail(db, id, caller.id);
 }
 
@@ -749,23 +776,30 @@ export async function settleSession(
       continue;
     }
 
-    const record = await fileCase(
-      db,
-      caller,
-      {
-        subject_id: player.user.id,
-        type,
-        claim,
-        session_id: id,
-      },
+    let record: RecordItem;
+    try {
+      record = await fileCase(
+        db,
+        caller,
+        {
+          subject_id: player.user.id,
+          type,
+          claim,
+          session_id: id,
+        },
       // The organizer is the only person who witnessed the session, so they may
       // file inside it even without the global judge role — bounded to this
       // session's own signed-up players, and switchable off via env.
       // `derived`: the type came from stored attendance, deterministically —
       // it never went near the AI classifier.
-      { offsetHours, skipJudgeCheck: true, skipRateLimit: true, classifiedBy: 'derived' },
-      env,
-    );
+        { offsetHours, skipJudgeCheck: true, skipRateLimit: true, classifiedBy: 'derived' },
+        env,
+      );
+    } catch (err) {
+      // The cap filled up between the check above and the write: skip, as above.
+      if (err instanceof BonusCapReached) continue;
+      throw err;
+    }
     await db
       .prepare('UPDATE session_players SET record_id = ? WHERE session_id = ? AND user_id = ?')
       .bind(record.id, id, player.user.id)
@@ -829,9 +863,14 @@ async function awardOrganizerBonus(
   const recordId = Number(insert.meta?.last_row_id);
   if (!recordId) return;
 
-  const mutation = scoreMutation(db, organizer.id, organizer.score, def.base, `record:${recordId}`);
-  await db.batch([
-    db.prepare('UPDATE records SET delta = ? WHERE id = ?').bind(mutation.applied, recordId),
-    ...mutation.statements,
+  const reason = `record:${recordId}`;
+  const applied = appliedDeltaSql(organizer.id, reason);
+  const results = await db.batch([
+    ...scoreMutation(db, organizer.id, def.base, reason, bonusCapGuard(organizer.id, def.base, offsetHours)),
+    db.prepare(`UPDATE records SET delta = ${applied.sql} WHERE id = ?`).bind(...applied.binds, recordId),
   ]);
+  // Capped meanwhile by another bonus: skipped after all, like above.
+  if ((results[1]?.meta?.changes ?? 0) === 0) {
+    await db.prepare('DELETE FROM records WHERE id = ?').bind(recordId).run();
+  }
 }

@@ -10,7 +10,6 @@ import {
   STATEMENT_WINDOW_HOURS,
   VIOLATION_MAP,
   WEEKLY_BONUS_CAP,
-  clampScore,
   clampVerdictDelta,
   isValidViolationType,
   needsTrial,
@@ -59,10 +58,11 @@ export {
   type PendingCounts,
 } from './case-reads';
 import {
+  appliedDeltaSql,
   getUserById,
   requireParticipant,
   scoreMutation,
-  type ScoreMutation,
+  type RowGuard,
 } from './db';
 import { loadAiConfig } from './ai/config';
 import { judgeCase } from './ai/provider';
@@ -97,44 +97,29 @@ const PRIORS_WINDOW_DAYS = 30;
 // --- Guarded score writes ----------------------------------------------------
 
 /**
- * Score statements that fire ONLY while the case is still in `expectedStatus`.
- *
- * Without this guard, a batch whose record-UPDATE matched zero rows — because a
- * concurrent path (a re-claiming sweep, a double-clicked revoke) already moved
- * the case on — would still apply its delta, charging the player twice. The
- * record-UPDATE must therefore be batched AFTER these statements, or the status
- * would already have changed by the time the EXISTS check runs.
+ * The case is still `status` (and, for an override, still worth `delta`): the
+ * condition every statement of a score change is gated on, so a duplicate or
+ * racing request changes nothing at all.
  */
-function guardedScoreMutation(
-  db: D1Database,
-  userId: string,
-  oldScore: number,
-  delta: number,
-  reason: string,
-  recordId: number,
-  expectedStatus: CaseStatus,
-): ScoreMutation {
-  const newScore = clampScore(oldScore + delta);
-  const applied = newScore - oldScore;
-  const guard = 'EXISTS (SELECT 1 FROM records WHERE id = ? AND status = ?)';
-  return {
-    applied,
-    newScore,
-    statements: [
-      db
-        .prepare(
-          `UPDATE users SET score = ?, updated_at = datetime('now')
-            WHERE id = ? AND ${guard}`,
-        )
-        .bind(newScore, userId, recordId, expectedStatus),
-      db
-        .prepare(
-          `INSERT INTO score_events (user_id, delta, reason, resulting_score)
-           SELECT ?, ?, ?, ? WHERE ${guard}`,
-        )
-        .bind(userId, applied, reason, newScore, recordId, expectedStatus),
-    ],
-  };
+function caseGuard(recordId: number, status: CaseStatus, delta?: number): RowGuard {
+  return delta === undefined
+    ? { sql: 'EXISTS (SELECT 1 FROM records WHERE id = ? AND status = ?)', binds: [recordId, status] }
+    : {
+        sql: 'EXISTS (SELECT 1 FROM records WHERE id = ? AND status = ? AND delta = ?)',
+        binds: [recordId, status, delta],
+      };
+}
+
+/**
+ * Lock the case row for the rest of the batch (PostgreSQL; a no-op on D1,
+ * whose batches never interleave). Unconditional and first — before the user
+ * row — so every guard after it sees one state of the case: an appeal,
+ * withdrawal or reclassification queues behind this batch instead of landing
+ * between its statements, where it would leave the score moved but the record
+ * not (and a retry would apply it twice).
+ */
+function lockCase(db: D1Database, recordId: number): D1PreparedStatement {
+  return db.prepare('UPDATE records SET status = status WHERE id = ?').bind(recordId);
 }
 
 // --- Statement ---------------------------------------------------------------
@@ -263,43 +248,25 @@ export async function judgeAndDecide(db: D1Database, env: Env, id: number): Prom
   // Belt and braces: provider.ts already clamped, clamp again at the write edge
   // so no future call path can slip an unbounded delta into the database.
   const verdictDelta = clampVerdictDelta(def, outcome.delta);
-  const mutation = guardedScoreMutation(
-    db,
-    subject.id,
-    subject.score,
-    verdictDelta,
-    `record:${id}`,
-    id,
-    'judging',
-  );
+  const reason = `record:${id}`;
+  const applied = appliedDeltaSql(subject.id, reason);
 
-  // Score first, record second: the guard reads the status the record-UPDATE is
-  // about to change. The AI call above is seconds long, so a stale-reclaiming
-  // sweep really can be running the same case concurrently.
+  // Case lock, then score, then audit, then record: the guard reads the status
+  // the record-UPDATE is about to change. The AI call above is seconds long, so
+  // a stale-reclaiming sweep really can be running the same case concurrently;
+  // the loser changes nothing, not even the audit trail.
+  const guard = caseGuard(id, 'judging');
   await db.batch([
-    ...mutation.statements,
-    db
-      .prepare(
-        `UPDATE records
-            SET delta = ?, status = 'decided', verdict_source = ?,
-                verdict_headline = ?, verdict_reason = ?, verdict_factors = ?,
-                judging_started_at = NULL
-          WHERE id = ? AND status = 'judging'`,
-      )
-      .bind(
-        mutation.applied,
-        outcome.source,
-        outcome.headline,
-        outcome.reasoning,
-        JSON.stringify(outcome.factors),
-        id,
-      ),
+    lockCase(db, id),
+    ...scoreMutation(db, subject.id, verdictDelta, reason, guard),
     db
       .prepare(
         `INSERT INTO ai_verdicts
            (record_id, kind, provider, model, prompt_version, raw_response, parsed_delta,
             applied_delta, clamped, confidence, latency_ms, error)
-         VALUES (?, 'sentence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT CAST(? AS INTEGER), 'sentence', ?, ?, ?, ?, CAST(? AS INTEGER), ${applied.sql},
+                CAST(? AS INTEGER), CAST(? AS DOUBLE PRECISION), CAST(? AS INTEGER), ?
+          WHERE ${guard.sql}`,
       )
       .bind(
         id,
@@ -308,11 +275,28 @@ export async function judgeAndDecide(db: D1Database, env: Env, id: number): Prom
         outcome.audit.promptVersion,
         outcome.audit.rawResponse,
         outcome.audit.parsedDelta,
-        mutation.applied,
+        ...applied.binds,
         outcome.audit.clamped ? 1 : 0,
         outcome.audit.confidence,
         outcome.audit.latencyMs,
         outcome.audit.error,
+        ...guard.binds,
+      ),
+    db
+      .prepare(
+        `UPDATE records
+            SET delta = ${applied.sql}, status = 'decided', verdict_source = ?,
+                verdict_headline = ?, verdict_reason = ?, verdict_factors = ?,
+                judging_started_at = NULL
+          WHERE id = ? AND status = 'judging'`,
+      )
+      .bind(
+        ...applied.binds,
+        outcome.source,
+        outcome.headline,
+        outcome.reasoning,
+        JSON.stringify(outcome.factors),
+        id,
       ),
   ]);
 }
@@ -388,10 +372,11 @@ export async function withdrawCase(
   if (!(withdrawable as string[]).includes(rec.status)) {
     throw new ApiError(400, '该案件已进入裁决结果，只能撤销不能撤案');
   }
-  await db
+  const res = await db
     .prepare("UPDATE records SET status = 'withdrawn' WHERE id = ? AND status = ?")
     .bind(id, rec.status)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '记录状态已变化，请刷新后重试');
   return loadRecordItem(db, id);
 }
 
@@ -408,12 +393,13 @@ export async function appealCase(
     throw new ApiError(400, '只有已判决的案件可以申诉');
   }
   const text = reason?.trim().slice(0, MAX_NARRATIVE_LEN) ?? '';
-  await db
+  const res = await db
     .prepare(
       "UPDATE records SET status = 'appealed', appeal_reason = ? WHERE id = ? AND status = 'decided'",
     )
     .bind(text.length > 0 ? text : null, id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '记录状态已变化，请刷新后重试');
   return loadRecordItem(db, id);
 }
 
@@ -438,23 +424,21 @@ export async function revokeCase(
 
   const subject = await getUserById(db, rec.subject_id);
   if (!subject) throw new ApiError(404, '选手不存在');
-  const mutation = guardedScoreMutation(
-    db,
-    subject.id,
-    subject.score,
-    -rec.delta,
-    `revoke:${id}`,
-    id,
-    rec.status as CaseStatus,
-  );
 
-  // Guarded + score-first, so a double-submitted revoke refunds only once.
-  await db.batch([
-    ...mutation.statements,
+  // Guarded + score-first, so a double-submitted revoke refunds only once. The
+  // guard includes the delta read above: an override landing in between moves
+  // what the case is worth, and refunding the old amount would be wrong.
+  const guard = caseGuard(id, rec.status as CaseStatus, rec.delta);
+  const results = await db.batch([
+    lockCase(db, id),
+    ...scoreMutation(db, subject.id, -rec.delta, `revoke:${id}`, guard),
     db
-      .prepare("UPDATE records SET status = 'revoked' WHERE id = ? AND status = ?")
-      .bind(id, rec.status),
+      .prepare("UPDATE records SET status = 'revoked' WHERE id = ? AND status = ? AND delta = ?")
+      .bind(id, rec.status, rec.delta),
   ]);
+  if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+    throw new ApiError(409, '记录状态已变化，请刷新后重试');
+  }
   return loadRecordItem(db, id);
 }
 
@@ -479,28 +463,27 @@ export async function overrideCase(
   const subject = await getUserById(db, rec.subject_id);
   if (!subject) throw new ApiError(404, '选手不存在');
 
-  // Move the score by the difference so the record ends up worth exactly `target`.
-  const mutation = guardedScoreMutation(
-    db,
-    subject.id,
-    subject.score,
-    target - rec.delta,
-    `override:${id}`,
-    id,
-    rec.status as CaseStatus,
-  );
-  const finalDelta = rec.delta + mutation.applied;
-
-  await db.batch([
-    ...mutation.statements,
+  // Move the score by the difference so the record ends up worth exactly
+  // `target` (or as close as clamping allows). The guard includes the delta the
+  // record is worth now: status alone cannot tell two concurrent overrides
+  // apart (both start from 'decided'), so without it both would apply.
+  const event = `override:${id}`;
+  const guard = caseGuard(id, rec.status as CaseStatus, rec.delta);
+  const applied = appliedDeltaSql(subject.id, event);
+  const results = await db.batch([
+    lockCase(db, id),
+    ...scoreMutation(db, subject.id, target - rec.delta, event, guard),
     db
       .prepare(
         `UPDATE records
-            SET delta = ?, status = 'decided', verdict_source = 'admin_override',
+            SET delta = delta + ${applied.sql}, status = 'decided', verdict_source = 'admin_override',
                 verdict_headline = '管理员改判', verdict_reason = ?, verdict_factors = '[]'
-          WHERE id = ? AND status = ?`,
+          WHERE id = ? AND status = ? AND delta = ?`,
       )
-      .bind(finalDelta, text.slice(0, MAX_NARRATIVE_LEN), id, rec.status),
+      .bind(...applied.binds, text.slice(0, MAX_NARRATIVE_LEN), id, rec.status, rec.delta),
   ]);
+  if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+    throw new ApiError(409, '记录状态已变化，请刷新后重试');
+  }
   return loadRecordItem(db, id);
 }

@@ -9,6 +9,7 @@ import {
   WEEKLY_BONUS_CAP,
 } from '../shared/scoring';
 import type { Env } from './types';
+import type { RowGuard } from './db';
 import { ApiError } from './errors';
 import { SCORED_STATUSES } from './case-reads';
 import { sqlNowMinusMinutes, weekStartUtcSql } from './time';
@@ -92,6 +93,26 @@ export async function fitsWeeklyBonusCap(
   return (agg?.total ?? 0) + delta <= WEEKLY_BONUS_CAP;
 }
 
+/**
+ * The same cap as a guard for scoreMutation(): evaluated inside the write,
+ * after the user row is locked, so two bonuses filed at once for one player
+ * cannot both slip under it.
+ */
+export function bonusCapGuard(subjectId: string, delta: number, offsetHours: number): RowGuard {
+  return {
+    sql: `(SELECT COALESCE(SUM(delta), 0) FROM records
+            WHERE subject_id = ? AND delta > 0 AND status IN ${SCORED_STATUSES} AND created_at >= ?) + ? <= ?`,
+    binds: [subjectId, weekStartUtcSql(offsetHours), delta, WEEKLY_BONUS_CAP],
+  };
+}
+
+/** Thrown when the week's bonus cap is reached — settlement skips these instead of failing. */
+export class BonusCapReached extends ApiError {
+  constructor() {
+    super(400, `本周奖励分已达上限 (${WEEKLY_BONUS_CAP})`);
+  }
+}
+
 export async function assertWeeklyBonusCap(
   db: D1Database,
   subjectId: string,
@@ -99,7 +120,7 @@ export async function assertWeeklyBonusCap(
   offsetHours: number,
 ): Promise<void> {
   if (!(await fitsWeeklyBonusCap(db, subjectId, delta, offsetHours))) {
-    throw new ApiError(400, `本周奖励分已达上限 (${WEEKLY_BONUS_CAP})`);
+    throw new BonusCapReached();
   }
 }
 

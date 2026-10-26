@@ -14,11 +14,13 @@ import {
 } from '../shared/scoring';
 import type { Env, RecordItem, User } from './types';
 import { ApiError } from './errors';
-import { requireParticipant, scoreMutation } from './db';
+import { appliedDeltaSql, requireParticipant, scoreMutation } from './db';
 import { defFor, getRecordRow, loadRecordItem } from './case-reads';
 import {
   assertRateLimits,
   assertWeeklyBonusCap,
+  BonusCapReached,
+  bonusCapGuard,
   normalizeNarrative,
   normalizeNote,
   statementWindowHours,
@@ -142,11 +144,19 @@ export async function fileCase(
     const recordId = Number(insert.meta?.last_row_id);
     if (!recordId) throw new ApiError(500, '创建记录失败');
 
-    const mutation = scoreMutation(db, subject.id, subject.score, def.base, `record:${recordId}`);
-    await db.batch([
-      db.prepare('UPDATE records SET delta = ? WHERE id = ?').bind(mutation.applied, recordId),
-      ...mutation.statements,
+    const reason = `record:${recordId}`;
+    const applied = appliedDeltaSql(subject.id, reason);
+    const results = await db.batch([
+      // The cap once more, inside the write (see bonusCapGuard).
+      ...scoreMutation(db, subject.id, def.base, reason, bonusCapGuard(subject.id, def.base, opts.offsetHours)),
+      // What actually landed after clamping, read back from the event just written.
+      db.prepare(`UPDATE records SET delta = ${applied.sql} WHERE id = ?`).bind(...applied.binds, recordId),
     ]);
+    if ((results[1]?.meta?.changes ?? 0) === 0) {
+      // Another bonus for this player took the week's last points meanwhile.
+      await db.prepare('DELETE FROM records WHERE id = ?').bind(recordId).run();
+      throw new BonusCapReached();
+    }
     return loadRecordItem(db, recordId);
   }
 
@@ -320,7 +330,7 @@ export async function confirmEscalation(
   if (rec.status !== 'awaiting_statement') {
     throw new ApiError(400, '案件已进入裁决，升级请走管理员改判');
   }
-  await db
+  const res = await db
     .prepare(
       `UPDATE records
           SET type = ?, escalation_suggested = 0, classified_by = 'human'
@@ -328,6 +338,7 @@ export async function confirmEscalation(
     )
     .bind(ESCALATION_ONLY, id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '记录状态已变化，请刷新后重试');
   return loadRecordItem(db, id);
 }
 
@@ -369,13 +380,14 @@ export async function reclassifyCase(
   const def = defFor(type);
   if (def.kind !== 'penalty') throw new ApiError(400, '不能把违约改成加分');
 
-  await db
+  const res = await db
     .prepare(
       `UPDATE records SET type = ?, classified_by = 'human', escalation_suggested = 0
         WHERE id = ? AND status = 'awaiting_statement'`,
     )
     .bind(def.type, id)
     .run();
+  if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '记录状态已变化，请刷新后重试');
   return loadRecordItem(db, id);
 }
 
