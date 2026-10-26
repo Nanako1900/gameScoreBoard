@@ -63,6 +63,9 @@ export function OnboardingDialog({
   const [useNanako, setUseNanako] = useState(usingOauthName);
   const [customName, setCustomName] = useState(usingOauthName ? '' : me.username);
   const [choice, setChoice] = useState<Choice>(() => initialChoice(me));
+  // Judges are appointed by an admin (the API refuses a self-grant); someone
+  // who already is one, or an admin, may keep or pick the judge cards.
+  const canJudge = me.is_judge || me.is_admin;
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -138,24 +141,34 @@ export function OnboardingDialog({
       <div className="ob__section">
         <span className="ob__label">身份</span>
         <div className="ob__cards" role="radiogroup" aria-label="选择身份">
-          {ROLE_CARDS.map((card) => (
-            <button
-              type="button"
-              key={card.choice}
-              role="radio"
-              aria-checked={choice === card.choice}
-              className={`ob-card${choice === card.choice ? ' ob-card--active' : ''}`}
-              onClick={() => setChoice(card.choice)}
-            >
-              <span className="ob-card__emoji" aria-hidden="true">
-                {card.emoji}
-              </span>
-              <span className="ob-card__title">{card.title}</span>
-              <span className="ob-card__desc">{card.desc}</span>
-            </button>
-          ))}
+          {ROLE_CARDS.map((card) => {
+            const locked = !canJudge && card.choice !== 'participant';
+            return (
+              <button
+                type="button"
+                key={card.choice}
+                role="radio"
+                aria-checked={choice === card.choice}
+                disabled={locked}
+                className={`ob-card${choice === card.choice ? ' ob-card--active' : ''}${locked ? ' ob-card--locked' : ''}`}
+                onClick={() => setChoice(card.choice)}
+              >
+                <span className="ob-card__emoji" aria-hidden="true">
+                  {card.emoji}
+                </span>
+                <span className="ob-card__title">{card.title}</span>
+                <span className="ob-card__desc">{locked ? '裁判资格由管理员授予，需要的话找管理员。' : card.desc}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
+
+      {me.is_judge && !me.is_admin && choice === 'participant' && (
+        <p className="ob__hint" role="note">
+          放弃裁判资格后，要再当裁判需要管理员重新授予。
+        </p>
+      )}
 
       {/* Renders nothing on a backend without Discord support. */}
       <DiscordLinkCard />

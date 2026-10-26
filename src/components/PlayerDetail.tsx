@@ -9,6 +9,7 @@ import {
   getUserDetail,
   overrideCase,
   revokeRecord,
+  setJudge,
   withdrawCase,
 } from '../api';
 import { parseTimestamp } from '../lib/time';
@@ -37,6 +38,8 @@ interface DetailState {
 }
 
 const REVOKE_WINDOW_MS = 15 * 60 * 1000;
+/** busyId while the judge role is being changed (record ids are positive). */
+const JUDGE_BUSY = -1;
 
 /** Post-verdict reversal: any admin, or the reporter within 15 minutes. */
 function canRevoke(record: RecordItem, me: User | null): boolean {
@@ -148,6 +151,17 @@ export function PlayerDetail({
                 <TierBadge tier={tier} />
                 {data.user.is_judge && <span className="pd__role">裁判</span>}
                 {isSelf && <span className="pd__role pd__role--self">这是你</span>}
+                {/* Judges are appointed by an admin (self-service cannot grant it). */}
+                {me?.is_admin === true && (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm pd__judge-toggle"
+                    disabled={busyId === JUDGE_BUSY}
+                    onClick={() => void run(JUDGE_BUSY, () => setJudge(userId, !data.user.is_judge))}
+                  >
+                    {data.user.is_judge ? '取消裁判资格' : '设为裁判'}
+                  </button>
+                )}
               </div>
               <p className="pd__blurb">{tier.blurb}</p>
             </div>
@@ -178,8 +192,9 @@ export function PlayerDetail({
                     record={r}
                     escalation={
                       // Only the filing judge (or an admin) may co-sign the -25
-                      // charge, so only they get the buttons.
-                      me !== null && (me.is_admin || r.reporter.id === me.id) ? (
+                      // charge, so only they get the buttons — a reporter who is
+                      // no judge (any more) does not.
+                      me !== null && (me.is_admin || (me.is_judge && r.reporter.id === me.id)) ? (
                         <>
                           <button
                             type="button"

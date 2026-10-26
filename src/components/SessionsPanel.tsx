@@ -55,10 +55,10 @@ export function SessionsPanel({
     void load();
   }, [load, refreshKey]);
 
-  const handleRsvp = async (id: number, rsvp: SelfRsvp): Promise<void> => {
+  const handleRsvp = async (id: number, rsvp: SelfRsvp, startsAt: string): Promise<void> => {
     setBusyId(id);
     try {
-      const res = await setRsvp(id, rsvp);
+      const res = await setRsvp(id, rsvp, startsAt);
       setSessions((prev) =>
         prev.map((s) =>
           s.id === id ? { ...s, my_rsvp: res.session.my_rsvp, counts: res.session.counts } : s,
@@ -66,7 +66,10 @@ export function SessionsPanel({
       );
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '报名失败');
+      const message = err instanceof ApiError ? err.message : '报名失败';
+      // Moved: show the new time, then say why (a successful reload clears the error).
+      if (err instanceof ApiError && err.status === 409) await load();
+      setError(message);
     } finally {
       setBusyId(null);
     }
@@ -120,7 +123,7 @@ export function SessionsPanel({
               me={me}
               busy={busyId === s.id}
               onOpen={() => onOpenSession(s.id)}
-              onRsvp={(rsvp) => void handleRsvp(s.id, rsvp)}
+              onRsvp={(rsvp) => void handleRsvp(s.id, rsvp, s.starts_at)}
             />
           ))}
         </ul>

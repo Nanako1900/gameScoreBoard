@@ -33,10 +33,12 @@ export function InviteBanner({
     setBusy(true);
     setError(null);
     try {
-      await setRsvp(next.id, rsvp);
+      await setRsvp(next.id, rsvp, next.starts_at);
       onAnswered();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '操作失败');
+      // Moved since this banner loaded: show the new time.
+      if (err instanceof ApiError && err.status === 409) onAnswered();
     } finally {
       setBusy(false);
     }

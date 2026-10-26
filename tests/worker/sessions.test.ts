@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { VIOLATION_MAP, WEEKLY_BONUS_CAP } from '../../shared/scoring';
-import { listRecords } from '../../worker/cases';
+import { listRecords, reclassifyCase } from '../../worker/cases';
 import { ApiError } from '../../worker/errors';
 import {
   cancelSession,
@@ -312,6 +312,47 @@ describe('settleSession', () => {
     expect(await scoreOf(a.id)).toBe(100);
   });
 
+  it('penalises only those who said they would come — never the merely invited', async () => {
+    // An organizer invites someone who never answers (and one who said maybe),
+    // then marks both absent: 放鸽子 needs a promise, so nothing is filed.
+    const { organizer, a, b } = await cast();
+    const session = await createSession(
+      env.DB,
+      organizer,
+      { title: '周五五排', starts_at: FUTURE, capacity: 10, invite: [a.id, b.id] },
+      OFFSET_HOURS,
+    );
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(PAST, session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: a.id, attendance: 'no_show' },
+        { user_id: b.id, attendance: 'late', late_minutes: 20 },
+        { user_id: organizer.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    // No draft offered for either…
+    expect(roll.drafts.filter((d) => d.kind === 'penalty')).toEqual([]);
+    // …and a hand-made settle request files nothing against them either.
+    const res = await settleSession(
+      env.DB,
+      organizer,
+      session.id,
+      [{ user_id: a.id, claim: '随便写点什么让他收到私信，凑够字数凑够字数' }, { user_id: b.id }],
+      false,
+      noAiEnv(),
+      OFFSET_HOURS,
+    );
+    expect(res.created).toBe(0);
+    // (Two turned up, so the organizer earns their 组局 bonus — that is all.)
+    const filed = await listRecords(env.DB, { session: session.id });
+    expect(filed.filter((r) => r.subject.id !== organizer.id)).toEqual([]);
+  });
+
   it('re-derives the violation type and refuses a tampered escalation', async () => {
     const { organizer, a, b, session } = await rolled();
     // b was on time; a tampered client asks for the -25 group-wipe charge.
@@ -563,6 +604,66 @@ describe('settleSession', () => {
 });
 
 describe('organizer bonus', () => {
+  it('counts only people who answered: an invitee marked present proves nothing', async () => {
+    const { organizer } = await cast();
+    const silent = await seedUser({ id: 'silent' });
+    await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
+    const session = await createSession(env.DB, organizer, { title: '周五五排', starts_at: FUTURE, invite: [silent.id] }, OFFSET_HOURS);
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(PAST, session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: silent.id, attendance: 'on_time' },
+        { user_id: organizer.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    // No 守约 bonus draft for someone who never answered either.
+    expect(roll.drafts.find((d) => d.user_id === silent.id)).toBeUndefined();
+    await settleSession(env.DB, organizer, session.id, [{ user_id: silent.id, claim: '组织者随便写的话，凑够字数凑够字数' }], false, noAiEnv(), OFFSET_HOURS);
+    expect(await scoreOf(organizer.id)).toBe(80);
+    expect(await listRecords(env.DB, { session: session.id })).toEqual([]);
+  });
+
+  it('a roll-call case stays a roll-call case: its organizer, a judge, cannot re-type it away', async () => {
+    const organizer = await seedUser({ id: 'jorg', judge: true });
+    const { a } = await cast();
+    const session = await startedSession(organizer, [a]);
+    await rollCall(env.DB, organizer, session.id, [{ user_id: a.id, attendance: 'no_show' }], OFFSET_HOURS);
+    await settleSession(env.DB, organizer, session.id, [{ user_id: a.id }], false, noAiEnv(), OFFSET_HOURS);
+    const [filed] = await listRecords(env.DB, { session: session.id });
+    expect(filed).toMatchObject({ type: 'no_show', session_id: session.id });
+    // Between 放鸽子 and 团灭级放鸽, as settling allows…
+    await expect(reclassifyCase(env.DB, organizer, filed.id, 'no_show_group')).resolves.toMatchObject({ classified_by: 'human' });
+    // …but no further, though it no longer reads as derived.
+    await expect(reclassifyCase(env.DB, organizer, filed.id, 'late_minor')).rejects.toThrow(/点名/);
+  });
+
+  it('a maybe who turns up earns no 守约 bonus, and does not count for the organizer', async () => {
+    const { organizer, a, b } = await cast();
+    await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();
+    const session = await startedSession(organizer, [a]);
+    // b only ever said 待定 — no promise, so no penalty could ever reach them.
+    await env.DB.prepare("INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, 'b', 'maybe')").bind(session.id).run();
+    const roll = await rollCall(
+      env.DB,
+      organizer,
+      session.id,
+      [
+        { user_id: a.id, attendance: 'on_time' },
+        { user_id: b.id, attendance: 'on_time' },
+      ],
+      OFFSET_HOURS,
+    );
+    expect(roll.drafts.map((d) => [d.user_id, d.type])).toEqual([['a', 'on_time_bonus']]);
+    await settleSession(env.DB, organizer, session.id, [{ user_id: b.id }], false, noAiEnv(), OFFSET_HOURS);
+    expect((await listRecords(env.DB, { session: session.id })).map((r) => r.subject.id)).toEqual([]);
+    // One who came as promised is not enough for the organizer's bonus.
+    expect(await scoreOf(organizer.id)).toBe(80);
+  });
+
   it('is awarded once the session provably happened', async () => {
     const { organizer, a, b } = await cast();
     await env.DB.prepare('UPDATE users SET score = 80 WHERE id = ?').bind(organizer.id).run();

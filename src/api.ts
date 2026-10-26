@@ -242,11 +242,13 @@ export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
   return post<{ session: SessionDetail }>(`/api/sessions/${id}/cancel`);
 }
 
+/** `startsAt`: the start time the player is looking at — a move since is a 409. */
 export function setRsvp(
   id: number,
   rsvp: SelfRsvp,
+  startsAt: string,
 ): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp });
+  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp, starts_at: startsAt });
 }
 
 /** Record attendance. Produces drafts; changes nobody's score. */
@@ -286,6 +288,14 @@ export function overrideCase(
   reason: string,
 ): Promise<{ record: RecordItem }> {
   return post<{ record: RecordItem }>(`/api/admin/records/${id}/override`, { delta, reason });
+}
+
+/**
+ * Admin: appoint or dismiss a judge. Since P6 this is the only way to become
+ * one — the self-service role switch refuses is_judge for non-judges.
+ */
+export function setJudge(userId: string, isJudge: boolean): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(userId)}`, { is_judge: isJudge });
 }
 
 export function getAiConfig(): Promise<AiConfigResponse> {

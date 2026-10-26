@@ -218,11 +218,17 @@ function normalizeOptionalText(raw: unknown, max: number): string | null {
   return t.length === 0 ? null : t.slice(0, max);
 }
 
+/** A little slack for clocks and a form left open: "now" is still fine. */
+const STARTS_AT_GRACE_MS = 5 * 60_000;
+
 function normalizeStartsAt(raw: unknown): string {
   if (typeof raw !== 'string') throw new ApiError(400, '缺少开始时间');
   const ms = Date.parse(raw);
   if (!Number.isFinite(ms)) throw new ApiError(400, '开始时间格式无效');
   if (ms > Date.now() + SESSION_MAX_LEAD_MS) throw new ApiError(400, '开始时间太远了（最多 90 天）');
+  // A session that "already started" could be roll-called at once, before
+  // anyone had a chance to answer — or to change their answer.
+  if (ms < Date.now() - STARTS_AT_GRACE_MS) throw new ApiError(400, '开始时间已经过了');
   return new Date(ms).toISOString();
 }
 
@@ -359,6 +365,9 @@ export async function updateSession(
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status !== 'open') throw new ApiError(400, '已取消 / 已结算的约局不能再修改');
+  // Once it has started, attendance is what happened: moving it now would let
+  // players re-answer around a roll call (or the claims quote a new title).
+  if (parseSqlUtc(row.starts_at) <= Date.now()) throw new ApiError(400, '约局已开始，不能再修改');
 
   const sets: string[] = [];
   const binds: unknown[] = [];
@@ -366,9 +375,13 @@ export async function updateSession(
     sets.push('title = ?');
     binds.push(normalizeTitle(input.title));
   }
+  let moved = false;
   if (input.starts_at !== undefined) {
+    const startsAt = normalizeStartsAt(input.starts_at);
+    // The same moment written another way (or stored the old way) is no move.
+    moved = Date.parse(startsAt) !== parseSqlUtc(row.starts_at);
     sets.push('starts_at = ?');
-    binds.push(normalizeStartsAt(input.starts_at));
+    binds.push(startsAt);
   }
   if (input.game !== undefined) {
     sets.push('game = ?');
@@ -388,10 +401,22 @@ export async function updateSession(
   }
   if (sets.length > 0) {
     binds.push(id);
-    await db
-      .prepare(`UPDATE game_sessions SET ${sets.join(', ')} WHERE id = ?`)
-      .bind(...binds)
-      .run();
+    const statements = [db.prepare(`UPDATE game_sessions SET ${sets.join(', ')} WHERE id = ?`).bind(...binds)];
+    if (moved) {
+      // An answer to one time is not an answer to another: everyone but the
+      // organizer answers again — a yes (so nobody can be roll-called for a
+      // time they did not agree to: a no-show penalty needs a 'going'), and a
+      // no too (a no to 20:00 is not a no to 23:00).
+      statements.push(
+        db
+          .prepare(
+            `UPDATE session_players SET rsvp = 'invited', rsvp_at = datetime('now')
+              WHERE session_id = ? AND user_id <> ? AND rsvp IN ('going', 'maybe', 'out')`,
+          )
+          .bind(id, row.organizer_id),
+      );
+    }
+    await db.batch(statements);
   }
   return getSessionDetail(db, id, caller.id);
 }
@@ -414,11 +439,21 @@ export async function cancelSession(
   return getSessionDetail(db, id, caller.id);
 }
 
+const MOVED_MESSAGE = '约局时间已经改了，请按新的时间重新确认';
+
+/**
+ * Answer a session. `seenStartsAt` is the start time the player was shown
+ * (the web and the bot's buttons send it): the answer is to that time, so if
+ * the session has moved since, nothing is written and the answer is a 409 —
+ * a stale page or an old invitation DM cannot sign someone up for a time they
+ * never saw, nor turn down one they were never asked about.
+ */
 export async function setRsvp(
   db: D1Database,
   caller: User,
   id: number,
   rawRsvp: unknown,
+  seenStartsAt?: unknown,
 ): Promise<SessionDetail> {
   // `invited` is organizer-assigned; a player may only answer going/maybe/out.
   if (typeof rawRsvp !== 'string' || !isSelfRsvp(rawRsvp)) {
@@ -432,6 +467,15 @@ export async function setRsvp(
   if (row.organizer_id === caller.id && rawRsvp !== 'going') {
     throw new ApiError(400, '组织者不能退出自己的局，请直接取消约局');
   }
+  const seenGiven = seenStartsAt !== undefined && seenStartsAt !== null;
+  if (seenGiven) {
+    const seen = typeof seenStartsAt === 'string' ? parseSqlUtc(seenStartsAt) : Number.NaN;
+    if (!Number.isFinite(seen)) throw new ApiError(400, '开始时间格式无效');
+    if (seen !== parseSqlUtc(row.starts_at)) throw new ApiError(409, MOVED_MESSAGE);
+  }
+  // A time sent is checked for every answer; without one, a yes or a maybe
+  // still holds only for the time read here.
+  const holdTime = seenGiven || rawRsvp !== 'out';
 
   if (occupiesSlot(rawRsvp) && row.capacity !== null) {
     const existing = await db
@@ -460,22 +504,26 @@ export async function setRsvp(
              WHERE session_id = ? AND rsvp = 'going' AND user_id != ?) < ?)`
     : '1 = 1';
   const seatBinds = capped ? [id, caller.id, id, caller.id, row.capacity] : [];
+  // …and still holds when written (a move in between put everyone back to 'invited').
+  const sameTime = holdTime ? 'AND starts_at = ?' : '';
+  const timeBinds = holdTime ? [row.starts_at] : [];
   const results = await db.batch([
     db.prepare('UPDATE game_sessions SET status = status WHERE id = ?').bind(id),
     db
       .prepare(
         `INSERT INTO session_players (session_id, user_id, rsvp, rsvp_at)
          SELECT ?, ?, ?, datetime('now')
-          WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = ? AND status = 'open') AND ${seatFree}
+          WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = ? AND status = 'open' ${sameTime}) AND ${seatFree}
          ON CONFLICT(session_id, user_id) DO UPDATE SET
            rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
       )
-      .bind(id, caller.id, rawRsvp, id, ...seatBinds),
+      .bind(id, caller.id, rawRsvp, id, ...timeBinds, ...seatBinds),
   ]);
   if ((results[1]?.meta?.changes ?? 0) === 0) {
-    // Cancelled (or closed) while we were checking, or the last seat went.
+    // Cancelled (or closed) or moved while we were checking, or the last seat went.
     const now = await getSessionRow(db, id);
     if (now.status !== 'open') throw new ApiError(400, '这个约局已经不接受报名了');
+    if (now.starts_at !== row.starts_at) throw new ApiError(409, MOVED_MESSAGE);
     throw new ApiError(400, '人数已满');
   }
   return getSessionDetail(db, id, caller.id);
@@ -593,6 +641,8 @@ export function buildDrafts(session: SessionDetail, offsetHours: number): CaseDr
     if (!def) continue;
     // The organizer can't file against themselves; their bonus is handled separately.
     if (p.user.id === session.organizer.id) continue;
+    // Same rule as planFilings: only a promise can be broken — or kept.
+    if (p.rsvp !== 'going') continue;
     drafts.push({
       user_id: p.user.id,
       username: p.user.username,
@@ -679,6 +729,13 @@ function planFilings(
 
     const derived = violationForAttendance(player.attendance, player.late_minutes);
     if (derived === null) continue;
+    // Only for someone who said they would come. A penalty: 放鸽子 is "答应了
+    // 没来" — someone merely invited (or a maybe) made no promise, and without
+    // this an organizer could invite anyone, mark them absent and so file a
+    // case, with its DM, against a person who never agreed to anything. And
+    // the 守约 bonus is for a promise kept: a maybe risks no penalty, so it
+    // earns no bonus either (else always answering 待定 farms it risk-free).
+    if (player.rsvp !== 'going') continue;
     const requested =
       typeof entry.type === 'string' && entry.type.length > 0
         ? (entry.type as ViolationType)
@@ -835,8 +892,10 @@ async function awardOrganizerBonus(
   const def = VIOLATION_MAP.organizer_bonus;
   if (!def) return;
 
+  // Only people who said they would come count: an invitee who never replied
+  // (or a maybe) could otherwise be marked present to farm this bonus.
   const attended = [...players.values()].filter(
-    (p) => p.attendance === 'on_time' || p.attendance === 'late',
+    (p) => (p.attendance === 'on_time' || p.attendance === 'late') && p.rsvp === 'going',
   ).length;
   if (attended < ORGANIZER_BONUS_MIN_ATTENDEES) return;
 

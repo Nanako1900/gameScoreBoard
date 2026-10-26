@@ -34,7 +34,10 @@ interface Event {
 }
 
 async function events(): Promise<Event[]> {
-  const res = await pool.query<Event>('SELECT kind, entity_id, result, attempts FROM outbox ORDER BY id');
+  // The channel's events only: P6's DMs (entity 'user') have tests/pg/dm.test.ts.
+  const res = await pool.query<Event>(
+    "SELECT kind, entity_id, result, attempts FROM outbox WHERE entity = 'record' ORDER BY id",
+  );
   return res.rows;
 }
 
@@ -60,6 +63,9 @@ function fakeDiscord() {
       if (failures.length > 0) throw failures.shift();
       removed.push({ channelId, messageId });
     },
+    async openDm(discordUserId) {
+      return `dm-${discordUserId}`;
+    },
   };
   return { api, sent, edits, removed, fail: (...errors: unknown[]) => failures.push(...errors) };
 }
@@ -71,13 +77,22 @@ function discordError(status: number, code?: number): Error {
 const quiet = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
 function dispatcher(api: ChannelApi, channel: string | null = CHANNEL) {
-  return createDispatcher({
+  const d = createDispatcher({
     pool,
     db: env.DB,
     api,
     config: { verdictChannelId: channel, frontendUrl: FRONTEND },
     log: quiet,
   });
+  // This file is about the channel: the DMs the same changes queue (P6) are
+  // tested in tests/pg/dm.test.ts, and dropped here so counts stay about posts.
+  return {
+    ...d,
+    async runOnce() {
+      await pool.query("DELETE FROM outbox WHERE entity = 'user'");
+      return d.runOnce();
+    },
+  };
 }
 
 /** Every piece of text a channel message would show. */
@@ -202,7 +217,7 @@ describe('dispatcher', () => {
     const { channelId, message } = discord.sent[0];
     expect(channelId).toBe(CHANNEL);
     // Retried sends are deduplicated by Discord through the nonce.
-    expect(message.nonce).toMatch(/^ob\d+$/);
+    expect(message.nonce).toMatch(/^ob\d+\.[0-9a-z]+$/);
     expect(message.allowed_mentions).toEqual({ parse: [] });
     const text = textOf(message);
     for (const secret of Object.values(SECRET)) expect(text).not.toContain(secret);
@@ -284,7 +299,9 @@ describe('dispatcher', () => {
 
     discord.fail(discordError(503));
     await d.runOnce();
-    const [first] = (await pool.query('SELECT result, attempts, available_at > now() AS later FROM outbox')).rows;
+    const [first] = (
+      await pool.query("SELECT result, attempts, available_at > now() AS later FROM outbox WHERE entity = 'record'")
+    ).rows;
     expect(first).toEqual({ result: null, attempts: 1, later: true });
     expect(await d.runOnce()).toBe(0); // not due yet
 
@@ -335,7 +352,9 @@ describe('dispatcher', () => {
     for (let i = 0; i < 4; i += 1) {
       discord.fail(discordError(403, 50013));
       await d.runOnce();
-      const [row] = (await pool.query('SELECT available_at > now() + interval \'4 minutes\' AS later FROM outbox')).rows;
+      const [row] = (
+        await pool.query("SELECT available_at > now() + interval '4 minutes' AS later FROM outbox WHERE entity = 'record'")
+      ).rows;
       expect(row.later).toBe(true); // a 5-minute wait
       await pool.query('UPDATE outbox SET available_at = now()');
     }

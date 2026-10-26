@@ -102,6 +102,11 @@ async function sessionRow(id: number): Promise<GameSessionRow | null> {
     .first<GameSessionRow>();
 }
 
+/** The same instant, written in UTC+8. */
+function atUtcPlus8(iso: string): string {
+  return new Date(Date.parse(iso) + 8 * HOUR_MS).toISOString().replace('Z', '+08:00');
+}
+
 async function playerRows(sessionId: number): Promise<PlayerRow[]> {
   const rows = await env.DB.prepare(
     `SELECT user_id, rsvp, rsvp_at, attendance, late_minutes, attendance_note, record_id
@@ -604,25 +609,45 @@ describe('updateSession — session status', () => {
     ).rejects.toMatchObject({ status: 403, message: NOT_ORGANIZER });
   });
 
-  it.todo(
-    'BUG: updateSession does not refuse a session that has already started — it only checks ' +
-      "status !== 'open' (worker/sessions.ts:357). Reproduced: after roll call marks a player " +
-      'no_show, the organizer can move starts_at back into the future; setRsvp (sessions.ts:422) ' +
-      "only checks starts_at, so the player can then switch to 'out' while attendance stays " +
-      'no_show. The organizer can also retitle the session the settle-time claims quote',
-  );
+  it('refuses to change a session that has already started', async () => {
+    const { organizer } = await cast();
+    const session = await openSession(organizer);
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(new Date(Date.now() - 60_000).toISOString(), session.id)
+      .run();
+    await expect(updateSession(env.DB, organizer, session.id, { title: '改名' })).rejects.toThrow(/已开始/);
+    await expect(
+      updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(60)).toISOString() }),
+    ).rejects.toThrow(/已开始/);
+  });
 
-  it.todo(
-    'BUG: updateSession accepts a starts_at in the past — normalizeStartsAt has an upper bound ' +
-      'only (worker/sessions.ts:220-226). An organizer can pull a future session whose players ' +
-      'said "going" behind now, which freezes their RSVPs and unlocks roll call + settlement ' +
-      'against them immediately (reproduced: rollCall then returns a no_show draft). ' +
-      'createSession accepts a past starts_at the same way',
-  );
+  it('refuses a start time in the past, on create and on update', async () => {
+    const { organizer } = await cast();
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    await expect(createSession(env.DB, organizer, { starts_at: past }, 8)).rejects.toThrow(/已经过了/);
+    const session = await openSession(organizer);
+    await expect(updateSession(env.DB, organizer, session.id, { starts_at: past })).rejects.toThrow(/已经过了/);
+  });
+
+  it('allows a start a minute ago: a form filled in slowly is not refused', async () => {
+    const { organizer } = await cast();
+    const justNow = new Date(Date.now() - 60_000).toISOString();
+    await expect(createSession(env.DB, organizer, { starts_at: justNow }, 8)).resolves.toMatchObject({ status: 'open' });
+  });
+
+  it('the same start time sent again is no move: nobody has to answer again', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer);
+    await setRsvp(env.DB, a, session.id, 'going');
+    // The same instant, written another way.
+    const sameInstant = atUtcPlus8(session.starts_at);
+    await updateSession(env.DB, organizer, session.id, { starts_at: sameInstant, title: '改个名' });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('going');
+  });
 });
 
 describe('updateSession — effect on the roster', () => {
-  it('reschedules without touching anybody’s rsvp, rsvp_at or attendance', async () => {
+  it('reschedules: everyone but the organizer answers again — a no included', async () => {
     const { organizer, a, b, c, d } = await cast();
     const session = await openSession(organizer, { invite: [a.id, b.id, c.id] });
     await setRsvp(env.DB, a, session.id, 'going');
@@ -644,10 +669,24 @@ describe('updateSession — effect on the roster', () => {
       capacity: 10,
     });
 
-    expect(await playerRows(session.id)).toEqual(before);
-    expect(out.counts).toEqual({ invited: 1, going: 2, maybe: 1, out: 1 });
+    // An answer to one time is not an answer to another (and only a 'going'
+    // can be roll-called as a no-show): a, b — and d, who said no — are asked again.
+    const after = await playerRows(session.id);
+    expect(after.map((p) => [p.user_id, p.rsvp])).toEqual([
+      ['a', 'invited'],
+      ['b', 'invited'],
+      ['c', 'invited'],
+      ['d', 'invited'],
+      ['org', 'going'],
+    ]);
+    expect(out.counts).toEqual({ invited: 4, going: 1, maybe: 0, out: 0 });
+    expect((await listMyInvites(env.DB, d.id)).map((s) => s.id)).toEqual([session.id]);
     expect(out.players).toHaveLength(5);
     expect(out.players.every((p) => p.attendance === null && p.record_id === null)).toBe(true);
+    // Retitling alone changes nobody's answer.
+    await setRsvp(env.DB, a, session.id, 'going');
+    await updateSession(env.DB, organizer, session.id, { title: '又改名' });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('going');
   });
 
   it('keeps a still-invited player’s invite alive at the new time', async () => {
@@ -1023,5 +1062,73 @@ describe('loadAiConfig — app_settings > env > default', () => {
     await writeSetting(env.DB, AI_SETTING_KEYS.prompt, DEFAULT_SYSTEM_PROMPT, 'admin');
     const restored = await loadAiConfig(env.DB, FULL_ENV);
     expect(restored.promptVersion).toBe(original.promptVersion);
+  });
+});
+
+describe('setRsvp — an answer is to the time the player saw', () => {
+  it('a yes to a time that has moved since is a 409, and changes nothing', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer, { invite: [a.id] });
+    const seen = session.starts_at;
+    await updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(5)).toISOString() });
+    for (const rsvp of ['going', 'maybe'] as const) {
+      await expect(setRsvp(env.DB, a, session.id, rsvp, seen)).rejects.toMatchObject({ status: 409 });
+    }
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('invited');
+  });
+
+  it('a yes to the current time is fine, however it is written', async () => {
+    const { organizer, a, b } = await cast();
+    const session = await openSession(organizer);
+    const sameInstant = atUtcPlus8(session.starts_at);
+    await expect(setRsvp(env.DB, a, session.id, 'going', sameInstant)).resolves.toMatchObject({ my_rsvp: 'going' });
+    await expect(setRsvp(env.DB, b, session.id, 'going', 'not a time')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('a no to the old time is no answer to the new one: it is asked again', async () => {
+    const { organizer, d } = await cast();
+    const session = await openSession(organizer, { invite: [d.id] });
+    const seen = session.starts_at;
+    await updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(5)).toISOString() });
+    await expect(setRsvp(env.DB, d, session.id, 'out', seen)).rejects.toMatchObject({ status: 409 });
+    expect((await listMyInvites(env.DB, d.id)).map((s) => s.id)).toEqual([session.id]);
+    // Without a time, a no is simply a no.
+    await expect(setRsvp(env.DB, d, session.id, 'out')).resolves.toMatchObject({ my_rsvp: 'out' });
+  });
+
+  it('a move that lands between reading the session and writing the answer: 409, nothing written', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer, { invite: [a.id], capacity: 4 });
+    let moved = false;
+    // The move runs just before setRsvp's write.
+    const racing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            if (!moved) {
+              moved = true;
+              await updateSession(env.DB, organizer, session.id, { starts_at: new Date(minuteFromNow(5)).toISOString() });
+            }
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await expect(setRsvp(racing, a, session.id, 'going', session.starts_at)).rejects.toMatchObject({ status: 409 });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('invited');
+  });
+
+  it('a start time stored the old way (no T, no zone) reads as the same moment', async () => {
+    const { organizer, a } = await cast();
+    const session = await openSession(organizer);
+    const stored = new Date(Date.parse(session.starts_at)).toISOString().slice(0, 19).replace('T', ' ');
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?').bind(stored, session.id).run();
+    // The page shows it back as it came; that is the current time.
+    await expect(setRsvp(env.DB, a, session.id, 'going', stored)).resolves.toMatchObject({ my_rsvp: 'going' });
+    // Sending the same moment as ISO is no move.
+    await updateSession(env.DB, organizer, session.id, { starts_at: new Date(Date.parse(`${stored.replace(' ', 'T')}Z`)).toISOString() });
+    expect((await playerRows(session.id)).find((p) => p.user_id === 'a')?.rsvp).toBe('going');
   });
 });

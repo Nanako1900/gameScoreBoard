@@ -35,6 +35,17 @@
   transform: translateY(-2px);
 }
 
+.ob-card--locked {
+  cursor: not-allowed;
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.ob-card--locked:hover {
+  border-color: var(--border);
+  transform: none;
+}
+
 .ob-card--active {
   border-color: var(--gold);
   background: color-mix(in oklab, var(--gold) 10%, var(--bg-elevated));
@@ -55,6 +66,15 @@
   font-size: var(--text-xs);
   color: var(--muted);
   line-height: 1.45;
+}
+
+.ob__hint {
+  margin: 0.25rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--r-md);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
 }
 
 .ob__error {

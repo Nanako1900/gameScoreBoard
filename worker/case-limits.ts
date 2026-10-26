@@ -57,7 +57,9 @@ export async function assertRateLimits(
   const since = sqlNowMinusMinutes(24 * 60);
   const byReporter = await db
     .prepare(
-      "SELECT COUNT(*) AS n FROM records WHERE reporter_id = ? AND created_at >= ? AND status != 'withdrawn'",
+      // Withdrawn cases count too: filing and withdrawing still DMs the
+      // subject each time, so it must not be a way around the limit.
+      'SELECT COUNT(*) AS n FROM records WHERE reporter_id = ? AND created_at >= ?',
     )
     .bind(reporterId, since)
     .first<{ n: number }>();
@@ -66,7 +68,7 @@ export async function assertRateLimits(
   }
   const onSubject = await db
     .prepare(
-      "SELECT COUNT(*) AS n FROM records WHERE subject_id = ? AND created_at >= ? AND status != 'withdrawn'",
+      'SELECT COUNT(*) AS n FROM records WHERE subject_id = ? AND created_at >= ?',
     )
     .bind(subjectId, since)
     .first<{ n: number }>();

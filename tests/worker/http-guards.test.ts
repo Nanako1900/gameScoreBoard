@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index';
 import { SESSION_COOKIE, STATE_COOKIE, makeSignedState, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
+import { createSession } from '../../worker/sessions';
 import { expireDeadline, noAiEnv, seedUser, statusOf } from './helpers';
 
 afterEach(() => {
@@ -449,5 +450,72 @@ describe('U+0000 and out-of-range ids are refused at the edge', () => {
       expect(res.status, path).toBe(400);
     }
     expect((await call('/api/records/9007199254740991')).status).toBe(404);
+  });
+});
+
+describe('who may become a judge', () => {
+  const SECRET = 'test-session-secret-0123456789abcdef';
+
+  async function setRoles(sub: string, body: Record<string, unknown>): Promise<Response> {
+    const token = await signSession({ sub }, SECRET);
+    return call('/api/me/roles', {
+      method: 'POST',
+      headers: { Cookie: `${SESSION_COOKIE}=${token}`, Origin: BASE, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function rolesOf(id: string) {
+    return env.DB.prepare('SELECT is_participant, is_judge FROM users WHERE id = ?').bind(id).first();
+  }
+
+  it('is an admin’s grant: a player cannot make themselves a judge', async () => {
+    await seedUser({ id: 'p', participant: false });
+    const res = await setRoles('p', { is_participant: true, is_judge: true });
+    expect(res.status).toBe(403);
+    expect(await errorOf(res)).toBe('裁判资格需要管理员授予');
+    // Refused as a whole: not half-applied.
+    expect(await rolesOf('p')).toEqual({ is_participant: 0, is_judge: 0 });
+  });
+
+  it('still lets anyone choose to play, and a judge step down or stay', async () => {
+    await seedUser({ id: 'p', participant: false });
+    expect((await setRoles('p', { is_participant: true, is_judge: false })).status).toBe(200);
+    await seedUser({ id: 'j', judge: true });
+    expect((await setRoles('j', { is_participant: true, is_judge: true })).status).toBe(200);
+    expect((await setRoles('j', { is_judge: false })).status).toBe(200);
+    expect(await rolesOf('j')).toEqual({ is_participant: 1, is_judge: 0 });
+  });
+
+  it('lets an admin grant it to themselves', async () => {
+    await seedUser({ id: 'a', admin: true });
+    expect((await setRoles('a', { is_judge: true })).status).toBe(200);
+  });
+});
+
+describe('POST /api/sessions/:id/rsvp', () => {
+  const SECRET = 'test-session-secret-0123456789abcdef';
+
+  async function rsvpAs(sub: string, id: number, body: Record<string, unknown>): Promise<Response> {
+    const token = await signSession({ sub }, SECRET);
+    return call(`/api/sessions/${id}/rsvp`, {
+      method: 'POST',
+      headers: { Cookie: `${SESSION_COOKIE}=${token}`, Origin: BASE, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('takes the start time the page showed: a stale one is a 409', async () => {
+    const organizer = await seedUser({ id: 'org' });
+    await seedUser({ id: 'p' });
+    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
+    const session = await createSession(env.DB, organizer, { starts_at: startsAt, invite: ['p'] }, 8);
+    const stale = new Date(Date.parse(startsAt) - 3_600_000).toISOString();
+    const refused = await rsvpAs('p', session.id, { rsvp: 'going', starts_at: stale });
+    expect(refused.status).toBe(409);
+    expect(await errorOf(refused)).toMatch(/重新确认/);
+    expect((await rsvpAs('p', session.id, { rsvp: 'going', starts_at: startsAt })).status).toBe(200);
+    // An older page that sends no time still works.
+    expect((await rsvpAs('p', session.id, { rsvp: 'maybe' })).status).toBe(200);
   });
 });

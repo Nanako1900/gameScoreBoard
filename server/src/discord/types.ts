@@ -15,6 +15,8 @@ export interface CommandInput {
   caller: DiscordUserRef;
   /** The `user` option, for commands that take one (/score, /verdicts). */
   targetUser: DiscordUserRef | null;
+  /** The `state` option of /notify ('on' | 'off'); null for every other command. */
+  state?: string | null;
 }
 
 /** Everything handlers may touch. */

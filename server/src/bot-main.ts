@@ -21,6 +21,15 @@ import {
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
+import {
+  MODAL_FIELD,
+  openCaseAction,
+  parseCaseButton,
+  parseCaseModal,
+  submitCaseAction,
+  toModal,
+} from './discord/case-actions';
+import type { Env } from '../../worker/types';
 import { envFlag, envInt } from './env';
 import { createDispatcher, type Dispatcher } from './outbox/dispatcher';
 
@@ -136,6 +145,12 @@ function main(): void {
     frontendUrl: config.frontendUrl,
     readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
   };
+  // The Worker's Env for the domain calls that need one: a statement sent from
+  // Discord is judged right away, with the same AI settings as the web.
+  const strings = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+  const actionCtx = { ...ctx, env: { ...strings, DB: ctx.db } as unknown as Env };
 
   let gateway: GatewayState = 'connecting';
   let stopping = false;
@@ -186,16 +201,41 @@ function main(): void {
   client.on(Events.Warn, (message) => console.warn('discord client warning', message));
   client.on(Events.InteractionCreate, (interaction) => {
     if (stopping) return;
+    // Whoever uses the bot has shown they can be reached: DMs get another try.
+    void pool
+      .query('UPDATE discord_links SET dm_ok = 1 WHERE discord_user_id = $1 AND dm_ok = 0', [interaction.user.id])
+      .catch((error: unknown) => console.error('could not reset dm_ok', describeError(error)));
+    const caller = { id: interaction.user.id, username: interaction.user.username };
     let work: Promise<void>;
     if (interaction.isChatInputCommand()) {
       work = respond(interaction, ctx, handleCommand, { guildId: config.guildId });
     } else if (interaction.isButton()) {
-      const recordId = parseVerdictButton(interaction.customId);
-      if (recordId === null) return;
-      const caller = { id: interaction.user.id, username: interaction.user.username };
-      work = answer(interaction, 'verdict button', () => handleVerdictButton(recordId, caller, ctx), {
-        guildId: config.guildId,
-      });
+      const verdictId = parseVerdictButton(interaction.customId);
+      const caseButton = parseCaseButton(interaction.customId);
+      if (verdictId !== null) {
+        work = answer(interaction, 'verdict button', () => handleVerdictButton(verdictId, caller, ctx), {
+          guildId: config.guildId,
+        });
+      } else if (caseButton) {
+        // Pressed in a DM: no guild. A modal must be the first answer, so
+        // the checks before it are quick reads.
+        work = (async () => {
+          const result = await openCaseAction(caseButton.action, caseButton.recordId, caller, ctx);
+          if (result.kind === 'modal') await interaction.showModal(toModal(result.modal));
+          else await answer(interaction, `${caseButton.action} button`, async () => result.reply);
+        })();
+      } else {
+        return;
+      }
+    } else if (interaction.isModalSubmit()) {
+      const submitted = parseCaseModal(interaction.customId);
+      if (!submitted) return;
+      const text = interaction.fields.getTextInputValue(MODAL_FIELD);
+      // Slow on purpose: a statement is judged on the spot (AI, up to ~40 s);
+      // answer() defers after 2 s, and the interaction stays valid for 15 min.
+      work = answer(interaction, `${submitted.action} modal`, () =>
+        submitCaseAction(submitted.action, submitted.recordId, text, caller, actionCtx),
+      );
     } else {
       return;
     }
