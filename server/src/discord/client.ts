@@ -393,5 +393,8 @@ export function restChannelApi(rest: REST): ChannelApi {
     async edit(channelId, messageId, message) {
       await rest.patch(Routes.channelMessage(channelId, messageId), { body: message });
     },
+    async remove(channelId, messageId) {
+      await rest.delete(Routes.channelMessage(channelId, messageId));
+    },
   };
 }

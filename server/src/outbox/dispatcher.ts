@@ -23,6 +23,8 @@ const CLEANUP_MS = 24 * 3_600_000;
 const CLAIM_TIMEOUT = '2 minutes';
 const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_S = 3_600;
+/** A refusal (401/403) waits this long, without using up an attempt: the fix is a human's. */
+const REFUSED_RETRY_S = 300;
 /** Never posted and older than this: not worth announcing any more (bot was down for a day). */
 export const STALE_MS = 24 * 3_600_000;
 /** This many 401/403 within a minute pause delivery: a reset token or a lost permission. */
@@ -37,6 +39,7 @@ const UNKNOWN_MESSAGE = 10008;
 export interface ChannelApi {
   send(channelId: string, message: ChannelMessage & { nonce: string; enforce_nonce: true }): Promise<{ id: string }>;
   edit(channelId: string, messageId: string, message: ChannelMessage): Promise<void>;
+  remove(channelId: string, messageId: string): Promise<void>;
 }
 
 export interface DispatcherConfig {
@@ -63,6 +66,7 @@ interface OutboxRow {
   kind: string;
   entity: string;
   entity_id: string;
+  payload: Record<string, unknown>;
   claim_token: string;
   attempts: number;
   created_at: Date;
@@ -70,7 +74,8 @@ interface OutboxRow {
 
 type Outcome =
   | { result: 'sent' | 'skipped' | 'dead'; note: string | null }
-  | { result: 'retry'; note: string };
+  /** `refused`: Discord said 401/403 — retried later without counting the attempt. */
+  | { result: 'retry'; note: string; refused?: boolean };
 
 export interface Dispatcher {
   start(): void;
@@ -120,19 +125,23 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
            ORDER BY o.id
            LIMIT 1
            FOR UPDATE SKIP LOCKED)
-      RETURNING id, kind, entity, entity_id, claim_token, attempts, created_at`,
+      RETURNING id, kind, entity, entity_id, payload, claim_token, attempts, created_at`,
     );
     return res.rows[0] ?? null;
   }
 
   async function finish(row: OutboxRow, outcome: Outcome): Promise<void> {
-    if (outcome.result === 'retry' && row.attempts < MAX_ATTEMPTS) {
-      const delay = Math.min(MAX_BACKOFF_S, 5 * 2 ** row.attempts);
+    if (outcome.result === 'retry' && (outcome.refused || row.attempts < MAX_ATTEMPTS)) {
+      // A refusal is usually a permission someone forgot to give the bot: it
+      // gets fixed eventually, so it waits without spending its attempts (the
+      // 24-hour staleness rule ends it if nobody ever does).
+      const delay = outcome.refused ? REFUSED_RETRY_S : Math.min(MAX_BACKOFF_S, 5 * 2 ** row.attempts);
       await pool.query(
         `UPDATE outbox SET claim_token = NULL, claimed_at = NULL,
+                attempts = attempts - $5::int,
                 available_at = now() + make_interval(secs => $3), last_error = $4
           WHERE id = $1 AND claim_token = $2`,
-        [row.id, row.claim_token, delay, outcome.note],
+        [row.id, row.claim_token, delay, outcome.note, outcome.refused ? 1 : 0],
       );
       return;
     }
@@ -145,17 +154,23 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     );
   }
 
-  function noteAuthFailure(): void {
+  function pause(why: string): void {
+    pausedUntil = Date.now() + PAUSE_MS;
+    log.error(`!!! ${why}: outbox delivery paused for 5 minutes.`);
+  }
+
+  function noteAuthFailure(status: number): void {
+    // 401: the token itself is bad — every call will fail the same way.
+    if (status === 401) {
+      pause('Discord rejects the bot token (401) — check DISCORD_TOKEN');
+      return;
+    }
     const now = Date.now();
     authFailures.push(now);
     while (authFailures.length > 0 && authFailures[0] < now - AUTH_WINDOW_MS) authFailures.shift();
     if (authFailures.length >= AUTH_FAILURES_TO_PAUSE) {
       authFailures.length = 0;
-      pausedUntil = now + PAUSE_MS;
-      log.error(
-        '!!! Discord keeps refusing the bot (401/403): outbox delivery paused for 5 minutes. ' +
-          'Check DISCORD_TOKEN and the bot’s permissions in the verdict channel.',
-      );
+      pause('Discord keeps refusing the bot (403) — check its permissions in the verdict channel');
     }
   }
 
@@ -164,9 +179,8 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const status = errorStatus(error);
     const note = describe(error).slice(0, 500);
     if (status === 401 || status === 403) {
-      noteAuthFailure();
-      // Retried (with backoff): the usual cause, a missing channel permission, gets fixed.
-      return { result: 'retry', note };
+      noteAuthFailure(status);
+      return { result: 'retry', note, refused: true };
     }
     if (errorCode(error) === UNKNOWN_CHANNEL) return { result: 'dead', note: `unknown channel — check DISCORD_VERDICT_CHANNEL_ID: ${note}` };
     if (status !== null && status >= 400 && status < 500 && status !== 429) return { result: 'dead', note };
@@ -174,7 +188,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return { result: 'retry', note };
   }
 
-  async function messageFor(entity: string, entityId: string, purpose: string) {
+  async function messageFor(
+    entity: string,
+    entityId: string,
+    purpose: string,
+  ): Promise<{ channel_id: string; message_id: string } | null> {
     const res = await pool.query<{ channel_id: string; message_id: string }>(
       'SELECT channel_id, message_id FROM discord_messages WHERE entity = $1 AND entity_id = $2 AND purpose = $3',
       [entity, entityId, purpose],
@@ -182,14 +200,39 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return res.rows[0] ?? null;
   }
 
+  async function forgetMessage(entityId: string): Promise<void> {
+    await pool.query(
+      "DELETE FROM discord_messages WHERE entity = 'record' AND entity_id = $1 AND purpose = 'verdict'",
+      [entityId],
+    );
+  }
+
+  /** The record is gone (its user was deleted): take its post down too. */
+  async function removePost(row: OutboxRow): Promise<Outcome> {
+    const channelId = typeof row.payload.channel_id === 'string' ? row.payload.channel_id : null;
+    const messageId = typeof row.payload.message_id === 'string' ? row.payload.message_id : null;
+    if (!channelId || !messageId) return { result: 'skipped', note: 'no message to remove' };
+    try {
+      await api.remove(channelId, messageId);
+    } catch (error) {
+      const code = errorCode(error);
+      if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+    }
+    await forgetMessage(row.entity_id);
+    return { result: 'sent', note: null };
+  }
+
   async function deliverRecord(row: OutboxRow): Promise<Outcome> {
+    if (row.kind === 'case.removed') return removePost(row);
     const channelId = config.verdictChannelId;
     if (!channelId) return { result: 'skipped', note: 'no verdict channel configured' };
     const record = await getRecordItemById(db, Number(row.entity_id));
     if (!record || !isPostable(record)) return { result: 'skipped', note: 'nothing to post for this record' };
     const message = verdictPost(record, config.frontendUrl);
 
-    const existing = await messageFor('record', row.entity_id, 'verdict');
+    const announced = await messageFor('record', row.entity_id, 'verdict');
+    // The verdict channel was changed since: post in the new one.
+    let existing = announced && announced.channel_id === channelId ? announced : null;
     if (existing) {
       try {
         await api.edit(existing.channel_id, existing.message_id, message);
@@ -199,14 +242,16 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         );
         return { result: 'sent', note: null };
       } catch (error) {
-        // Deleted in Discord: post the current state afresh.
-        if (errorCode(error) !== UNKNOWN_MESSAGE) throw error;
-        await pool.query(
-          "DELETE FROM discord_messages WHERE entity = 'record' AND entity_id = $1 AND purpose = 'verdict'",
-          [row.entity_id],
-        );
+        // Deleted in Discord (the message or its channel): post the current state afresh.
+        const code = errorCode(error);
+        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+        await forgetMessage(row.entity_id);
+        existing = null;
       }
-    } else if (Date.now() - row.created_at.getTime() > STALE_MS) {
+    } else if (!announced && row.kind !== 'case.decided') {
+      // A revoke or override of a case the channel never heard about.
+      return { result: 'skipped', note: 'never announced' };
+    } else if (!announced && Date.now() - row.created_at.getTime() > STALE_MS) {
       return { result: 'skipped', note: 'stale: never posted and older than 24 h' };
     }
 

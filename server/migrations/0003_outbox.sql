@@ -12,7 +12,7 @@
 
 CREATE TABLE IF NOT EXISTS outbox (
   id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  kind         text NOT NULL,                     -- case.decided | case.revoked | case.overridden
+  kind         text NOT NULL,                     -- case.decided | case.revoked | case.overridden | case.removed
   entity       text NOT NULL CHECK (entity IN ('record', 'session', 'report', 'link', 'user')),
   entity_id    text NOT NULL,
   payload      jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(payload) = 'object'),
@@ -47,8 +47,9 @@ CREATE TABLE IF NOT EXISTS discord_messages (
 -- The three verdict events of a case. Which one a change is follows from the
 -- status transition:
 --   judging            → decided   case.decided    (AI or fallback verdict)
---   decided / appealed → decided   case.overridden (an admin's new sentence
---                                                   that moved the delta)
+--   decided / appealed → decided   case.overridden (an admin's new sentence:
+--                                                   a new delta, or the first
+--                                                   override even at the same one)
 --   anything           → revoked   case.revoked
 -- A bonus is inserted already decided and then has its applied delta written
 -- in (decided → decided): not an override, and never an event.
@@ -61,8 +62,8 @@ BEGIN
   IF NEW.status = 'decided' AND OLD.status = 'judging' THEN
     event := 'case.decided';
     dedupe := 'case:' || NEW.id || ':decided';
-  ELSIF NEW.status = 'decided' AND OLD.status IN ('decided', 'appealed')
-        AND NEW.verdict_source = 'admin_override' AND NEW.delta IS DISTINCT FROM OLD.delta THEN
+  ELSIF NEW.status = 'decided' AND OLD.status IN ('decided', 'appealed') AND NEW.verdict_source = 'admin_override'
+        AND (NEW.delta IS DISTINCT FROM OLD.delta OR OLD.verdict_source IS DISTINCT FROM 'admin_override') THEN
     event := 'case.overridden';
     -- A case can be re-sentenced more than once: one event per transaction.
     dedupe := 'case:' || NEW.id || ':overridden:' || txid_current();
@@ -85,3 +86,30 @@ DROP TRIGGER IF EXISTS records_outbox ON records;
 CREATE TRIGGER records_outbox
   AFTER UPDATE OF status, delta ON records
   FOR EACH ROW EXECUTE FUNCTION records_outbox();
+
+-- A record deleted (an admin deleting a user takes their cases with it): its
+-- post must go too, or the name and the penalty stay in the channel. The
+-- record cannot be read back later, so the message ids travel in the payload.
+CREATE OR REPLACE FUNCTION records_outbox_removed() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  posted record;
+BEGIN
+  SELECT channel_id, message_id INTO posted
+    FROM discord_messages WHERE entity = 'record' AND entity_id = OLD.id::text AND purpose = 'verdict';
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO outbox (kind, entity, entity_id, dedupe_key, payload)
+  VALUES ('case.removed', 'record', OLD.id::text, 'case:' || OLD.id || ':removed',
+          jsonb_build_object('channel_id', posted.channel_id, 'message_id', posted.message_id))
+  ON CONFLICT (dedupe_key) DO NOTHING;
+  PERFORM pg_notify('outbox', '');
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS records_outbox_removed ON records;
+CREATE TRIGGER records_outbox_removed
+  AFTER DELETE ON records
+  FOR EACH ROW EXECUTE FUNCTION records_outbox_removed();

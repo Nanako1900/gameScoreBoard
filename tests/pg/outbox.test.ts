@@ -5,6 +5,7 @@
 import pg from 'pg';
 import { describe, expect, inject, it } from 'vitest';
 import { appealCase, fileCase, overrideCase, revokeCase, submitStatement, withdrawCase } from '../../worker/cases';
+import { adminUpdateUser } from '../../worker/db';
 import { createDispatcher, STALE_MS, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import { linkAccounts } from '../../server/src/discord/links';
 import { handleVerdictButton, type ChannelMessage } from '../../server/src/discord/verdict';
@@ -41,6 +42,7 @@ async function events(): Promise<Event[]> {
 function fakeDiscord() {
   const sent: Array<{ channelId: string; message: ChannelMessage & { nonce: string } }> = [];
   const edits: Array<{ channelId: string; messageId: string; message: ChannelMessage }> = [];
+  const removed: Array<{ channelId: string; messageId: string }> = [];
   const failures: unknown[] = [];
   let next = 900_000_000_000_000_000n;
   const api: ChannelApi = {
@@ -54,8 +56,12 @@ function fakeDiscord() {
       if (failures.length > 0) throw failures.shift();
       edits.push({ channelId, messageId, message });
     },
+    async remove(channelId, messageId) {
+      if (failures.length > 0) throw failures.shift();
+      removed.push({ channelId, messageId });
+    },
   };
-  return { api, sent, edits, fail: (...errors: unknown[]) => failures.push(...errors) };
+  return { api, sent, edits, removed, fail: (...errors: unknown[]) => failures.push(...errors) };
 }
 
 function discordError(status: number, code?: number): Error {
@@ -317,6 +323,39 @@ describe('dispatcher', () => {
     expect(await d.runOnce()).toBe(0);
     const pending = (await events()).filter((e) => e.result === null);
     expect(pending).toHaveLength(6); // retried later, not thrown away
+    // …and a refusal does not use up the event's attempts.
+    expect(pending.every((e) => e.attempts === 0)).toBe(true);
+  });
+
+  it('keeps a lone refused post waiting for the permission fix instead of giving up', async () => {
+    await people();
+    await decide(await judgingCase());
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    for (let i = 0; i < 4; i += 1) {
+      discord.fail(discordError(403, 50013));
+      await d.runOnce();
+      const [row] = (await pool.query('SELECT available_at > now() + interval \'4 minutes\' AS later FROM outbox')).rows;
+      expect(row.later).toBe(true); // a 5-minute wait
+      await pool.query('UPDATE outbox SET available_at = now()');
+    }
+    // The permission is fixed: it goes out.
+    await d.runOnce();
+    expect(discord.sent).toHaveLength(1);
+    expect((await events())[0]).toMatchObject({ result: 'sent' });
+  });
+
+  it('pauses at once on 401: the token itself is bad', async () => {
+    await seedUser({ id: 'judge', judge: true });
+    for (const id of ['s1', 's2']) {
+      await seedUser({ id });
+      await decide(await judgingCase(id));
+    }
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    discord.fail(discordError(401, 0));
+    expect(await d.runOnce()).toBe(1);
+    expect(await d.runOnce()).toBe(0);
   });
 
   it('skips everything when no verdict channel is configured', async () => {
@@ -363,6 +402,86 @@ describe('dispatcher', () => {
     expect(new Set(discord.sent.map((s) => s.message.nonce)).size).toBe(8);
   });
 
+  it('takes the post down when the case is deleted with its user', async () => {
+    await people();
+    const id = await judgingCase();
+    await decide(id);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await adminUpdateUser(env.DB, 'subject', { delete: true });
+    expect(await d.runOnce()).toBe(1);
+    expect(discord.removed).toEqual([{ channelId: CHANNEL, messageId: '900000000000000001' }]);
+    expect((await pool.query('SELECT 1 FROM discord_messages')).rowCount).toBe(0);
+  });
+
+  it('posts in the new channel after DISCORD_VERDICT_CHANNEL_ID changes, or when the old one is gone', async () => {
+    const { admin } = await people();
+    const id = await judgingCase();
+    await decide(id);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api).runOnce();
+    await overrideCase(env.DB, admin, id, -8, '情有可原');
+    await dispatcher(discord.api, '200000000000000002').runOnce();
+    expect(discord.sent.map((s) => s.channelId)).toEqual([CHANNEL, '200000000000000002']);
+    expect(discord.edits).toEqual([]);
+
+    await revokeCase(env.DB, admin, id);
+    discord.fail(discordError(404, 10003)); // the channel was deleted
+    await dispatcher(discord.api, '200000000000000002').runOnce();
+    expect(discord.sent).toHaveLength(3);
+  });
+
+  it('does not announce a revoke of a case the channel never saw', async () => {
+    const { admin } = await people();
+    const id = await judgingCase();
+    await decide(id);
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce(); // no channel yet: skipped
+    await revokeCase(env.DB, admin, id);
+    await dispatcher(discord.api).runOnce();
+    expect(discord.sent).toEqual([]);
+    expect((await events()).map((e) => e.result)).toEqual(['skipped', 'skipped']);
+  });
+
+  it('an override that keeps the delta still updates the post', async () => {
+    const { admin } = await people();
+    const id = await judgingCase();
+    await decide(id);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await overrideCase(env.DB, admin, id, -15, '维持原判');
+    expect(await d.runOnce()).toBe(1);
+    expect(textOf(discord.edits[0].message)).toContain('管理员改判');
+  });
+
+  it('never claims an event while an earlier one for the same case is in flight', async () => {
+    const { admin } = await people();
+    const id = await judgingCase();
+    await decide(id);
+    await revokeCase(env.DB, admin, id);
+    // Another dispatcher holds the first event.
+    await pool.query("UPDATE outbox SET claim_token = gen_random_uuid(), claimed_at = now() WHERE kind = 'case.decided'");
+    const discord = fakeDiscord();
+    expect(await dispatcher(discord.api).runOnce()).toBe(0);
+    // Its claim expires (it died): both go out, in order.
+    await pool.query("UPDATE outbox SET claimed_at = now() - interval '3 minutes' WHERE kind = 'case.decided'");
+    expect(await dispatcher(discord.api).runOnce()).toBe(2);
+    expect(discord.sent).toHaveLength(1);
+    expect(discord.edits).toHaveLength(1);
+  });
+
+  it('stops cleanly and claims nothing after stop()', async () => {
+    await people();
+    await decide(await judgingCase());
+    const d = dispatcher(fakeDiscord().api);
+    d.start();
+    await d.stop();
+    await pool.query('UPDATE outbox SET processed_at = NULL, result = NULL');
+    expect(await d.runOnce()).toBe(0);
+  });
+
   it('skips a record that is no longer a judged penalty', async () => {
     await people();
     const id = await judgingCase();
@@ -394,9 +513,12 @@ describe('看判词', () => {
   it('shows the full verdict, privately, to the subject, the reporter, judges and admins', async () => {
     await people();
     await seedUser({ id: 'other-judge', judge: true });
+    await seedUser({ id: 'organizer' });
     const id = await judgingCase();
     await decide(id);
-    for (const [userId, n] of [['subject', 1], ['judge', 2], ['admin', 3], ['other-judge', 4]] as const) {
+    // A reporter who is not a judge: an organizer filing a no-show from a session.
+    await env.DB.prepare("UPDATE records SET reporter_id = 'organizer' WHERE id = ?").bind(id).run();
+    for (const [userId, n] of [['subject', 1], ['organizer', 6], ['admin', 3], ['other-judge', 4]] as const) {
       const reply = await handleVerdictButton(id, await bound(userId, n), ctx);
       expect(reply.ephemeral).toBe(true);
       expect(shown(reply)).toContain(SECRET.headline);

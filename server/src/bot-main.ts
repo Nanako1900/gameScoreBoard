@@ -248,10 +248,16 @@ function main(): void {
     console.log(`${signal}: shutting down`);
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
     gateway = 'connecting';
+    // The dispatcher first: it sends through the client's REST, which
+    // destroy() takes the token from, so an event in flight would fail.
+    await Promise.race([
+      Promise.allSettled([dispatcher?.stop()]),
+      new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
+    ]);
     await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));
     // Let commands already running finish their reply before the pool goes away.
     await Promise.race([
-      Promise.allSettled([...inFlight, dispatcher?.stop()]),
+      Promise.allSettled([...inFlight]),
       new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
     ]);
     await new Promise<void>((resolve) => health.close(() => resolve()));
