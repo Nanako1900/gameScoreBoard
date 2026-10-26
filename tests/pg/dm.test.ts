@@ -350,7 +350,7 @@ describe('DM delivery', () => {
       await dueNow();
       discord.failEdit(failure);
       await d.runOnce();
-      const [row] = (await pool.query("SELECT result FROM outbox WHERE kind = 'dm.deadline'")).rows;
+      const [row] = (await pool.query("SELECT result FROM outbox WHERE kind = 'dm.deadline' ORDER BY id DESC LIMIT 1")).rows;
       expect(row.result).toBe('sent');
     }
     // The newest reminder is the one remembered (a withdrawal rewrites it), and
@@ -439,7 +439,8 @@ describe('DM delivery', () => {
     // The bot died after remembering the new reminder, before marking it done:
     // it is claimed again and sent with the same nonce — the same message.
     await pool.query(
-      "UPDATE outbox SET processed_at = NULL, result = NULL, claimed_at = now() - interval '10 minutes', available_at = now() WHERE kind = 'dm.deadline'",
+      "UPDATE outbox SET processed_at = NULL, result = NULL, claimed_at = now() - interval '10 minutes', available_at = now() WHERE dedupe_key = $1",
+      [`dm:case:${filed.id}:deadline`],
     );
     await d.runOnce();
     expect(discord.edits).toHaveLength(editsAfterResend);
@@ -498,7 +499,9 @@ describe('DM delivery', () => {
     const reminders = () => discord.sent.filter((m) => text(m.message).includes('陈述快截止了')).length;
     expect(reminders()).toBe(1);
     await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
-    const [row] = (await pool.query("SELECT processed_at, available_at > now() AS later FROM outbox WHERE kind = 'dm.deadline'")).rows;
+    const [row] = (await pool.query('SELECT processed_at, available_at > now() AS later FROM outbox WHERE dedupe_key = $1', [
+      `dm:case:${filed.id}:deadline`,
+    ])).rows;
     expect(row).toEqual({ processed_at: null, later: true });
     await dueNow();
     await d.runOnce();
@@ -851,13 +854,59 @@ describe('refusals, kept and counted right', () => {
     expect(row).toEqual({ old: true, result: null });
   });
 
+  it('a reminder sent, re-armed and sent again: both sends count toward the day', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    await dueNow();
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api);
+    await d.runOnce();
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
+    await dueNow();
+    await d.runOnce();
+    const sent = (await pool.query("SELECT COUNT(*)::int AS n FROM outbox WHERE kind = 'dm.deadline' AND result = 'sent'")).rows[0].n;
+    expect(sent).toBe(2);
+  });
+
+  it('a reminder being delivered right now is not pulled from under its dispatcher by a move', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    const key = `dm:case:${filed.id}:deadline`;
+    await pool.query("UPDATE outbox SET claim_token = gen_random_uuid(), claimed_at = now(), attempts = 1 WHERE dedupe_key = $1", [key]);
+    await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
+    const rows = (await pool.query("SELECT dedupe_key = $1 AS current, claim_token IS NOT NULL AS claimed FROM outbox WHERE kind = 'dm.deadline' ORDER BY id", [key])).rows;
+    expect(rows).toEqual([
+      { current: false, claimed: true },
+      { current: true, claimed: false },
+    ]);
+  });
+
+  it('a refused reminder moved in place stays refused: behind fresh events, at its own retry time', async () => {
+    const { judge, subject } = await people();
+    const filed = await file(judge, subject);
+    const key = `dm:case:${filed.id}:deadline`;
+    await pool.query(
+      "UPDATE outbox SET refused_since = now() - interval '1 hour', available_at = now() + interval '5 minutes' WHERE dedupe_key = $1",
+      [key],
+    );
+    // Cut to under 2 hours: the reminder would be due at once.
+    await env.DB.prepare("UPDATE records SET created_at = datetime('now', '-1 hour'), deadline_at = datetime('now', '+90 minutes') WHERE id = ?")
+      .bind(filed.id)
+      .run();
+    const [row] = (await pool.query(
+      'SELECT refused_since IS NOT NULL AS refused, available_at > now() + interval \'4 minutes\' AS waits FROM outbox WHERE dedupe_key = $1',
+      [key],
+    )).rows;
+    expect(row).toEqual({ refused: true, waits: true });
+  });
+
   it('a reminder re-armed after a refusal starts afresh, and holds nothing up', async () => {
     const { judge, subject } = await people();
     const filed = await file(judge, subject);
     // Once refused, later sent.
     await pool.query("UPDATE outbox SET processed_at = now(), result = 'sent', refused_since = now() - interval '1 hour' WHERE kind = 'dm.deadline'");
     await env.DB.prepare("UPDATE records SET deadline_at = datetime(deadline_at, '+3 hours') WHERE id = ?").bind(filed.id).run();
-    const [row] = (await pool.query("SELECT refused_since, processed_at FROM outbox WHERE kind = 'dm.deadline'")).rows;
+    const [row] = (await pool.query('SELECT refused_since, processed_at FROM outbox WHERE dedupe_key = $1', [`dm:case:${filed.id}:deadline`])).rows;
     expect(row).toEqual({ refused_since: null, processed_at: null });
     await file(judge, subject, 'late_major');
     await pool.query("UPDATE outbox SET available_at = now() WHERE kind = 'dm.filed'");
