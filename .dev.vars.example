@@ -18,8 +18,14 @@ SESSION_SECRET="please-change-me-to-a-long-random-string"
 # Timezone offset (hours) used to compute the weekly reset boundary. 8 = Beijing.
 RESET_TZ_OFFSET="8"
 
-# Comma-separated usernames auto-granted admin on login.
+# Comma-separated OAuth subject ids (users.id) auto-granted admin on login.
+# Once set, ADMIN_USERNAMES is ignored.
+# ADMIN_SUBJECT_IDS=""
+# Deprecated: comma-separated usernames auto-granted admin on login.
 ADMIN_USERNAMES="Nanako1900"
+
+# Maintenance mode: "1" refuses every write with 503 (used for the DB cutover).
+# READ_ONLY="1"
 
 # --- AI 裁决 -----------------------------------------------------------------
 # Any OpenAI-compatible endpoint: OpenAI / DeepSeek / 硅基流动 / OpenRouter /

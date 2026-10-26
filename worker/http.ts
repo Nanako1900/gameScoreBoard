@@ -44,8 +44,9 @@ export function requireString(v: unknown, label: string): string {
 }
 
 export function parseCsvList(csv: string | undefined): string[] {
-  if (!csv) return [];
-  return csv
+  if (csv === undefined || csv === null) return [];
+  // String(): a var written unquoted in TOML / dashboard JSON arrives as a number.
+  return String(csv)
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -53,6 +54,33 @@ export function parseCsvList(csv: string | undefined): string[] {
 
 export function cookieConfig(env: Env): CookieConfig {
   return { sameSite: env.COOKIE_SAMESITE, domain: env.COOKIE_DOMAIN };
+}
+
+/** READ_ONLY=1 / true: maintenance mode for the database cutover. */
+export function isReadOnly(env: Env): boolean {
+  // String(): `READ_ONLY = true` unquoted in TOML arrives as a boolean.
+  return ['1', 'true', 'yes'].includes(String(env.READ_ONLY ?? '').trim().toLowerCase());
+}
+
+/**
+ * Origins whose pages may make state-changing requests with the session
+ * cookie: this request's own origin, APP_URL, and every FRONTEND_ORIGIN.
+ */
+export function allowedOrigins(env: Env, requestUrl: string): string[] {
+  const configured = [...parseCsvList(env.FRONTEND_ORIGIN), ...(env.APP_URL ? [env.APP_URL] : [])];
+  const origins = [new URL(requestUrl).origin];
+  for (const entry of configured) {
+    try {
+      const url = new URL(entry);
+      // 'app.example.com:8443' or 'capacitor://localhost' parse without error
+      // but have the opaque origin 'null' — which is exactly what a sandboxed
+      // iframe or data: URL sends as Origin. Only real web origins count.
+      if (url.protocol === 'https:' || url.protocol === 'http:') origins.push(url.origin);
+    } catch {
+      // Malformed entries are skipped; a bad APP_URL also fails loudly on login.
+    }
+  }
+  return origins;
 }
 
 /** Fail fast with a clear message when required config (the OAuth secrets) is
@@ -70,23 +98,19 @@ export function requireEnv(env: Env, keys: readonly (keyof Env)[]): void {
   }
 }
 
-/** Naive eTLD+1 (fine for simple domains like `nanako.org`). */
-export function registrableSuffix(host: string): string {
-  const parts = host.split('.');
-  return parts.length <= 2 ? host : parts.slice(-2).join('.');
-}
-
-/** Allow the avatar proxy to fetch only from the OAuth provider's domain family
- *  (or an explicit AVATAR_ALLOWED_HOSTS list) — prevents the proxy being an open
- *  relay / SSRF vector. */
-export function isAllowedAvatarHost(env: Env, host: string): boolean {
-  if (parseCsvList(env.AVATAR_ALLOWED_HOSTS).includes(host)) return true;
+/**
+ * Hostnames the avatar proxy may fetch from by name: the OAuth provider's own
+ * host plus AVATAR_ALLOWED_HOSTS. Exact matches — not the whole registrable
+ * domain, which would include this app once it lives on a sibling subdomain.
+ */
+export function avatarAllowedHosts(env: Env): string[] {
+  const hosts = parseCsvList(env.AVATAR_ALLOWED_HOSTS).map((h) => h.toLowerCase());
   try {
-    const oauthHost = new URL(env.OAUTH_BASE_URL).hostname;
-    return host === oauthHost || registrableSuffix(host) === registrableSuffix(oauthHost);
+    hosts.push(new URL(env.OAUTH_BASE_URL).hostname.toLowerCase());
   } catch {
-    return false;
+    // No usable OAuth host: only the explicit list (and stored avatars) apply.
   }
+  return hosts;
 }
 
 export function requireUser(caller: User | null): User {

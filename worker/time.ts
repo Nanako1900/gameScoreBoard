@@ -4,9 +4,14 @@
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 
-/** Parse RESET_TZ_OFFSET (hours) tolerantly; default 8 (Beijing). */
+/**
+ * Parse RESET_TZ_OFFSET (hours) tolerantly; default 8 (Beijing). Blank counts
+ * as unset — Number('') is 0, which would silently mean UTC.
+ */
 export function resetOffsetHours(raw: string | undefined): number {
-  const n = raw !== undefined ? Number(raw) : NaN;
+  // String(): `RESET_TZ_OFFSET = 8` unquoted in TOML arrives as a number.
+  const trimmed = raw === undefined || raw === null ? '' : String(raw).trim();
+  const n = trimmed.length > 0 ? Number(trimmed) : NaN;
   return Number.isFinite(n) ? n : 8;
 }
 

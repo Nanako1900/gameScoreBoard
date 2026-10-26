@@ -126,7 +126,7 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 | 裁判 (`is_judge`) | 可**一次对多人立案**（只写事实，AI 归类+量刑）；可改案由、确认团灭级升级；判决前可撤案，判决后 15 分钟内可撤销 |
 | 管理员 (`is_admin`) | 管理任意用户角色 / 分数，复核申诉并**改判**，随时撤销任意记录，删除用户；配置 AI 裁判 |
 
-角色通过 `POST /api/me/roles` 自助开启（上榜 / 裁判）；管理员身份在 OAuth 登录时按 `ADMIN_USERNAMES` 环境变量自动授予，此后可通过管理端点调整其他用户。
+角色通过 `POST /api/me/roles` 自助开启（上榜 / 裁判）；管理员身份在 OAuth 登录时按 `ADMIN_SUBJECT_IDS` 环境变量自动授予，此后可通过管理端点调整其他用户。
 
 ## 技术栈
 
@@ -226,7 +226,9 @@ npm run dev:web
 | `SESSION_SECRET` | ✅ | 会话签名密钥（HS256），生产环境用 `wrangler secret put` 设置。生成方式：`openssl rand -base64 48` |
 | `APP_URL` | 可选 | 显式指定应用外部 URL；不填则从请求 origin 推导 |
 | `RESET_TZ_OFFSET` | 可选（默认 `8`） | 计算每周恢复重置时间点所用的时区偏移（小时），`8` = 北京时间 |
-| `ADMIN_USERNAMES` | 可选 | 逗号分隔的用户名列表，登录时命中则自动授予管理员权限 |
+| `ADMIN_SUBJECT_IDS` | 可选 | 逗号分隔的 OAuth subject id（`users.id`），登录时命中则自动授予管理员权限 |
+| `ADMIN_USERNAMES` | 可选（已废弃） | 逗号分隔的用户名；设置了 `ADMIN_SUBJECT_IDS` 后被忽略 |
+| `READ_ONLY` | 可选 | `1` = 维护模式：所有写请求返回 503，惰性任务与 Cron 跳过（数据库切换时用） |
 | `AI_BASE_URL` | AI 必需 | OpenAI 兼容端点，须以 `/v1` 结尾（代码只拼 `/chat/completions`） |
 | `AI_MODEL` | AI 必需 | 模型名，如 `gpt-4o-mini` / `deepseek-chat` |
 | `AI_API_KEY` | AI 必需 | **只能用 `wrangler secret put` 设置，永不落库** |

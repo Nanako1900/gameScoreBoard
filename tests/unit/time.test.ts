@@ -53,6 +53,13 @@ describe('resetOffsetHours', () => {
     expect(resetOffsetHours('0')).toBe(0);
     expect(resetOffsetHours('-5')).toBe(-5);
   });
+
+  it('treats blank as unset and accepts a number (an unquoted TOML value)', () => {
+    expect(resetOffsetHours('')).toBe(8);
+    expect(resetOffsetHours('  ')).toBe(8);
+    expect(resetOffsetHours(8 as unknown as string)).toBe(8);
+    expect(resetOffsetHours(0 as unknown as string)).toBe(0);
+  });
 });
 
 describe('weekStartLocal', () => {

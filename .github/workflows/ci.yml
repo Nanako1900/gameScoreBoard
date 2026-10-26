@@ -1,0 +1,33 @@
+# Typecheck, all three test suites and the production build on every PR and on
+# main. Deploys are not done here — Cloudflare Workers Builds deploys main.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:dom
+      # Miniflare-backed D1 integration tests.
+      - run: npm run test:worker
+      - run: npm run build

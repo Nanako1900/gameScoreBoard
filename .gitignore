@@ -23,3 +23,6 @@ wrangler.toml.bak
 # omc / claude local state (keep out of the app repo)
 .omc/
 .claude/
+
+# TypeScript incremental build info
+*.tsbuildinfo

@@ -137,17 +137,42 @@ export interface UpsertResult {
   isNew: boolean;
 }
 
+/** Who gets admin on login. Both lists come from env, comma-separated. */
+export interface AdminGrants {
+  /** ADMIN_SUBJECT_IDS — the OAuth `sub`, which the user cannot change. */
+  subjectIds: readonly string[];
+  /** ADMIN_USERNAMES — deprecated; consulted only while subjectIds is empty. */
+  usernames: readonly string[];
+}
+
+export type AdminGrantVia = 'subject' | 'username' | null;
+
+/**
+ * Whether this login grants admin, and by which rule.
+ *
+ * The username rule is weak: `profile.username` falls back to the profile's
+ * `name` / `nickname` (see oauth.ts), which an IdP may let users edit, so
+ * anyone renaming themselves to a listed name would become admin. Setting
+ * ADMIN_SUBJECT_IDS switches it off entirely.
+ */
+export function adminGrantVia(grants: AdminGrants, profile: OAuthProfile): AdminGrantVia {
+  if (grants.subjectIds.length > 0) {
+    return grants.subjectIds.includes(profile.id) ? 'subject' : null;
+  }
+  return grants.usernames.includes(profile.username) ? 'username' : null;
+}
+
 /**
  * Insert or update a user from an OAuth profile. Admin is granted (never
- * revoked) when the username appears in the ADMIN_USERNAMES list.
+ * revoked) when `adminGrantVia` matches.
  */
 export async function upsertUser(
   db: D1Database,
   profile: OAuthProfile,
-  adminUsernames: readonly string[],
+  grants: AdminGrants,
 ): Promise<UpsertResult> {
   const existing = await getUserById(db, profile.id);
-  const grantAdmin = adminUsernames.includes(profile.username);
+  const grantAdmin = adminGrantVia(grants, profile) !== null;
 
   if (!existing) {
     await db
