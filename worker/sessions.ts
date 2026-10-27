@@ -46,6 +46,7 @@ import { fileCase } from './cases';
 import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limits';
 import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
+import { goingPreviews, previewOfPlayers } from './session-extras';
 
 const MAX_ROLLCALL_ENTRIES = MAX_SESSION_ROSTER;
 const MAX_LATE_MINUTES = 24 * 60;
@@ -72,7 +73,11 @@ export interface SessionJoinRow extends SessionRow {
   c_out: number;
 }
 
-function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
+function toSessionItem(
+  row: SessionJoinRow,
+  myRsvp: Rsvp | null,
+  preview: SessionItem['going_preview'],
+): SessionItem {
   return {
     id: row.id,
     organizer: { id: row.organizer_id, username: row.o_username, avatar_url: row.o_avatar },
@@ -92,6 +97,7 @@ function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
       out: row.c_out,
     },
     my_rsvp: myRsvp,
+    going_preview: preview,
   };
 }
 
@@ -171,12 +177,12 @@ export async function listSessions(
     .prepare(`${SESSION_SELECT} ${where} ORDER BY g.starts_at ${order}, g.id DESC LIMIT ?`)
     .bind(...binds)
     .all<SessionJoinRow>();
-  const mine = await myRsvpMap(
-    db,
-    callerId,
-    rows.results.map((r) => r.id),
+  const ids = rows.results.map((r) => r.id);
+  const mine = await myRsvpMap(db, callerId, ids);
+  const previews = await goingPreviews(db, ids);
+  return rows.results.map((r) =>
+    toSessionItem(r, mine.get(r.id) ?? null, previews.get(r.id) ?? []),
   );
-  return rows.results.map((r) => toSessionItem(r, mine.get(r.id) ?? null));
 }
 
 export async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
@@ -197,7 +203,7 @@ export async function getSessionDetail(
   const players = await db.prepare(PLAYER_SELECT).bind(id).all<SessionPlayerJoinRow>();
   const mapped = players.results.map(toSessionPlayer);
   const mine = callerId ? mapped.find((p) => p.user.id === callerId)?.rsvp ?? null : null;
-  return { ...toSessionItem(row, mine), players: mapped };
+  return { ...toSessionItem(row, mine, previewOfPlayers(mapped)), players: mapped };
 }
 
 // --- Writes ------------------------------------------------------------------
@@ -410,7 +416,8 @@ export async function listMyInvites(
     )
     .bind(now, callerId)
     .all<SessionJoinRow>();
-  return rows.results.map((r) => toSessionItem(r, 'invited'));
+  const previews = await goingPreviews(db, rows.results.map((r) => r.id));
+  return rows.results.map((r) => toSessionItem(r, 'invited', previews.get(r.id) ?? []));
 }
 
 export async function updateSession(

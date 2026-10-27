@@ -302,6 +302,8 @@ export interface SessionItem {
   counts: { invited: number; going: number; maybe: number; out: number };
   /** The caller's own RSVP, when authenticated. */
   my_rsvp: Rsvp | null;
+  /** P2-6: up to GOING_PREVIEW_MAX people whose answer is 来, earliest answer first. Names and avatars only. */
+  going_preview: RecordActor[];
 }
 
 export interface SessionDetail extends SessionItem {

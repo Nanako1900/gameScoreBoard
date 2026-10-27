@@ -7,11 +7,18 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { GOING_PREVIEW_MAX } from '../../shared/attendance';
 import { goingPreviews, previewOfPlayers } from '../../worker/session-extras';
-import { createSession, getSessionDetail, setRsvp } from '../../worker/sessions';
+import {
+  createSession,
+  getSessionDetail,
+  listMyInvites,
+  listSessions,
+  setRsvp,
+} from '../../worker/sessions';
 import type { SessionDetail, User } from '../../worker/types';
 import { OFFSET_HOURS, seedUser } from './helpers';
 
 const FUTURE = new Date(Date.now() + 3 * 3_600_000).toISOString();
+const PAST = new Date(Date.now() - 3 * 3_600_000).toISOString();
 
 async function pair(): Promise<{ organizer: User; a: User; b: User }> {
   return {
@@ -141,5 +148,67 @@ describe('goingPreviews', () => {
       .run();
     expect((await goingPreviews(env.DB, [session.id])).has(session.id)).toBe(false);
     expect(previewOfPlayers((await getSessionDetail(env.DB, session.id, null)).players)).toEqual([]);
+  });
+});
+
+describe('going_preview', () => {
+  const ids = (s: { going_preview: { id: string }[] }): string[] => s.going_preview.map((p) => p.id);
+
+  it('is on every list, the detail and the invite inbox — the same five, in the same order', async () => {
+    const { session, organizer, invitee } = await crowdedSession();
+
+    const upcoming = await listSessions(env.DB, 'upcoming', null);
+    expect(upcoming.map(ids)).toEqual([CROWD_FIRST_FIVE]);
+    expect((await listSessions(env.DB, 'mine', organizer.id)).map(ids)).toEqual([CROWD_FIRST_FIVE]);
+    const invites = await listMyInvites(env.DB, invitee.id);
+    expect(invites.map(ids)).toEqual([CROWD_FIRST_FIVE]);
+    expect(invites[0].going_preview).toEqual(upcoming[0].going_preview);
+    expect((await getSessionDetail(env.DB, session.id, invitee.id)).going_preview).toEqual(
+      upcoming[0].going_preview,
+    );
+
+    await env.DB.prepare('UPDATE game_sessions SET starts_at = ? WHERE id = ?')
+      .bind(PAST, session.id)
+      .run();
+    expect((await listSessions(env.DB, 'past', null)).map(ids)).toEqual([CROWD_FIRST_FIVE]);
+  });
+
+  it('is an empty list, not a missing one, when nobody is coming', async () => {
+    const { organizer } = await pair();
+    const session = await createSession(env.DB, organizer, { title: 'x', starts_at: FUTURE }, OFFSET_HOURS);
+    await env.DB.prepare("UPDATE session_players SET rsvp = 'maybe' WHERE session_id = ?")
+      .bind(session.id)
+      .run();
+    expect((await listSessions(env.DB, 'upcoming', null))[0].going_preview).toEqual([]);
+    expect((await getSessionDetail(env.DB, session.id, null)).going_preview).toEqual([]);
+  });
+
+  it('costs the same number of queries for one session as for four', async () => {
+    const { organizer, a } = await pair();
+    const listed = async () => {
+      const probe = counting();
+      const rows = await listSessions(probe.db, 'upcoming', a.id);
+      return { rows, queries: probe.prepared() };
+    };
+    const inbox = async () => {
+      const probe = counting();
+      const rows = await listMyInvites(probe.db, a.id);
+      return { rows, queries: probe.prepared() };
+    };
+
+    await createSession(env.DB, organizer, { title: '一', starts_at: FUTURE, invite: [a.id] }, OFFSET_HOURS);
+    const listOne = await listed();
+    const inboxOne = await inbox();
+    for (const title of ['二', '三', '四']) {
+      await createSession(env.DB, organizer, { title, starts_at: FUTURE, invite: [a.id] }, OFFSET_HOURS);
+    }
+    const listFour = await listed();
+    const inboxFour = await inbox();
+
+    expect(listFour.rows).toHaveLength(4);
+    expect(inboxFour.rows).toHaveLength(4);
+    expect(listFour.queries).toBe(listOne.queries);
+    expect(inboxFour.queries).toBe(inboxOne.queries);
+    for (const s of [...listFour.rows, ...inboxFour.rows]) expect(ids(s)).toEqual([organizer.id]);
   });
 });

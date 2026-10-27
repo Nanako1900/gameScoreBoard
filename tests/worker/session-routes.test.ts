@@ -179,3 +179,64 @@ describe('POST /api/sessions/:id/invite (P2-1)', () => {
     expect(await rosterOf(id)).toEqual(['org']);
   });
 });
+
+// --- P2-6 ---
+describe('going_preview over HTTP (P2-6)', () => {
+  const json = { 'Content-Type': 'application/json' };
+
+  async function postOk(path: string, sub: string, body: unknown): Promise<Response> {
+    const res = await call(path, { method: 'POST', headers: await asUser(sub, json), body: JSON.stringify(body) });
+    expect(res.status).toBe(200);
+    return res;
+  }
+
+  /** The raw body of a 200 GET, anonymous unless `sub` is given. */
+  async function textOf(path: string, sub?: string): Promise<string> {
+    const res = await call(path, sub ? { headers: await asUser(sub) } : {});
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  async function answeredAt(sessionId: number, userId: string, at: string): Promise<void> {
+    await env.DB.prepare('UPDATE session_players SET rsvp_at = ? WHERE session_id = ? AND user_id = ?')
+      .bind(at, sessionId, userId)
+      .run();
+  }
+
+  it('rides on /api/sessions, /api/sessions/:id and /api/me/invites — names and avatars, never a score', async () => {
+    await seedUser({ id: 'org', score: 87 });
+    await seedUser({ id: 'fan', score: 64 });
+    await seedUser({ id: 'guest' });
+    await env.DB.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?')
+      .bind('阿杰', 'https://cdn.example.com/fan.png', 'fan')
+      .run();
+    const created = await postOk('/api/sessions', 'org', {
+      starts_at: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+      invite: ['guest'],
+    });
+    const id = ((await created.json()) as { session: { id: number } }).session.id;
+    await postOk(`/api/sessions/${id}/rsvp`, 'fan', { rsvp: 'going' });
+    await answeredAt(id, 'org', '2026-10-20 10:00:01');
+    await answeredAt(id, 'fan', '2026-10-20 10:00:02');
+    const expected = [
+      { id: 'org', username: 'org', avatar_url: null },
+      { id: 'fan', username: '阿杰', avatar_url: 'https://cdn.example.com/fan.png' },
+    ];
+
+    const list = await textOf('/api/sessions');
+    expect(list).not.toContain('score');
+    expect((JSON.parse(list) as { sessions: { going_preview?: unknown }[] }).sessions[0].going_preview).toEqual(
+      expected,
+    );
+
+    const detail = await textOf(`/api/sessions/${id}`);
+    expect(detail).not.toContain('score');
+    expect((JSON.parse(detail) as { session: { going_preview?: unknown } }).session.going_preview).toEqual(expected);
+
+    const inbox = await textOf('/api/me/invites', 'guest');
+    expect(inbox).not.toContain('score');
+    expect((JSON.parse(inbox) as { sessions: { going_preview?: unknown }[] }).sessions[0].going_preview).toEqual(
+      expected,
+    );
+  });
+});
