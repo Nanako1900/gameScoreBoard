@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { User } from '../types';
 import { ApiError, updateDisplayName, updateRoles } from '../api';
 import { clearDraft, readDraft, writeDraft } from '../lib/drafts';
@@ -8,13 +8,14 @@ import {
   type OnboardingChoice,
   type OnboardingDraftValue,
 } from '../lib/draftShapes';
-import { DiscordLinkCard } from './DiscordLinkCard';
-import { Modal } from './Modal';
-import './onboarding-dialog.css';
+import './identity-form.css';
 
-interface OnboardingDialogProps {
-  open: boolean;
-  onClose: () => void;
+export interface IdentityFormHandle {
+  /** Persist unsaved fields synchronously before the sibling Discord link leaves. */
+  saveBeforeBind(): void;
+}
+
+interface IdentityFormProps {
   me: User;
   onSaved: (user: User) => void;
 }
@@ -59,12 +60,7 @@ function initialChoice(me: User): Choice {
   return 'participant';
 }
 
-export function OnboardingDialog({
-  open,
-  onClose,
-  me,
-  onSaved,
-}: OnboardingDialogProps): JSX.Element {
+export const IdentityForm = forwardRef<IdentityFormHandle, IdentityFormProps>(function IdentityForm({ me, onSaved }, ref) {
   // The effective name equals the OAuth name until the user picks a custom one.
   const usingOauthName = me.username === me.oauth_username;
   // Judges are appointed by an admin (the API refuses a self-grant); someone
@@ -82,6 +78,12 @@ export function OnboardingDialog({
   const [choice, setChoice] = useState<Choice>(() => restored?.value.choice ?? initialChoice(me));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const active = useRef(true);
+  const owner = useRef(me.id); owner.current = me.id;
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
 
   // Only at the moment of leaving for Discord (spec §4.4 #2) — no request, the
   // jump is not held up. If storage refuses, the choice is lost as it was before.
@@ -90,11 +92,7 @@ export function OnboardingDialog({
     writeDraft('onboarding', undefined, value);
   };
 
-  // 稍后再说 / Esc / ✕: no leave confirm here (p8-app closes it with Esc), the draft just goes.
-  const dismiss = (): void => {
-    clearDraft('onboarding');
-    onClose();
-  };
+  useImperativeHandle(ref, () => ({ saveBeforeBind }), [choice, useNanako, customName]);
 
   const handleSave = async (): Promise<void> => {
     setError(null);
@@ -104,28 +102,32 @@ export function OnboardingDialog({
       return;
     }
     setSaving(true);
+    const id = me.id;
+    const stillCurrent = (): boolean => active.current && owner.current === id;
     const roles = {
       is_participant: choice === 'participant' || choice === 'both',
       is_judge: choice === 'judge' || choice === 'both',
     };
     try {
       await updateDisplayName(displayName);
+      if (!stillCurrent()) return;
       const { user } = await updateRoles(roles);
+      if (!stillCurrent()) return;
       clearDraft('onboarding');
       onSaved(user);
-      onClose();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '保存失败，请稍后重试');
-      setSaving(false);
+      if (stillCurrent()) setError(err instanceof ApiError ? err.message : '保存失败，请稍后重试');
+    } finally {
+      if (stillCurrent()) setSaving(false);
     }
   };
 
   return (
-    <Modal open={open} onClose={dismiss} labelledBy="onboarding-title" size="md" historyKey="onboarding">
+    <div className="identity-form">
       <span className="ob__eyebrow eyebrow">欢迎，{me.oauth_username}</span>
-      <h2 id="onboarding-title" className="ob__title">
+      <h3 className="ob__title">
         设置你的显示名字与身份
-      </h2>
+      </h3>
       <p className="ob__subtitle">随时可以在头像菜单里修改。</p>
 
       <div className="ob__section">
@@ -137,7 +139,6 @@ export function OnboardingDialog({
             aria-checked={useNanako}
             className={`ob__name-opt${useNanako ? ' ob__name-opt--active' : ''}`}
             onClick={() => setUseNanako(true)}
-            data-autofocus
           >
             <span className="ob__name-opt-title">用 Nanako 名字</span>
             <span className="ob__name-opt-hint">{me.oauth_username}</span>
@@ -198,9 +199,6 @@ export function OnboardingDialog({
         </p>
       )}
 
-      {/* Renders nothing on a backend without Discord support. */}
-      <DiscordLinkCard onBeforeBind={saveBeforeBind} />
-
       {error && (
         <p className="ob__error" role="alert">
           {error}
@@ -208,13 +206,10 @@ export function OnboardingDialog({
       )}
 
       <div className="ob__actions">
-        <button type="button" className="btn btn--ghost" onClick={dismiss}>
-          稍后再说
-        </button>
         <button type="button" className="btn btn--gold" onClick={handleSave} disabled={saving}>
           {saving ? '保存中…' : '确认'}
         </button>
       </div>
-    </Modal>
+    </div>
   );
-}
+});

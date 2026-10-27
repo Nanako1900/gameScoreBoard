@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App';
 import { ApiError, DISCORD_LINK_URL, getDiscordLink, setDiscordNotify } from '../../src/api';
 import { DiscordLinkCard } from '../../src/components/DiscordLinkCard';
-import { OnboardingDialog } from '../../src/components/OnboardingDialog';
+import { WelcomePage } from '../../src/components/WelcomePage';
+import { ToastProvider } from '../../src/components/Toast';
 import type { User } from '../../src/types';
 
 interface Call {
@@ -51,7 +52,7 @@ async function settle(): Promise<void> {
   });
 }
 
-const BOUND = { link: { discord_username: 'nanako_edg', linked_at: '2026-10-20 12:00:00' } };
+const BOUND = { link: { discord_username: 'nanako_edg', linked_at: '2026-10-20 12:00:00', notify_dm: true, dm_ok: true } };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -159,7 +160,7 @@ describe('DiscordLinkCard', () => {
   });
 });
 
-describe('OnboardingDialog hosts the card', () => {
+describe('WelcomePage hosts the card', () => {
   const me: User = {
     id: 'u1',
     username: 'Nanako',
@@ -172,31 +173,20 @@ describe('OnboardingDialog hosts the card', () => {
     created_at: '2026-10-01 00:00:00',
   };
 
-  function renderDialog(): void {
-    render(<OnboardingDialog open onClose={() => {}} me={me} onSaved={() => {}} />);
-  }
-
-  it('offers binding inside the dialog where the user edits their own account', async () => {
-    mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
-    renderDialog();
-
-    const dialog = screen.getByRole('dialog');
-    const link = await within(dialog).findByRole('link', { name: '绑定 Discord' });
+  it('offers binding in the welcome page beside the editable account fields', () => {
+    render(<ToastProvider><WelcomePage me={me} discord={{ value: null, loading: false }}
+      onDiscordChanged={() => {}} onSaved={() => {}} onComplete={() => {}} /></ToastProvider>);
+    const link = screen.getByRole('link', { name: '绑定 Discord' });
     expect(link).toHaveAttribute('href', DISCORD_LINK_URL);
-    // Leaving the page drops the dialog's unsaved fields; the card says so.
-    expect(within(dialog).getByText(/还没「确认」的修改不会保存/)).toBeInTheDocument();
+    expect(screen.getByText(/还没「确认」的修改不会保存/)).toBeInTheDocument();
   });
 
-  it('leaves the dialog as it was on a backend without Discord support', async () => {
-    const calls = mockFetch({ 'GET /api/me/discord': () => json(404, { error: 'Not found' }) });
-    renderDialog();
-
-    await waitFor(() => expect(calls).toHaveLength(1));
-    await settle();
-
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).queryByRole('heading', { name: 'Discord 账号' })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: '确认' })).toBeInTheDocument();
+  it('hides unsupported Discord controls while keeping identity editable', async () => {
+    render(<ToastProvider><WelcomePage me={me} discord={{ value: undefined, loading: false }}
+      onDiscordChanged={() => {}} onSaved={() => {}} onComplete={() => {}} /></ToastProvider>);
+    expect(screen.queryByRole('heading', { name: 'Discord 账号' })).not.toBeInTheDocument();
+    await userEvent.setup().click(within(screen.getByTestId('welcome-step-4')).getByRole('button'));
+    expect(screen.getByRole('button', { name: '确认' })).toBeInTheDocument();
   });
 });
 
@@ -222,15 +212,15 @@ describe('App — ?linked=discord', () => {
     window.history.replaceState(null, '', '/');
   });
 
-  it('confirms the bind once and strips only its own parameter from the URL', async () => {
+  it('confirms the bind on welcome and consumes both entry parameters from the URL', async () => {
     const user = userEvent.setup();
     mockFetch(appRoutes);
     window.history.replaceState(null, '', '/?linked=discord&onboarding=1');
     render(<App />);
 
     expect(await screen.findByText('Discord 绑定成功')).toBeInTheDocument();
-    // ?onboarding=1 is someone else's to consume (and needs a signed-in user).
-    expect(window.location.search).toBe('?onboarding=1');
+    expect(window.location.pathname).toBe('/welcome');
+    expect(window.location.search).toBe('');
 
     await user.click(screen.getByRole('button', { name: '关闭提示' }));
     expect(screen.queryByText('Discord 绑定成功')).not.toBeInTheDocument();
@@ -266,16 +256,19 @@ describe('App — ?linked=discord', () => {
     mockFetch(signedIn({ is_participant: false, is_judge: false }));
     window.history.replaceState(null, '', '/?linked=discord');
     render(<App />);
+    expect(await screen.findByRole('heading', { name: '入户' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: '设置你的显示名字与身份' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('welcome-step-4')).getByRole('button', { expanded: true })).toBeInTheDocument();
   });
 
-  it('does not bother someone who already chose a role', async () => {
+  it('opens the guide step for someone whose account is already complete', async () => {
     mockFetch(signedIn({ is_participant: true, is_judge: false }));
     window.history.replaceState(null, '', '/?linked=discord');
     render(<App />);
     expect(await screen.findByText('Discord 绑定成功')).toBeInTheDocument();
     await settle();
-    expect(screen.queryByRole('heading', { name: '设置你的显示名字与身份' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '完成，去首页' })).toBeEnabled();
+    expect(within(screen.getByTestId('welcome-step-5')).getByRole('button', { expanded: true })).toBeInTheDocument();
   });
 });
 

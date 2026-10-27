@@ -22,9 +22,12 @@ interface EntryTargetInput {
   /** The core data is in. */
   readonly ready: boolean;
   readonly me: User | null;
-  /** Read when the target is about to open: the first-run dialog goes first (contract 补充). */
+  /** Read when the target is about to open: the welcome page goes first (contract 补充). */
   readonly blocked: () => boolean;
   readonly onPinned: (pinned: PinnedCase) => void;
+  readonly welcomeEntry?: boolean;
+  readonly welcomeReturnTo?: string;
+  readonly entryLocation?: { pathname: string; search: string };
 }
 
 interface EntryTargetResult {
@@ -37,8 +40,8 @@ interface EntryTargetResult {
 const ENTRY_PARAMS = ['case', 'session', 'linked', 'onboarding'];
 const NOT_FOUND_STATUS = 404;
 
-function readEntryTarget(): EntryTarget | null {
-  const { pathname, search } = window.location;
+function readEntryTarget(entryLocation: { pathname: string; search: string } = window.location): EntryTarget | null {
+  const { pathname, search } = entryLocation;
   if (pathname !== HOME_PATH) return null;
   const link = readDeepLink(search);
   if (link !== null) return { kind: 'case', caseId: link.id, rest: withoutParams(search, ENTRY_PARAMS) };
@@ -55,11 +58,11 @@ function stripEntryParams(): void {
   navigate(HOME_PATH + withoutParams(search, names), { replace: true });
 }
 
-export function useEntryTarget({ ready, me, blocked, onPinned }: EntryTargetInput): EntryTargetResult {
+export function useEntryTarget({ ready, me, blocked, onPinned, welcomeEntry = false, welcomeReturnTo, entryLocation }: EntryTargetInput): EntryTargetResult {
   // P1-3: edg.return, the second source of an entry target (contract 4.11).
-  useLoginResume({ ready, me, isBlocked: blocked });
+  useLoginResume({ ready, me, isBlocked: blocked, ignoreWelcomeReturn: welcomeEntry, fallbackReturn: welcomeReturnTo, entryLocation });
   const toast = useToast();
-  const [target] = useState(readEntryTarget);
+  const [target] = useState(() => readEntryTarget(entryLocation));
   const opened = useRef(false);
   const [linkMissing, setLinkMissing] = useState<string | null>(null);
   // Set together with onPinned: navigating from an effect after that commit means the

@@ -49,8 +49,11 @@ function fakeDiscord(failEditIn?: (channelId: string) => unknown) {
 
 const dispatcher = (api: ChannelApi, verdictChannelId: string | null = null) =>
   createDispatcher({ pool, db: env.DB, api, config: { verdictChannelId, frontendUrl: FRONTEND, offsetHours: OFFSET_HOURS }, log: quiet });
-const bind = (userId: string, who: { id: string; username: string }) =>
-  linkAccounts(env.DB, { userId, discordUserId: who.id, discordUsername: who.username, replace: false, via: 'web' });
+async function bind(userId: string, who: { id: string; username: string }): Promise<void> {
+  await linkAccounts(env.DB, { userId, discordUserId: who.id, discordUsername: who.username, replace: false, via: 'web' });
+  // This suite exercises case DMs; automatic welcomes have their own suite.
+  await pool.query("DELETE FROM outbox WHERE kind = 'dm.welcome' AND entity_id = $1", [userId]);
+}
 const dueNow = () => pool.query('UPDATE outbox SET available_at = now() WHERE processed_at IS NULL');
 
 async function cast(): Promise<{ judge: User; subject: User }> {

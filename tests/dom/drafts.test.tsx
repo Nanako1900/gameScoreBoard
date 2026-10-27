@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CaseDialog } from '../../src/components/CaseDialog';
 import { DraftNote } from '../../src/components/DraftNote';
-import { OnboardingDialog } from '../../src/components/OnboardingDialog';
+import { createRef } from 'react';
+import { IdentityForm, type IdentityFormHandle } from '../../src/components/IdentityForm';
+import { DiscordLinkCard } from '../../src/components/DiscordLinkCard';
 import { StatementDialog } from '../../src/components/StatementDialog';
 import { clearAllDrafts, draftKey, readDraft, writeDraft } from '../../src/lib/drafts';
 import { isBlankText, validateStatementDraft } from '../../src/lib/draftShapes';
@@ -333,7 +335,13 @@ describe('CaseDialog — draft', () => {
   });
 });
 
-describe('OnboardingDialog — the choice survives binding Discord (M21)', () => {
+function IdentityBindHarness({ me, onSaved = () => {} }: { me: User; onSaved?: (user: User) => void }): JSX.Element {
+  const identity = createRef<IdentityFormHandle>();
+  return <><DiscordLinkCard onBeforeBind={() => identity.current?.saveBeforeBind()} />
+    <IdentityForm ref={identity} me={me} onSaved={onSaved} /></>;
+}
+
+describe('IdentityForm — the choice survives binding Discord (M21)', () => {
   const NEWCOMER: User = {
     id: 'u1',
     username: 'Nanako',
@@ -361,7 +369,7 @@ describe('OnboardingDialog — the choice survives binding Discord (M21)', () =>
   it('keeps the unsaved choice across the round trip, with no extra request', async () => {
     const calls = mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
     const user = userEvent.setup();
-    const { unmount } = render(<OnboardingDialog open onClose={() => {}} me={NEWCOMER} onSaved={() => {}} />);
+    const { unmount } = render(<IdentityBindHarness me={NEWCOMER} onSaved={() => {}} />);
 
     await user.click(screen.getByRole('radio', { name: /^裁判/ }));
     await followBindLink(user);
@@ -370,30 +378,32 @@ describe('OnboardingDialog — the choice survives binding Discord (M21)', () =>
     expect(localStorage.getItem('edg.draft.onboarding')).toBeNull();
     unmount();
 
-    // Back from Discord: a full page load mounts the dialog afresh.
+    // Back from Discord: a full page load mounts the form afresh.
     mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
-    render(<OnboardingDialog open onClose={() => {}} me={NEWCOMER} onSaved={() => {}} />);
+    render(<IdentityBindHarness me={NEWCOMER} onSaved={() => {}} />);
     expect(screen.getByRole('radio', { name: /^裁判/ })).toHaveAttribute('aria-checked', 'true');
     await screen.findByRole('link', { name: '绑定 Discord' }); // the card has settled: no stray act() warning
   });
 
-  it('drops the draft on 稍后再说', async () => {
-    mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
+  it('drops the restored draft only after a successful save', async () => {
+    mockFetch({
+      'GET /api/me/discord': () => json(200, { link: null }),
+      'POST /api/me/display-name': () => json(200, { user: NEWCOMER }),
+      'POST /api/me/roles': () => json(200, { user: { ...NEWCOMER, is_judge: true } }),
+    });
     writeDraft('onboarding', undefined, { choice: 'judge', useNanako: true, customName: '' });
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    render(<OnboardingDialog open onClose={onClose} me={NEWCOMER} onSaved={() => {}} />);
+    const onSaved = vi.fn();
+    render(<IdentityBindHarness me={NEWCOMER} onSaved={onSaved} />);
     await screen.findByRole('link', { name: '绑定 Discord' });
-
-    await user.click(screen.getByRole('button', { name: '稍后再说' }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await userEvent.setup().click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
     expect(sessionStorage.getItem('edg.draft.onboarding')).toBeNull();
   });
 
   it('never pre-picks a judge role for someone who is not one', async () => {
     mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
     writeDraft('onboarding', undefined, { choice: 'both', useNanako: true, customName: '' });
-    render(<OnboardingDialog open onClose={() => {}} me={{ ...NEWCOMER, is_admin: false }} onSaved={() => {}} />);
+    render(<IdentityBindHarness me={{ ...NEWCOMER, is_admin: false }} onSaved={() => {}} />);
     expect(screen.getByRole('radio', { name: /上榜选手/ })).toHaveAttribute('aria-checked', 'true');
     expect(sessionStorage.getItem('edg.draft.onboarding')).toBeNull();
     await screen.findByRole('link', { name: '绑定 Discord' });

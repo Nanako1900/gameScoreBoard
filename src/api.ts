@@ -313,3 +313,8 @@ export async function setDiscordNotify(on: boolean): Promise<DiscordLinkInfo | u
     throw err;
   }
 }
+
+/** Queue another private welcome guide; the server limits manual retries. */
+export async function resendWelcome(): Promise<{ ok: true }> {
+  return post<{ ok: true }>('/api/me/discord/welcome');
+}

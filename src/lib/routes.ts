@@ -13,6 +13,8 @@ export type BoardTab = (typeof BOARD_TABS)[number];
 
 export type Route =
   | { readonly name: 'home' }
+  | { readonly name: 'welcome' }
+  | { readonly name: 'guide' }
   | { readonly name: 'sessionGone' }
   | { readonly name: 'player'; readonly userId: string }
   | { readonly name: 'playerCase'; readonly userId: string; readonly caseId: number }
@@ -39,6 +41,8 @@ export interface EdgHistoryState {
 }
 
 export const HOME_PATH = '/';
+export const WELCOME_PATH = '/welcome';
+export const GUIDE_PATH = '/guide';
 export const RESERVED_PREFIXES = ['/api', '/auth', '/link'] as const;
 
 const HOME: Route = { name: 'home' };
@@ -93,6 +97,8 @@ function idRoute(raw: string): Route {
 
 function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
+  if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
+  if (segments.length === 1 && head === 'guide') return { name: 'guide' };
   if (head === 'sessions') return { name: 'sessionGone' };
   if (segments.length === 2 && head === 'cases') return idRoute(first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
@@ -134,6 +140,10 @@ export function formatRoute(route: LinkableRoute): string {
   switch (route.name) {
     case 'home':
       return HOME_PATH;
+    case 'welcome':
+      return WELCOME_PATH;
+    case 'guide':
+      return GUIDE_PATH;
     case 'sessionGone':
       return '/sessions';
     case 'player':
@@ -152,6 +162,8 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
   switch (route.name) {
     case 'home':
       return false;
+    case 'welcome':
+    case 'guide':
     case 'notFound':
     case 'sessionGone':
     case 'case':

@@ -1,0 +1,8 @@
+.guide-content { display: grid; gap: 0.85rem; line-height: 1.7; }
+.guide-content h3 { font-size: var(--text-base); }
+.guide-content__commands { display: grid; gap: 0.65rem; margin: 0; }
+.guide-content__commands > div { display: grid; grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr); gap: 0.75rem; }
+.guide-content__commands dt { font-weight: 600; }
+.guide-content__commands dd { margin: 0; color: var(--muted); }
+.guide-content ul { margin: 0; padding-left: 1.3rem; }
+.guide-content li + li { margin-top: 0.5rem; }

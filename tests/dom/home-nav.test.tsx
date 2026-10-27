@@ -60,21 +60,24 @@ describe('the shared account menu', () => {
   it('closes on Escape and restores the toggle, or on an outside mouse press', async () => {
     render(<AccountMenu me={ME} myPath="/players/me" onOpenOnboarding={vi.fn()} onLogout={vi.fn()} />);
     const user = userEvent.setup(); const toggle = screen.getByRole('button', { name: '小明' });
-    await user.click(toggle); screen.getByRole('button', { name: '编辑身份' }).focus();
+    await user.click(toggle); screen.getByRole('link', { name: '编辑身份' }).focus();
     await user.keyboard('{Escape}'); expect(toggle).toHaveFocus(); expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle); fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('group', { name: '账户菜单' })).not.toBeInTheDocument();
   });
-  it('runs the existing onboarding, record, admin and logout callbacks and closes each time', async () => {
+  it('links identity and Discord to welcome and runs the record, admin and logout callbacks', async () => {
     const onboarding = vi.fn(), record = vi.fn(), admin = vi.fn(), logout = vi.fn();
     render(<AccountMenu me={{ ...ME, is_admin: true }} myPath="/players/me" onOpenOnboarding={onboarding}
       onRecord={record} onOpenAdmin={admin} onLogout={logout} />);
     const user = userEvent.setup();
     for (const label of ['编辑身份', '通知与 Discord', '记一笔', '管理', '退出登录']) {
-      await user.click(screen.getByRole('button', { name: '小明' })); await user.click(screen.getByRole('button', { name: label }));
+      await user.click(screen.getByRole('button', { name: '小明' }));
+      const action = screen.getByRole(label === '编辑身份' || label === '通知与 Discord' ? 'link' : 'button', { name: label });
+      if (action.tagName === 'A') expect(action).toHaveAttribute('href', '/welcome');
+      await user.click(action);
       expect(screen.queryByRole('group', { name: '账户菜单' })).not.toBeInTheDocument();
     }
-    expect(onboarding).toHaveBeenCalledTimes(2); expect(record).toHaveBeenCalledOnce();
+    expect(onboarding).not.toHaveBeenCalled(); expect(record).toHaveBeenCalledOnce();
     expect(admin).toHaveBeenCalledOnce(); expect(logout).toHaveBeenCalledOnce();
   });
 });

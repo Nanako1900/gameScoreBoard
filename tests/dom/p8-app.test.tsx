@@ -7,7 +7,7 @@ import { RecordsFeed } from '../../src/components/RecordsFeed';
 import { WeeklyReportCard } from '../../src/components/WeeklyReportCard';
 import type { RecordItem, User, WeeklyReport } from '../../src/types';
 
-// P8 in the app, at its edges: links into the app, the first-run dialog, an
+// P8 in the app, at its edges: links into the app, the welcome page, an
 // old weekly report, the feed's escalation chip.
 
 interface Call {
@@ -129,16 +129,24 @@ describe('links into the app', () => {
     expect(window.location.pathname).toBe('/players/p/cases/7');
   });
 
-  it('waits for the first-run dialog, then opens the case', async () => {
-    mockFetch(base(NEWBIE));
+  it('waits for the welcome page, then opens the case', async () => {
+    let me = NEWBIE;
+    mockFetch({ ...base(NEWBIE),
+      'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
+      'GET /api/me/discord': () => json(200, { link: { discord_username: 'own', linked_at: '', notify_dm: true, dm_ok: true } }),
+      'POST /api/me/display-name': () => json(200, { ok: true }),
+      'POST /api/me/roles': () => { me = { ...me, is_participant: true }; return json(200, { user: me }); },
+    });
     window.history.replaceState(null, '', '/?onboarding=1&case=7');
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByRole('radiogroup', { name: '选择身份' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '入户' })).toBeInTheDocument();
     await settle();
     await settle();
     expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
-    await user.keyboard('{Escape}');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /机器人怎么用/ })).toHaveAttribute('aria-expanded', 'true'));
+    await user.click(screen.getByRole('button', { name: '完成，去首页' }));
     expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/players/p/cases/7');
   });

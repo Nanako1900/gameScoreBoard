@@ -1,7 +1,6 @@
 .ob__title {
-  font-size: var(--text-h1);
+  font-size: var(--text-h2);
   margin-top: 0.35rem;
-  padding-right: 2rem;
 }
 
 .ob__subtitle {

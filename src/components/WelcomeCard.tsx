@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LoginLink } from './LoginLink';
+import { WELCOME_PATH } from '../lib/routes';
 import { Link } from './Link';
 import './welcome-card.css';
 
@@ -68,9 +68,7 @@ export function WelcomeCard({
         放鸽子会被记一笔，每周一 0 点自动回血 <span className="tabular">+{weeklyHeal}</span>。
       </p>
       <div className="welcome__actions">
-        <LoginLink className="btn btn--gold" href={loginUrl}>
-          用 Nanako 账号登录
-        </LoginLink>
+        <Link className="btn btn--gold" to={WELCOME_PATH}>开始</Link>
         {rulesTo ? <Link to={rulesTo} className="welcome__rules">30 秒看懂 <span aria-hidden="true">›</span></Link> : <button type="button" className="welcome__rules" onClick={onShowRules}>
           30 秒看懂 <span aria-hidden="true">›</span>
         </button>}

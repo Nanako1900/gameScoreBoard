@@ -116,6 +116,9 @@ describe('public documentation after sessions retire', () => {
     expect(names).toEqual(COMMANDS.map((command) => command.name));
     expect(deploy).toContain(`registered ${COMMANDS.length} slash commands`);
     expect(deploy).not.toContain('DISCORD_SESSION_CHANNEL_ID');
+    expect(deploy).toContain('`dm.welcome`');
+    expect(deploy).toContain('`shared/guide.ts`');
+    expect(deploy).toContain('`0009_welcome.sql`');
   });
 
   it('no longer advertises website scheduling and roll call in the README', () => {
@@ -125,5 +128,57 @@ describe('public documentation after sessions retire', () => {
     expect(readme).not.toContain('一键点名');
     expect(readme).not.toContain('SESSION_ORGANIZER_CAN_FILE');
     expect(readme).toContain(`| 其他任何路径 | 页面 | 「这页不存在」，附「${BACK_HOME}」 |`);
+  });
+});
+
+
+// S2: document the new entry flow and its existing-backend compatibility rules.
+describe('welcome and guide documentation', () => {
+  it('documents welcome and guide as full pages with server-derived completion', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    for (const route of ['/welcome', '/guide']) {
+      const row = contract.split('\n').find((line) => line.startsWith(`  | \`${route}\` |`));
+      expect(row, `${route} route is missing from the contract table`).toBeDefined();
+      expect(row).toContain('full page');
+      expect(row).toContain('same full page');
+    }
+    expect(contract).toContain('notify_dm');
+    expect(contract).toContain('dm_ok');
+    expect(contract).toContain('404 never marks steps 2 or 3 complete');
+    expect(contract).not.toContain('S1 retains `OnboardingDialog`');
+  });
+
+  it('documents the Node-only welcome retry endpoint and its rolling quota', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const start = contract.indexOf('- `POST /api/me/discord/welcome`');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const endpoint = contract.slice(start).split('\n\n')[0];
+    for (const status of ['401', '409', '429', '503']) expect(endpoint).toContain(status);
+    expect(endpoint).toContain('24 hours');
+    expect(endpoint).toContain('3 manual');
+    expect(endpoint).toContain('{ ok: true }');
+    expect(contract).toContain('Node-only');
+  });
+
+  it('documents deferred entry targets without retaining the first-login dialog', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    expect(contract).toContain('`edg.welcome.return`');
+    expect(contract).toContain('30 minutes');
+    expect(contract).toContain('完成，去首页');
+    expect(contract).toMatch(/`\?onboarding=1`[\s\S]{0,150}`\/welcome`/);
+    expect(contract).toMatch(/`\?linked=discord`[\s\S]{0,150}`\/welcome`/);
+    expect(contract).not.toContain('after the first-login dialog');
+    expect(contract).not.toContain('dialog first; the case target');
+    expect(readme).not.toContain('S1 继续使用现有身份弹窗');
+    expect(readme).not.toContain('继续打开现有首登弹窗');
+  });
+
+  it('documents account-specific onboarding notice dismissal separately from completion', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    expect(contract).toContain('`edg.todo.onboarding-dismissed`');
+    expect(contract).toContain('7 days');
+    expect(contract).toContain('step IDs');
+    expect(contract).toMatch(/onboarding card[^\n]*badge[^\n]*dot/);
   });
 });

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TodoInbox } from '../../src/components/TodoInbox';
 import { App } from '../../src/App';
 import { useTodoSources } from '../../src/lib/useTodoSources';
-import { clearTodoMarks, dismissUnbound, readUnboundDismissed, UNBOUND_DISMISSED_KEY } from '../../src/lib/todoMarks';
+import { clearTodoMarks, dismissOnboarding, readOnboardingDismissed, ONBOARDING_DISMISSED_KEY } from '../../src/lib/todoMarks';
 import { writeDraft } from '../../src/lib/drafts';
 import type { TodoItem } from '../../src/lib/todo';
 import type { RecordItem, User } from '../../src/types';
@@ -23,7 +23,7 @@ function mock(reply: (path: string, init?: RequestInit) => Response) {
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(reply(String(input), init))); vi.stubGlobal('fetch', fetch); return fetch;
 }
 function show(items: TodoItem[] | null) {
-  const callbacks = { onOpenStatement: vi.fn(), onOpenNotify: vi.fn(), onDismissUnbound: vi.fn() };
+  const callbacks = { onOpenStatement: vi.fn(), onOpenNotify: vi.fn(), onDismissUnbound: vi.fn(), onDismissOnboarding: vi.fn() };
   render(<TodoInbox items={items} now={NOW} {...callbacks} />); return callbacks;
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -47,22 +47,31 @@ describe('todo inbox', () => {
     expect(screen.getByRole('link', { name: '去看看 ›' })).toHaveAttribute('href', '/players/a%2Fb/cases/7');
     expect(screen.getByRole('link', { name: '去审理 ›' })).toHaveAttribute('href', '/players/a%2Fb/cases/7');
   });
-  it('opens existing settings for both delivery and binding cards', async () => {
-    const callbacks = show([{ key: 'dm-broken', kind: 'dm-broken' }, { key: 'unbound', kind: 'unbound' }]); const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '去设置 ›' })); await user.click(screen.getByRole('button', { name: '去绑定 ›' }));
-    expect(callbacks.onOpenNotify).toHaveBeenCalledTimes(2);
+  it('links the onboarding card to welcome and leaves it out of the badge', () => {
+    show([{ key: 'onboarding', kind: 'onboarding', missing: [2, 3] }]);
+    expect(screen.getByText('还差 2 步完成入户')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '继续' })).toHaveAttribute('href', '/welcome');
+    expect(screen.getByRole('heading', { name: '要你处理' })).toBeInTheDocument();
+    expect(screen.queryByText('还没绑定 Discord')).not.toBeInTheDocument();
   });
-  it('lets unbound notices be dismissed without adding to the badge', async () => {
-    const callbacks = show([{ key: 'unbound', kind: 'unbound' }]);
-    expect(screen.getByRole('heading', { name: '要你处理 · 0' })).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: '不再提示' }));
-    expect(callbacks.onDismissUnbound).toHaveBeenCalledTimes(1);
+  it('offers a seven-day dismissal for the onboarding reminder', async () => {
+    const callbacks = show([{ key: 'onboarding', kind: 'onboarding', missing: [3] }]);
+    await userEvent.setup().click(screen.getByRole('button', { name: '7 天内不再提示' }));
+    expect(callbacks.onDismissOnboarding).toHaveBeenCalledTimes(1);
   });
   it('moves focus to the heading when an item disappears after a refresh', () => {
-    const props = { now: NOW, onOpenStatement: vi.fn(), onOpenNotify: vi.fn(), onDismissUnbound: vi.fn() };
+    const props = { now: NOW, onOpenStatement: vi.fn(), onOpenNotify: vi.fn(), onDismissUnbound: vi.fn(), onDismissOnboarding: vi.fn() };
     const view = render(<TodoInbox {...props} items={[{ kind: 'statement', key: 'statement:7', record: record(), urgent: true }]} />);
     view.rerender(<TodoInbox {...props} items={[]} />);
     expect(screen.getByRole('heading', { name: '要你处理' })).toHaveFocus();
+  });
+  it('does not take focus from the current page when the hidden home loses a todo', () => {
+    const props = { now: NOW, onOpenStatement: vi.fn(), onOpenNotify: vi.fn(), onDismissUnbound: vi.fn() };
+    const page = (items: TodoItem[]) => <><button type="button">当前页面</button><div hidden><TodoInbox {...props} items={items} /></div></>;
+    const view = render(page([{ kind: 'onboarding', key: 'onboarding', missing: [3] }]));
+    screen.getByRole('button', { name: '当前页面' }).focus();
+    view.rerender(page([]));
+    expect(screen.getByRole('button', { name: '当前页面' })).toHaveFocus();
   });
   it('keeps appeal counts when the detailed list failed, without a review button', () => {
     show([{ key: 'appeals', kind: 'appeals', count: 3, earliest: null }]);
@@ -71,16 +80,24 @@ describe('todo inbox', () => {
   });
 });
 describe('todo marks', () => {
-  it('remembers unbound dismissal and clears it on logout', () => {
-    dismissUnbound(); expect(readUnboundDismissed()).toBe(true);
-    clearTodoMarks(); expect(readUnboundDismissed()).toBe(false);
+  it('remembers the account, time and missing IDs and clears old and new marks on logout', () => {
+    dismissOnboarding(ME.id, [2, 3], NOW);
+    expect(readOnboardingDismissed()).toEqual({ userId: ME.id, dismissedAt: NOW, missing: [2, 3] });
+    localStorage.setItem('edg.todo.unbound-dismissed', 'true'); clearTodoMarks();
+    expect(readOnboardingDismissed()).toBeNull();
+    expect(localStorage.getItem('edg.todo.unbound-dismissed')).toBeNull();
   });
-  it('treats broken storage values as empty and tolerates blocked storage', () => {
-    localStorage.setItem(UNBOUND_DISMISSED_KEY, '{'); expect(readUnboundDismissed()).toBe(false);
+  it.each(['{', 'true', '{}', JSON.stringify({ userId: ME.id, dismissedAt: 'yesterday', missing: [2] }),
+    JSON.stringify({ userId: ME.id, dismissedAt: NOW, missing: [9] }),
+    JSON.stringify({ userId: ME.id, dismissedAt: NOW, missing: [2, 2] })])('ignores damaged marks: %s', (raw) => {
+    localStorage.setItem(ONBOARDING_DISMISSED_KEY, raw); expect(readOnboardingDismissed()).toBeNull();
+  });
+  it('tolerates blocked storage', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
-    expect(readUnboundDismissed()).toBe(false); expect(() => { dismissUnbound(); clearTodoMarks(); }).not.toThrow();
+    expect(readOnboardingDismissed()).toBeNull();
+    expect(() => { dismissOnboarding(ME.id, [2], NOW); clearTodoMarks(); }).not.toThrow();
   });
 });
 describe('inbox supplemental sources', () => {
@@ -108,21 +125,41 @@ describe('inbox supplemental sources', () => {
 });
 
 describe('inbox and lobby integration', () => {
-  it('dismisses unbound notices persistently across a new App mount', async () => {
-    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true }); vi.setSystemTime(NOW);
+  function home(person: User, link: { notify_dm: boolean; dm_ok: boolean } | null): void {
     mock((path) => {
       if (path === '/api/config') return json(200, { violations: [], tiers: [], weeklyHeal: 5, statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2026-11-01T16:00:00Z' });
-      if (path === '/api/me') return json(200, { user: ME, pending: { statements: 0, appeals: 0 } });
-      if (path === '/api/me/discord') return json(200, { link: null });
+      if (path === '/api/me') return json(200, { user: person, pending: { statements: 0, appeals: 0 } });
+      if (path === '/api/me/discord') return json(200, { link });
       if (path === '/api/leaderboard') return json(200, { participants: [ME] });
       if (path.startsWith('/api/records')) return json(200, { records: [] });
       if (path === '/api/report/latest') return json(200, { report: null });
       return json(500, { error: 'unexpected' });
     });
+  }
+  it('dismisses onboarding hints for seven days, without changing server progress or adding a badge', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true }); vi.setSystemTime(NOW);
+    home(ME, null);
     const view = render(<App />); const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: '不再提示' }));
-    expect(readUnboundDismissed()).toBe(true); view.unmount();
+    await user.click(await screen.findByRole('button', { name: '7 天内不再提示' }));
+    expect(readOnboardingDismissed()).toEqual({ userId: ME.id, dismissedAt: NOW, missing: [2, 3] });
+    expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute('aria-current', 'page'); view.unmount();
     render(<App />); expect(await screen.findByText('没有待办，清清爽爽 ✨')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '知道了' })).not.toBeInTheDocument(); expect(screen.queryByRole('button', { name: '不再提示' })).not.toBeInTheDocument();
+    expect(screen.queryByText('还没绑定 Discord')).not.toBeInTheDocument(); expect(screen.queryByRole('button', { name: '7 天内不再提示' })).not.toBeInTheDocument();
   });
+  it('has no onboarding card or badge when all server steps are complete', async () => {
+    home(ME, { notify_dm: true, dm_ok: true }); render(<App />);
+    await screen.findByText('没有待办，清清爽爽 ✨');
+    expect(screen.queryByText(/还差 .* 步完成入户/)).not.toBeInTheDocument();
+    expect(screen.queryByText('还没绑定 Discord')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute('aria-current', 'page');
+  });
+  it('resurfaces for a newly missing step even when the displayed count is unchanged', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true }); vi.setSystemTime(NOW);
+    dismissOnboarding(ME.id, [2, 3], NOW);
+    home({ ...ME, is_participant: false }, { notify_dm: false, dm_ok: true }); render(<App />);
+    expect(await screen.findByText('还差 2 步完成入户')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '继续' })).toHaveAttribute('href', '/welcome');
+    expect(screen.getByRole('heading', { name: '要你处理' })).toBeInTheDocument();
+  });
+
 });

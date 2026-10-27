@@ -8,6 +8,9 @@ import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
 import { BoardPage, type BoardData } from './BoardPage';
+import { WelcomePage } from './WelcomePage';
+import { GuidePage } from './GuidePage';
+import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
 
@@ -23,6 +26,12 @@ interface RouteViewProps {
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
   board?: BoardData;
+  discordRead?: DiscordLinkRead;
+  onDiscordChanged?: (value: DiscordLinkValue) => void;
+  onMeUpdated?: (user: User) => void;
+  onWelcomeDone?: () => void;
+  onBeforeWelcomeBind?: () => void;
+  welcomeNotice?: React.ReactNode;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -121,6 +130,12 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return null;
     case 'notFound':
       return <RouteNotice layout="page" title={NOT_FOUND_TITLE} />;
+    case 'welcome':
+      return <PageShell><WelcomePage key={props.me?.id ?? 'guest'} me={props.me} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())}
+        onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} notice={props.welcomeNotice} /></PageShell>;
+    case 'guide':
+      return <PageShell><GuidePage /></PageShell>;
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':

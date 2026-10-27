@@ -7,6 +7,7 @@
 //   GET  /api/me/discord         the SPA's view of the caller's own binding
 //   POST /api/me/discord/unlink
 //   POST /api/me/discord/notify  {on} the caller's DM switch — the bot's /notify
+//   POST /api/me/discord/welcome retry the caller's private welcome guide
 //
 // Each side proves its own identity: Discord through its OAuth, Nanako through
 // the session cookie. Nothing is written until the user presses the button on
@@ -317,6 +318,23 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     if (!link) throw new ApiError(409, NOT_BOUND);
     c.header('Cache-Control', 'no-store');
     return c.json({ link: linkView(link) });
+  });
+
+  app.post('/api/me/discord/welcome', async (c) => {
+    if (isReadOnly(env)) throw new ApiError(503, READ_ONLY_MESSAGE);
+    const session = await readSession(c.req.raw);
+    if (!session) throw new ApiError(401, '未登录');
+    // PostgreSQL owns admission and enqueueing so parallel requests cannot
+    // spend the same remaining slot or reopen DMs without queueing the guide.
+    const result = await db.prepare('SELECT queue_welcome_resend(?, ?) AS outcome')
+      .bind(session.user.id, String(Date.now()))
+      .first<{ outcome: 'queued' | 'unbound' | 'off' | 'limited' }>();
+    if (result?.outcome === 'unbound') throw new ApiError(409, NOT_BOUND);
+    if (result?.outcome === 'off') throw new ApiError(409, '先打开私信通知');
+    if (result?.outcome === 'limited') throw new ApiError(429, '24 小时内已经重发 3 次，稍后再试');
+    if (result?.outcome !== 'queued') throw new Error('Unexpected welcome retry outcome');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ok: true });
   });
 
   // --- binding pages ----------------------------------------------------------

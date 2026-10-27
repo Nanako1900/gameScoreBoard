@@ -244,3 +244,12 @@ describe('retired session addresses', () => {
     expect(BOARD_TABS).toEqual(['list', 'feed', 'report', 'rules']);
   });
 });
+
+describe('welcome and guide pages', () => {
+  it.each(['welcome', 'guide'] as const)('parses and formats %s as a full page on every viewport', (name) => {
+    const route = { name };
+    expect(parseRoute(`/${name}`)).toEqual(route);
+    expect(formatRoute(route)).toBe(`/${name}`);
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+});
