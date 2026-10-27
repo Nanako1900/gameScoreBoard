@@ -381,11 +381,6 @@ h3 {
   .sessions__tab {
     min-height: 40px;
   }
-
-  .modal__close {
-    min-width: 44px;
-    min-height: 44px;
-  }
 }
 
 /* --- Forced colors (Windows high contrast) ---------------------------------
