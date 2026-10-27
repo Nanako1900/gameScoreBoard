@@ -7,9 +7,8 @@ import type {
   ViolationDef,
   ViolationType,
 } from '@shared/scoring';
-import type { Attendance, Rsvp, SelfRsvp, SessionStatus } from '@shared/attendance';
 
-export type { ViolationType, CaseStatus, VerdictSource, Attendance, Rsvp, SessionStatus };
+export type { ViolationType, CaseStatus, VerdictSource };
 
 /** Where a case's violation type came from. `derived` = roll-call, no AI. */
 export type ClassifiedBy = 'ai' | 'fallback' | 'human' | 'derived';
@@ -38,7 +37,7 @@ export interface PublicUser {
   created_at: string;
 }
 
-/** A subject/reporter/organizer reference embedded in a record or session. */
+/** A subject/reporter reference embedded in a record. */
 export interface UserRef {
   id: string;
   username: string;
@@ -107,98 +106,11 @@ export interface HistoryPoint {
   score: number;
 }
 
-// --- Invitable people (P2-2) -------------------------------------------------
-
-/** One row of GET /api/me/invitable: names and avatars only — never a score, never Discord. */
-export interface InvitableUser {
-  id: string;
-  username: string;
-  avatar_url: string | null;
-  is_participant: boolean;
-  /** When the caller last really played with them (ISO starts_at); null if never. */
-  last_played_with_me_at: string | null;
-}
-
-export interface InvitableResponse {
-  users: InvitableUser[];
-}
-
-// --- Sessions ---------------------------------------------------------------
-
-export interface SessionPlayer {
-  user: UserRef;
-  rsvp: Rsvp;
-  rsvp_at: string;
-  attendance: Attendance | null;
-  late_minutes: number | null;
-  attendance_note: string | null;
-  record_id: number | null;
-  is_participant: boolean;
-}
-
-export interface SessionItem {
-  id: number;
-  organizer: UserRef;
-  title: string;
-  game: string | null;
-  starts_at: string;
-  duration_min: number | null;
-  capacity: number | null;
-  note: string | null;
-  status: SessionStatus;
-  settled_at: string | null;
-  created_at: string;
-  counts: { invited: number; going: number; maybe: number; out: number };
-  my_rsvp: Rsvp | null;
-  /** P2-6: up to 5 who said 来, earliest answer first — names and avatars, never a score. Absent from an older API: show no avatars. */
-  going_preview?: UserRef[];
-  /** P2-3: the organizer's cancel reason (plain text). Absent from an older API: no reason. */
-  cancel_reason?: string | null;
-  /** P2-3: when it was cancelled (sqlite datetime shape). */
-  cancelled_at?: string | null;
-}
-
-export interface SessionDetail extends SessionItem {
-  players: SessionPlayer[];
-}
-
-// P2-3
-export type AttendanceSummary = Record<Attendance, number>;
-
-/** One row of GET /api/sessions?scope=history. */
-export interface HistorySessionItem extends SessionItem {
-  attendance_summary: AttendanceSummary;
-}
-
-export type InviteReason = 'new' | 'moved';
-
-/** One row of GET /api/me/invites. Missing fields (an older API) read as a new invitation. */
-export interface InvitedSessionItem extends SessionItem {
-  invite_reason?: InviteReason;
-  prev_rsvp?: SelfRsvp | null;
-  prev_starts_at?: string | null;
-}
-
-export interface InvitesResponse {
-  sessions: InvitedSessionItem[];
-}
-
-export interface CaseDraft {
-  user_id: string;
-  username: string;
-  type: ViolationType;
-  kind: 'penalty' | 'bonus';
-  range: SentencingRange;
-  suggested_claim: string;
-  already_filed: boolean;
-}
-
 /** GET /api/config response. */
 export interface Config {
   violations: ViolationDef[];
   tiers: Tier[];
   weeklyHeal: number;
-  weeklyBonusCap: number;
   statementWindowHours: number;
   aiEnabled: boolean;
   maxBatchSubjects: number;
@@ -233,35 +145,6 @@ export interface UserDetailResponse {
   history: HistoryPoint[];
 }
 
-export interface SessionsResponse {
-  sessions: SessionItem[];
-}
-
-export interface SessionDetailResponse {
-  session: SessionDetail;
-  records: RecordItem[];
-}
-
-export interface RollCallResponse {
-  session: SessionDetail;
-  drafts: CaseDraft[];
-}
-
-export interface SettleResponse {
-  session: SessionDetail;
-  created: number;
-  skipped: number;
-}
-
-/** POST /api/sessions/:id/invite (P2-1). */
-export interface InviteResponse {
-  session: SessionDetail;
-  /** People this request actually invited. */
-  added: number;
-  /** The other ids asked for: already in it, or unknown. */
-  skipped: number;
-}
-
 export interface RoleUpdate {
   is_participant?: boolean;
   is_judge?: boolean;
@@ -284,30 +167,6 @@ export interface BatchFailure {
 export interface FileCasesResponse {
   records: RecordItem[];
   failed: BatchFailure[];
-}
-
-/** v3: only `starts_at` is required; the title is synthesised server-side. */
-export interface NewSessionInput {
-  starts_at: string;
-  invite?: string[];
-  title?: string;
-  game?: string;
-  duration_min?: number;
-  capacity?: number;
-  note?: string;
-}
-
-export interface RollCallEntry {
-  user_id: string;
-  attendance: Attendance;
-  late_minutes?: number;
-  note?: string;
-}
-
-export interface SettleEntry {
-  user_id: string;
-  type?: ViolationType;
-  claim?: string;
 }
 
 // --- Admin AI config --------------------------------------------------------
@@ -347,23 +206,27 @@ export interface ReportStats {
   basis?: 'verdict';
   weekStart: string;
   weekEnd: string;
-  sessionsPlayed: number;
-  sessionsCollapsed: number;
   casesFiled: number;
   totalPenalty: number;
   absentVerdicts: number;
-  attendanceRate: number | null;
-  upcomingNextWeek: number;
   star: { name: string; delta: number } | null;
   pigeon: { name: string; delta: number } | null;
   bestTalker: { name: string; savedBy: number } | null;
   harshest: { name: string; delta: number } | null;
-  topOrganizer: { name: string; count: number } | null;
+}
+
+/** Optional figures from reports stored before S1; new reports omit them. */
+export interface StoredReportStats extends ReportStats {
+  sessionsPlayed?: number;
+  sessionsCollapsed?: number;
+  attendanceRate?: number | null;
+  upcomingNextWeek?: number;
+  topOrganizer?: { name: string; count: number } | null;
 }
 
 export interface WeeklyReport {
   week_start: string;
-  stats: ReportStats;
+  stats: StoredReportStats;
   narrative: string;
   source: 'ai' | 'fallback';
   created_at: string;

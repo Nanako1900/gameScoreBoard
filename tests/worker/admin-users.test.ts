@@ -17,13 +17,11 @@ import {
 } from '../../worker/db';
 import { ApiError } from '../../worker/errors';
 import { registerAdminRoutes } from '../../worker/routes-admin';
-import { createSession, getSessionDetail, setRsvp } from '../../worker/sessions';
 import type { AppEnv, User, UserRow } from '../../worker/types';
-import { OFFSET_HOURS, scoreEventCount, scoreOf, seedUser } from './helpers';
+import { scoreEventCount, scoreOf, seedUser } from './helpers';
 
 const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 const LONG_AGO = '2000-01-01 00:00:00';
-const FUTURE = new Date(Date.now() + 3 * 3_600_000).toISOString();
 const CLAIM = '说好八点五排，等到八点四十还没上线，微信也不回，最后四缺一散了。';
 
 // --- local fixtures ------------------------------------------------------------
@@ -68,13 +66,12 @@ async function backdate(id: string): Promise<void> {
 async function insertRecord(
   subjectId: string,
   reporterId: string,
-  sessionId: number | null = null,
 ): Promise<number> {
   const res = await env.DB.prepare(
-    `INSERT INTO records (subject_id, reporter_id, type, claim, session_id, status)
-     VALUES (?, ?, 'no_show', ?, ?, 'awaiting_statement')`,
+    `INSERT INTO records (subject_id, reporter_id, type, claim, status)
+     VALUES (?, ?, 'no_show', ?, 'awaiting_statement')`,
   )
-    .bind(subjectId, reporterId, CLAIM, sessionId)
+    .bind(subjectId, reporterId, CLAIM)
     .run();
   return Number(res.meta.last_row_id);
 }
@@ -93,23 +90,6 @@ async function insertEvent(userId: string, delta: number, reason: string, result
     'INSERT INTO score_events (user_id, delta, reason, resulting_score) VALUES (?, ?, ?, ?)',
   )
     .bind(userId, delta, reason, resulting)
-    .run();
-}
-
-async function insertSession(organizerId: string, title = '周五五排'): Promise<number> {
-  const res = await env.DB.prepare(
-    'INSERT INTO game_sessions (organizer_id, title, starts_at) VALUES (?, ?, ?)',
-  )
-    .bind(organizerId, title, FUTURE)
-    .run();
-  return Number(res.meta.last_row_id);
-}
-
-async function insertPlayer(sessionId: number, userId: string, recordId: number | null = null): Promise<void> {
-  await env.DB.prepare(
-    "INSERT INTO session_players (session_id, user_id, rsvp, record_id) VALUES (?, ?, 'going', ?)",
-  )
-    .bind(sessionId, userId, recordId)
     .run();
 }
 
@@ -422,10 +402,9 @@ describe('adminUpdateUser — score', () => {
 
 describe('adminUpdateUser — delete', () => {
   /**
-   * `victim` is wired into every table: subject and reporter of cases (with AI
-   * audit rows), score history, a seat in someone else's session, and a session
-   * of their own with other players in it. `a` and `b` have their own,
-   * unrelated data that must survive.
+   * `victim` is wired into case tables: subject and reporter of cases (with AI
+   * audit rows) and score history. `a` and `b` have their own, unrelated
+   * data that must survive.
    */
   async function wiredVictim() {
     await seedUser({ id: 'victim', judge: true, score: 70 });
@@ -444,24 +423,14 @@ describe('adminUpdateUser — delete', () => {
     await insertEvent('a', -10, 'admin_adjust', 90);
     await insertEvent('b', -20, `record:${unrelated}`, 80);
 
-    const victimsSession = await insertSession('victim', '受害者的局');
-    await insertPlayer(victimsSession, 'victim');
-    await insertPlayer(victimsSession, 'a');
-    await insertPlayer(victimsSession, 'b');
-
-    const othersSession = await insertSession('a', '别人的局');
-    await insertPlayer(othersSession, 'a');
-    await insertPlayer(othersSession, 'victim');
-    await insertPlayer(othersSession, 'b');
-
-    return { againstVictim, byVictim, unrelated, victimsSession, othersSession };
+    return { againstVictim, byVictim, unrelated };
   }
 
   it('removes the user and every row that references them', async () => {
     const ids = await wiredVictim();
 
     // D1 enforces FOREIGN KEYs, so this only succeeds because the batch deletes
-    // children (events, verdicts, records, seats, sessions) before the user row.
+    // children (events, verdicts, records) before the user row.
     await expect(adminUpdateUser(env.DB, 'victim', { delete: true })).resolves.toBeUndefined();
 
     expect(await getUserById(env.DB, 'victim')).toBeNull();
@@ -479,12 +448,6 @@ describe('adminUpdateUser — delete', () => {
         ids.againstVictim,
         ids.byVictim,
       ),
-    ).toBe(0);
-    expect(await count('SELECT COUNT(*) AS n FROM session_players WHERE user_id = ?', 'victim')).toBe(0);
-    expect(await count('SELECT COUNT(*) AS n FROM game_sessions WHERE organizer_id = ?', 'victim')).toBe(0);
-    // Other people's seats in the victim's own session go with it.
-    expect(
-      await count('SELECT COUNT(*) AS n FROM session_players WHERE session_id = ?', ids.victimsSession),
     ).toBe(0);
   });
 
@@ -509,37 +472,7 @@ describe('adminUpdateUser — delete', () => {
     expect(
       await count('SELECT COUNT(*) AS n FROM ai_verdicts WHERE record_id = ?', ids.unrelated),
     ).toBe(1);
-    // A session the victim merely joined survives, minus their seat.
-    const seats = await env.DB.prepare(
-      'SELECT user_id FROM session_players WHERE session_id = ? ORDER BY user_id',
-    )
-      .bind(ids.othersSession)
-      .all<{ user_id: string }>();
-    expect(seats.results.map((s) => s.user_id)).toEqual(['a', 'b']);
-    expect(await count('SELECT COUNT(*) AS n FROM game_sessions')).toBe(1);
     expect(await count('SELECT COUNT(*) AS n FROM users')).toBe(2);
-  });
-
-  it('frees the seat in a live session someone else organised', async () => {
-    const organizer = await seedUser({ id: 'org', judge: true });
-    const victim = await seedUser({ id: 'victim' });
-    const other = await seedUser({ id: 'other' });
-    const session = await createSession(env.DB, organizer, {
-      title: '周五五排',
-      starts_at: FUTURE,
-      capacity: 3,
-    }, OFFSET_HOURS);
-    await setRsvp(env.DB, victim, session.id, 'going');
-    await setRsvp(env.DB, other, session.id, 'maybe');
-    expect((await getSessionDetail(env.DB, session.id, organizer.id)).counts.going).toBe(2);
-
-    await adminUpdateUser(env.DB, 'victim', { delete: true });
-
-    const detail = await getSessionDetail(env.DB, session.id, organizer.id);
-    expect(detail.status).toBe('open');
-    expect(detail.counts.going).toBe(1);
-    expect(detail.counts.maybe).toBe(1);
-    expect(detail.players.map((p) => p.user.id).sort()).toEqual(['org', 'other']);
   });
 
   it('wins over every other field in the same patch', async () => {
@@ -583,19 +516,6 @@ describe('adminUpdateUser — delete', () => {
     'BUG: deleting a judge deletes the cases they filed against others (worker/db.ts:309) but ' +
       'keeps those players’ score changes and their `record:<id>` score_events, so a victim’s ' +
       'score/history no longer matches any visible record and the events point at a missing record',
-  );
-
-  it.todo(
-    'BUG: deleting an organizer deletes their game_sessions (worker/db.ts:316) but a case filed ' +
-      'from that session by someone else (an admin who settled it) survives with a dangling ' +
-      'records.session_id — a FK on records.session_id in the PG port would make the delete fail',
-  );
-
-  it.todo(
-    'BUG: deleting an admin who settled someone else’s session deletes the cases they filed ' +
-      '(worker/db.ts:309) but the players’ session_players.record_id in that surviving session ' +
-      'still points at the deleted record — getSessionDetail returns players[].record_id for a ' +
-      'case that no longer exists (and drafts would report already_filed)',
   );
 });
 

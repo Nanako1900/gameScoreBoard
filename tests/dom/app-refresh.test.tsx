@@ -76,7 +76,6 @@ function config(nextResetAt: string): unknown {
     violations: [],
     tiers: [],
     weeklyHeal: 5,
-    weeklyBonusCap: 5,
     statementWindowHours: 12,
     aiEnabled: false,
     maxBatchSubjects: 5,
@@ -91,7 +90,6 @@ function routes(overrides: Record<string, Route> = {}): Record<string, Route> {
     'GET /api/records?limit=50': () => json(200, { records: [] }),
     'GET /api/me': () => json(200, { user: null, pending: { statements: 0, appeals: 0 } }),
     'GET /api/report/latest': () => json(200, { report: null }),
-    'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
     ...overrides,
   };
 }
@@ -142,7 +140,7 @@ describe('App — the header countdown', () => {
 });
 
 describe('App — first load', () => {
-  it('signed out: requests exactly the URLs it always did', async () => {
+  it('signed out: requests only config, board, records, me and report', async () => {
     const calls = mockFetch(routes());
     render(<App />);
     await screen.findByRole('button', { name: ROW });
@@ -154,7 +152,6 @@ describe('App — first load', () => {
         'GET /api/records?limit=50',
         'GET /api/me',
         'GET /api/report/latest',
-        'GET /api/sessions?scope=upcoming',
       ]),
     );
   });
@@ -188,7 +185,6 @@ const REGENERATE = 'POST /api/admin/report/2026-10-19/regenerate';
 function adminRoutes(overrides: Record<string, Route> = {}): Record<string, Route> {
   return routes({
     'GET /api/me': () => json(200, { user: ADMIN, pending: { statements: 0, appeals: 0 } }),
-    'GET /api/me/invites': () => json(200, { sessions: [] }),
     'GET /api/report/latest': () => json(200, { report: REPORT }),
     ...overrides,
   });
@@ -226,7 +222,6 @@ describe('App — the admin re-rolls the weekly report', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '换个说法' })).toBeEnabled());
     expect(gets(calls, '/api/leaderboard')).toBe(1);
     expect(gets(calls, '/api/config')).toBe(1);
-    expect(gets(calls, '/api/sessions?scope=upcoming')).toBe(1);
   });
 
   it('a failed re-roll says so in a toast — never an alert — and the button comes back', async () => {
@@ -242,7 +237,7 @@ describe('App — the admin re-rolls the weekly report', () => {
 });
 
 describe('App — coming back to the tab', () => {
-  it('refetches after more than 60 s — board, feed, me and sessions, never config', async () => {
+  it('refetches after more than 60 s — board, feed and me, never config', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(START);
     const calls = mockFetch(routes());
@@ -258,7 +253,6 @@ describe('App — coming back to the tab', () => {
     vi.setSystemTime(START + MINUTE + 1_000);
     leaveAndReturn();
     await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
-    await waitFor(() => expect(gets(calls, '/api/sessions?scope=upcoming')).toBe(2));
     expect(gets(calls, '/api/records?limit=50')).toBe(2);
     expect(gets(calls, '/api/me')).toBe(2);
     expect(gets(calls, '/api/config')).toBe(1);
@@ -400,7 +394,6 @@ describe('App — tab title', () => {
         })) }),
         'GET /api/me/discord': () => json(404, { error: 'unsupported' }),
         'GET /api/records?limit=50&status=appealed': () => json(200, { records: [] }),
-        'GET /api/me/invites': () => json(200, { sessions: [] }),
       }),
     );
     const { unmount } = render(<App />);
@@ -413,10 +406,7 @@ describe('App — tab title', () => {
         '/api/records?limit=50',
         '/api/me',
         '/api/report/latest',
-        '/api/sessions?scope=upcoming',
         '/api/records?limit=20&mine=pending',
-        '/api/me/invites',
-        '/api/sessions?scope=mine',
         '/api/me/discord',
         '/api/records?limit=50&status=appealed',
       ]),

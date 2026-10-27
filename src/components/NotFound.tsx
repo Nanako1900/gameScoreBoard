@@ -11,9 +11,10 @@ export interface NotFoundAction {
 
 interface NotFoundProps {
   title: string;
+  description?: string;
   /** Default 'notfound-title'; the detail views pass their own labelledBy id. */
   headingId?: string;
-  /** Default: 回大厅. 看约局历史 / 看信誉榜 arrive with their pages (P3-6, contract §8 #3). */
+  /** Default: 回大厅. Detail views may provide their own actions. */
   actions?: readonly NotFoundAction[];
   /** Default true: focus moves to the heading on mount. */
   autoFocus?: boolean;
@@ -24,6 +25,7 @@ const DEFAULT_ACTIONS: readonly NotFoundAction[] = [{ label: BACK_HOME, to: HOME
 /** Rendered by the SPA itself: the hosting never serves a 404.html (spec §2.2). */
 export function NotFound({
   title,
+  description,
   headingId = 'notfound-title',
   actions = DEFAULT_ACTIONS,
   autoFocus = true,
@@ -38,6 +40,7 @@ export function NotFound({
       <h2 id={headingId} ref={headingRef} className="notfound__title" tabIndex={-1} data-autofocus>
         {title}
       </h2>
+      {description && <p className="notfound__description">{description}</p>}
       <div className="notfound__actions">
         {actions.map((action) => (
           <Link key={action.to} to={action.to} className="btn btn--gold">

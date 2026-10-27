@@ -2,7 +2,6 @@
 .todo h2 { font-size: var(--fs-lg); }
 .todo__list { display: grid; gap: 0.75rem; margin: 0.75rem 0 0; padding: 0; list-style: none; }
 .todo__empty { margin-top: 0.75rem; color: var(--muted); font-size: var(--fs-md); }
-.todo__error { color: var(--danger-text); font-size: var(--fs-md); }
 .tcard { display: grid; justify-items: start; gap: 0.6rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-md); font-size: var(--fs-md); }
 .tcard__title { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; }
 .tcard__hint { font-size: var(--fs-sm); color: var(--muted); }

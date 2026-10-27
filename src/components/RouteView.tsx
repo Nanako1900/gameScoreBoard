@@ -1,19 +1,13 @@
 import { useEffect } from 'react';
-import type { Config, PublicUser, RecordItem, SessionDetail, SessionItem, User } from '../types';
+import type { Config, RecordItem, User } from '../types';
 import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
-import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE } from '../lib/routeCopy';
+import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE, SESSIONS_OFF, SESSIONS_OFF_DESCRIPTION } from '../lib/routeCopy';
 import { useCaseLookup, type PinnedCase } from '../lib/useCaseLookup';
-import { resumeRsvpFor } from '../lib/loginReturnShape';
-import type { LoginIntent } from '../lib/loginReturnShape';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
-import { SessionDetailDialog } from './SessionDetailDialog';
 import { BoardPage, type BoardData } from './BoardPage';
-import { SessionHistoryPage } from './SessionHistoryPage';
-import { RollCallPage } from './RollCallPage';
-import { NewSessionRoute } from './NewSessionRoute';
 
 export type { PinnedCase };
 
@@ -28,14 +22,7 @@ interface RouteViewProps {
   onPinned: (pinned: PinnedCase) => void;
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
-  /** P1-3: from useEntryTarget — only handed to the session it is about. */
-  resume?: LoginIntent | null;
-  onResumeDone?: () => void;
   board?: BoardData;
-  mySessions?: readonly SessionItem[] | null;
-  participants?: PublicUser[];
-  created?: number | null;
-  onCreated?: (session: SessionDetail) => void;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -125,26 +112,6 @@ function CaseRoute(props: CaseRouteProps): JSX.Element | null {
   );
 }
 
-function SessionRoute({ props, sessionId }: { props: RouteViewProps; sessionId: number }): JSX.Element {
-  return (
-    <LayoutShell layout={props.layout}>
-      <SessionDetailDialog
-        key={sessionId}
-        variant={props.layout}
-        sessionId={sessionId}
-        mySessions={props.mySessions}
-        created={props.created === sessionId}
-        me={props.me}
-        onClose={close}
-        onChanged={props.onChanged}
-        boardTzOffsetHours={props.config.boardTzOffsetHours}
-        resumeRsvp={resumeRsvpFor(props.resume, sessionId)}
-        onResumeDone={props.onResumeDone}
-      />
-    </LayoutShell>
-  );
-}
-
 /** What the address shows on top of (or instead of) the lobby (contract §4.9). */
 export function RouteView(props: RouteViewProps): JSX.Element | null {
   const { location, layout } = props;
@@ -156,16 +123,9 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return <RouteNotice layout="page" title={NOT_FOUND_TITLE} />;
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
-    case 'sessionHistory':
-      return <PageShell><SessionHistoryPage boardTzOffsetHours={props.config.boardTzOffsetHours} /></PageShell>;
-    case 'rollcall':
-      return <PageShell><RollCallPage key={route.sessionId} sessionId={route.sessionId} me={props.me}
-        onChanged={props.onChanged} boardTzOffsetHours={props.config.boardTzOffsetHours} /></PageShell>;
-    case 'sessionNew':
-      return <LayoutShell layout={layout}><NewSessionRoute me={props.me} config={props.config} layout={layout}
-        participants={props.participants ?? []} mySessions={props.mySessions} onCreated={props.onCreated ?? (() => {})} /></LayoutShell>;
-    case 'session':
-      return <SessionRoute props={props} sessionId={route.sessionId} />;
+    case 'sessionGone':
+      return <PageShell><NotFound title={SESSIONS_OFF} description={SESSIONS_OFF_DESCRIPTION}
+        actions={[{ label: '回首页', to: '/' }]} /></PageShell>;
     case 'player':
       return (
         <LayoutShell layout={layout}>

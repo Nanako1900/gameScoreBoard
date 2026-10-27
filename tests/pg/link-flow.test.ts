@@ -780,7 +780,7 @@ describe('setNotifyDm', () => {
     expect(await dmState('a')).toEqual({ notify_dm: 0, dm_ok: 1 });
     const reply = await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'on' }, BOT);
     expect(reply.content).toBe(
-      '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。',
+      '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。',
     );
     expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
     expect(await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'off' }, { ...BOT, readOnly: true })).toEqual({

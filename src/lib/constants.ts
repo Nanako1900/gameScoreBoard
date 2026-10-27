@@ -14,16 +14,6 @@ export const COUNTDOWN_TICK_MS = 60_000;
 export const CORE_FEED_LIMIT = 50;
 export const PENDING_STATEMENTS_LIMIT = 20;
 
-// --- P0-6 ---
-/**
- * A move DMs everyone in the session this many minutes later, and a burst of
- * moves is one DM. MUST equal `interval '3 minutes'` in the dm.session.changed
- * branch of server/migrations/0005_sessions.sql (asserted in session-actions.test.ts).
- */
-export const RESCHEDULE_DM_DELAY_MIN = 3;
-/** 其他时间 first shows an hour from now — shared by 改时间 (RescheduleSheet) and 发起约局 (SessionFormDialog). */
-export const CUSTOM_TIME_LEAD_MS = 60 * 60 * 1000;
-
 // --- P0-4 ---
 /** 本周之星: at least this many 守约守时 bonuses this week (spec §5 #1). */
 export const WEEK_STAR_MIN_ON_TIME = 2;
@@ -35,7 +25,7 @@ export const REVOKE_TICK_MS = 30_000;
 export const DRAFT_SAVE_DEBOUNCE_MS = 400;
 
 // --- P1-1 ---
-/** The one breakpoint JS needs: page vs drawer for /sessions/:id and /players/:id. Same as the CSS (min-width: 1024px). */
+/** The one breakpoint JS needs: page vs drawer for /players/:id. Same as the CSS (min-width: 1024px). */
 export const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 /** /players/:id — OAuth subjects are free-form; anything longer is not one of ours. */
 export const USER_ID_MAX = 128;
@@ -51,30 +41,10 @@ export const HISTORY_SHEET_NAME_MAX = 32;
 export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
 /** edg.return.path upper bound. */
 export const RETURN_PATH_MAX = 512;
-
-// --- P3-1 ---
-export const LOBBY_CANCELLED_KEEP_MS = 24 * 60 * 60 * 1000;
-export const RECENT_SESSIONS_SHOWN = 10;
-
-// --- P3-3 ---
-export const MINUTE_MS = 60_000;
-export const ICS_LINE_MAX_BYTES = 75;
-export const QUOTA_HINT_AT = 1;
-export const SESSION_QUOTA_WINDOW_MS = 24 * 60 * MINUTE_MS;
-
-// --- P3-4 ---
-export const AGAIN_STEP_DAYS = 7;
-export const AGAIN_STEP_MS = AGAIN_STEP_DAYS * 24 * 60 * MINUTE_MS;
-export const SESSION_CAPACITY_MIN = 2;
-
-// --- P3-2 ---
-export const TODO_SOON_MS = 2 * 60 * MINUTE_MS;
 export const INBOX_APPEALS_LIMIT = 50;
-export const TODO_SEEN_MAX = 50;
 export const BOARD_MINI_ROWS_PHONE = 5;
 export const BOARD_MINI_ROWS_DESKTOP = 9;
 export const SKELETON_DEFAULT_LINES = 3;
 export const TODO_RANKS = {
-  'dm-broken': 1, 'urgent-statement': 2, rollcall: 3, moved: 4, statement: 5, invite: 6,
-  soon: 7, escalation: 8, appeals: 9, cancelled: 11, unbound: 12,
+  'dm-broken': 1, 'urgent-statement': 2, statement: 5, escalation: 8, appeals: 9, unbound: 12,
 } as const;

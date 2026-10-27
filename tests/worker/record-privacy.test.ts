@@ -47,21 +47,20 @@ async function cast(): Promise<{ recordId: number; sessionId: number }> {
   return { recordId: Number(record.meta.last_row_id), sessionId };
 }
 
-function routes(recordId: number, sessionId: number): Array<{ path: string; pick: (json: Record<string, unknown>) => Record<string, unknown> }> {
+function routes(recordId: number): Array<{ path: string; pick: (json: Record<string, unknown>) => Record<string, unknown> }> {
   const first = (json: Record<string, unknown>) => (json.records as Array<Record<string, unknown>>)[0];
   return [
     { path: '/api/records', pick: first },
     { path: `/api/records/${recordId}`, pick: (json) => json.record as Record<string, unknown> },
     { path: '/api/users/subject', pick: first },
-    { path: `/api/sessions/${sessionId}`, pick: first },
   ];
 }
 
 describe('a case’s private parts on the web', () => {
   for (const viewer of [undefined, 'outsider'] as const) {
     it(`are hidden from ${viewer ?? 'a visitor who is not logged in'}, on every route`, async () => {
-      const { recordId, sessionId } = await cast();
-      for (const route of routes(recordId, sessionId)) {
+      const { recordId } = await cast();
+      for (const route of routes(recordId)) {
         const res = await get(route.path, viewer);
         expect(res.status, route.path).toBe(200);
         for (const marker of MARKERS) expect(res.text, `${route.path} leaks ${marker}`).not.toContain(marker);
@@ -84,8 +83,8 @@ describe('a case’s private parts on the web', () => {
 
   for (const viewer of ['subject', 'reporter', 'judge2', 'admin']) {
     it(`are shown to the ${viewer}`, async () => {
-      const { recordId, sessionId } = await cast();
-      for (const route of routes(recordId, sessionId)) {
+      const { recordId } = await cast();
+      for (const route of routes(recordId)) {
         const res = await get(route.path, viewer);
         for (const marker of MARKERS) expect(res.text, `${route.path} for ${viewer}`).toContain(marker);
         expect(route.pick(res.json).redacted, route.path).toBe(false);
@@ -118,8 +117,8 @@ describe('a case’s private parts on the web', () => {
   });
 
   it('are not kept by a shared cache: every case route answers private, no-store', async () => {
-    const { recordId, sessionId } = await cast();
-    for (const route of routes(recordId, sessionId)) {
+    const { recordId } = await cast();
+    for (const route of routes(recordId)) {
       expect((await get(route.path)).cache, route.path).toBe('private, no-store');
     }
   });
@@ -186,7 +185,7 @@ describe('a case before its verdict, on the web', () => {
     for (const viewer of [undefined, 'outsider'] as const) {
       it(`is only “a case in progress” while ${status}, for ${viewer ?? 'a visitor who is not logged in'}, on every route`, async () => {
         const { recordId, sessionId } = await castPending(status);
-        for (const route of routes(recordId, sessionId)) {
+        for (const route of routes(recordId)) {
           const res = await get(route.path, viewer);
           expect(res.status, route.path).toBe(200);
           for (const marker of [...ACCUSATION, 'SECRETSTMT']) expect(res.text, `${route.path} leaks ${marker}`).not.toContain(marker);
@@ -218,8 +217,8 @@ describe('a case before its verdict, on the web', () => {
 
   for (const viewer of ['subject', 'reporter', 'judge2', 'admin']) {
     it(`is shown whole to the ${viewer}`, async () => {
-      const { recordId, sessionId } = await castPending('awaiting_statement');
-      for (const route of routes(recordId, sessionId)) {
+      const { recordId } = await castPending('awaiting_statement');
+      for (const route of routes(recordId)) {
         const res = await get(route.path, viewer);
         for (const marker of ACCUSATION) expect(res.text, `${route.path} for ${viewer}`).toContain(marker);
         const record = route.pick(res.json);

@@ -37,9 +37,18 @@ export function reportDue(offsetHours: number, now = Date.now()): boolean {
   return daysSinceMonday * DAY_MS + sinceMidnight >= REPORT_DUE_AFTER_MS;
 }
 
+/** Fields retained only when reading reports stored before S1. */
+export interface StoredReportStats extends ReportStats {
+  sessionsPlayed?: number;
+  sessionsCollapsed?: number;
+  attendanceRate?: number | null;
+  upcomingNextWeek?: number;
+  topOrganizer?: { name: string; count: number } | null;
+}
+
 export interface WeeklyReport {
   week_start: string;
-  stats: ReportStats;
+  stats: StoredReportStats;
   narrative: string;
   source: 'ai' | 'fallback';
   created_at: string;
@@ -101,13 +110,6 @@ export async function computeStats(
     .toISOString()
     .slice(0, 10);
 
-  const sessions = await firstRow<{ played: number }>(
-    db,
-    `SELECT COUNT(*) AS played FROM game_sessions
-      WHERE status = 'settled' AND starts_at >= ? AND starts_at < ?`,
-    [new Date(Date.parse(from + 'Z')).toISOString(), new Date(Date.parse(to + 'Z')).toISOString()],
-  );
-
   const cases = await firstRow<{ filed: number; total: number; absent: number }>(
     db,
     `SELECT COUNT(*) AS filed,
@@ -116,14 +118,6 @@ export async function computeStats(
                               THEN 1 ELSE 0 END), 0) AS absent
        FROM records r
       WHERE ${VERDICT_TIME_SQL} >= ? AND ${VERDICT_TIME_SQL} < ? AND status IN ('decided','appealed')`,
-    [from, to],
-  );
-
-  const collapsed = await firstRow<{ n: number }>(
-    db,
-    `SELECT COUNT(DISTINCT session_id) AS n FROM records r
-      WHERE session_id IS NOT NULL AND type = 'no_show_group'
-        AND ${VERDICT_TIME_SQL} >= ? AND ${VERDICT_TIME_SQL} < ? AND status IN ('decided','appealed')`,
     [from, to],
   );
 
@@ -172,48 +166,17 @@ export async function computeStats(
     }
   }
 
-  const organizer = await firstRow<{ name: string; count: number }>(
-    db,
-    `SELECT COALESCE(u.display_name, u.username) AS name, COUNT(*) AS count
-       FROM game_sessions g JOIN users u ON u.id = g.organizer_id
-      WHERE g.status = 'settled' AND g.starts_at >= ? AND g.starts_at < ?
-      GROUP BY u.id ORDER BY count DESC, name ASC, u.id ASC LIMIT 1`,
-    [new Date(Date.parse(from + 'Z')).toISOString(), new Date(Date.parse(to + 'Z')).toISOString()],
-  );
-
-  const attendance = await firstRow<{ shown: number; marked: number }>(
-    db,
-    `SELECT COALESCE(SUM(CASE WHEN sp.attendance IN ('on_time','late') THEN 1 ELSE 0 END), 0) AS shown,
-            COUNT(sp.attendance) AS marked
-       FROM session_players sp JOIN game_sessions g ON g.id = sp.session_id
-      WHERE g.starts_at >= ? AND g.starts_at < ?`,
-    [new Date(Date.parse(from + 'Z')).toISOString(), new Date(Date.parse(to + 'Z')).toISOString()],
-  );
-
-  const upcoming = await firstRow<{ n: number }>(
-    db,
-    `SELECT COUNT(*) AS n FROM game_sessions
-      WHERE status = 'open' AND starts_at >= ?`,
-    [new Date().toISOString()],
-  );
-
   return {
     basis: 'verdict',
     weekStart,
     weekEnd,
-    sessionsPlayed: sessions?.played ?? 0,
-    sessionsCollapsed: collapsed?.n ?? 0,
     casesFiled: cases?.filed ?? 0,
     totalPenalty: cases?.total ?? 0,
     absentVerdicts: cases?.absent ?? 0,
-    attendanceRate:
-      attendance && attendance.marked > 0 ? attendance.shown / attendance.marked : null,
-    upcomingNextWeek: upcoming?.n ?? 0,
     star: star ? { name: star.name, delta: star.delta } : null,
     pigeon: pigeon ? { name: pigeon.name, delta: pigeon.delta } : null,
     bestTalker,
     harshest,
-    topOrganizer: organizer ? { name: organizer.name, count: organizer.count } : null,
   };
 }
 
@@ -221,7 +184,6 @@ export async function computeStats(
 export function hadActivity(stats: ReportStats): boolean {
   return (
     stats.casesFiled > 0 ||
-    stats.sessionsPlayed > 0 ||
     stats.star !== null ||
     stats.pigeon !== null
   );
@@ -230,7 +192,7 @@ export function hadActivity(stats: ReportStats): boolean {
 function toReport(row: ReportRow): WeeklyReport {
   return {
     week_start: row.week_start,
-    stats: JSON.parse(row.stats_json) as ReportStats,
+    stats: JSON.parse(row.stats_json) as StoredReportStats,
     narrative: row.narrative,
     source: row.source === 'ai' ? 'ai' : 'fallback',
     created_at: row.created_at,

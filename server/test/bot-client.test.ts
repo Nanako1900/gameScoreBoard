@@ -390,7 +390,6 @@ describe('readBotConfig', () => {
       appUrl: 'https://api.nanako.org',
       frontendUrl: 'https://score.nanako.org',
       verdictChannelId: null,
-      sessionChannelId: null,
     });
   });
 
@@ -399,6 +398,11 @@ describe('readBotConfig', () => {
       '1234567890123456780',
     );
     expect(() => readBotConfig({ ...valid, DISCORD_VERDICT_CHANNEL_ID: '#edg' })).toThrow(/DISCORD_VERDICT_CHANNEL_ID/);
+  });
+
+  it('ignores the retired session channel variable, including an old invalid value', () => {
+    expect(readBotConfig({ ...valid, DISCORD_SESSION_CHANNEL_ID: '#old-channel' })).toEqual(readBotConfig(valid));
+    expect(readBotConfig(valid)).not.toHaveProperty('sessionChannelId');
   });
 
   it('names every problem at once and never echoes the token', () => {

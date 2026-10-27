@@ -5,7 +5,7 @@
 
 import { currentPath } from './router';
 import { LOGIN_RETURN_KEY, parseLoginReturn, serializeLoginReturn } from './loginReturnShape';
-import type { LoginIntent, LoginReturn } from './loginReturnShape';
+import type { LoginReturn } from './loginReturnShape';
 
 function storage(): Storage | null {
   try {
@@ -20,16 +20,16 @@ function storage(): Storage | null {
  * login page. A page not worth coming back to — the lobby, an unknown path —
  * clears an older value instead. False only when storage is unusable.
  */
-export function saveLoginReturn(intent?: LoginIntent, returnTo: string = currentPath()): boolean {
+export function saveLoginReturn(returnTo: string = currentPath()): boolean {
   const store = storage();
   if (!store) return false;
   const now = Date.now();
-  const checked = parseLoginReturn(serializeLoginReturn(returnTo, intent, now), now);
+  const checked = parseLoginReturn(serializeLoginReturn(returnTo, now), now);
   try {
     if (checked === null) {
       store.removeItem(LOGIN_RETURN_KEY);
     } else {
-      store.setItem(LOGIN_RETURN_KEY, serializeLoginReturn(checked.path, checked.intent, now));
+      store.setItem(LOGIN_RETURN_KEY, serializeLoginReturn(returnTo, now));
     }
     return true;
   } catch {

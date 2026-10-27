@@ -1,6 +1,5 @@
 // Typed same-origin fetch client for every /api and /auth endpoint.
 // Throws ApiError (with the parsed { error } message) on any non-2xx response.
-import { emitSession } from './lib/sessionEvents';
 import type {
   AiConfigPatch,
   AiConfigResponse,
@@ -8,32 +7,17 @@ import type {
   CaseStatus,
   Config,
   FileCasesResponse,
-  HistorySessionItem,
-  InvitableResponse,
-  InvitableUser,
-  InviteResponse,
-  InvitesResponse,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
-  NewSessionInput,
   RecordItem,
   RecordsResponse,
   RoleUpdate,
-  RollCallEntry,
-  RollCallResponse,
-  SessionDetail,
-  SessionDetailResponse,
-  SessionItem,
-  SessionsResponse,
-  SettleEntry,
-  SettleResponse,
   User,
   UserDetailResponse,
   ViolationType,
   WeeklyReport,
 } from './types';
-import type { SelfRsvp } from '@shared/attendance';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -133,7 +117,6 @@ export interface RecordsQuery {
   limit?: number;
   subject?: string;
   status?: CaseStatus;
-  session?: number;
   mine?: 'pending';
 }
 
@@ -142,7 +125,6 @@ export function getRecords(query: RecordsQuery = {}): Promise<RecordsResponse> {
   if (query.limit !== undefined) params.set('limit', String(query.limit));
   if (query.subject !== undefined) params.set('subject', query.subject);
   if (query.status !== undefined) params.set('status', query.status);
-  if (query.session !== undefined) params.set('session', String(query.session));
   if (query.mine !== undefined) params.set('mine', query.mine);
   const qs = params.toString();
   return request<RecordsResponse>(`/api/records${qs ? `?${qs}` : ''}`);
@@ -217,114 +199,6 @@ export function appealCase(id: number, reason?: string): Promise<{ record: Recor
 
 export function revokeRecord(id: number): Promise<{ record: RecordItem }> {
   return post<{ record: RecordItem }>(`/api/records/${id}/revoke`);
-}
-
-// --- Sessions --------------------------------------------------------------
-
-export function getSessions(
-  scope: 'upcoming' | 'past' | 'mine' = 'upcoming',
-): Promise<SessionsResponse> {
-  return request<SessionsResponse>(`/api/sessions?scope=${scope}`);
-}
-
-export function getSession(id: number): Promise<SessionDetailResponse> {
-  return request<SessionDetailResponse>(`/api/sessions/${id}`);
-}
-
-export function createSession(input: NewSessionInput): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>('/api/sessions', input);
-}
-
-export async function updateSession(
-  id: number,
-  patch: Partial<NewSessionInput>,
-): Promise<{ session: SessionDetail }> {
-  const res = await request<{ session: SessionDetail }>(`/api/sessions/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  });
-  emitSession(res.session);
-  return res;
-}
-
-/** `reason` omitted: no body at all, exactly as before P2-3. */
-export async function cancelSession(id: number, reason?: string): Promise<{ session: SessionDetail }> {
-  const path = `/api/sessions/${id}/cancel`;
-  const res = await (reason === undefined
-    ? post<{ session: SessionDetail }>(path)
-    : post<{ session: SessionDetail }>(path, { reason }));
-  emitSession(res.session);
-  return res;
-}
-
-/** `startsAt`: the start time the player is looking at — a move since is a 409. */
-export async function setRsvp(
-  id: number,
-  rsvp: SelfRsvp,
-  startsAt: string,
-): Promise<{ session: SessionDetail }> {
-  const res = await post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp, starts_at: startsAt });
-  emitSession(res.session);
-  return res;
-}
-
-/** Record attendance. Produces drafts; changes nobody's score. */
-export function rollCall(id: number, entries: RollCallEntry[]): Promise<RollCallResponse> {
-  return post<RollCallResponse>(`/api/sessions/${id}/rollcall`, { entries });
-}
-
-/** Close the session. `file` may be empty — that settles it with zero impact. */
-export function settleSession(
-  id: number,
-  file: SettleEntry[],
-  skipAll = false,
-): Promise<SettleResponse> {
-  return post<SettleResponse>(`/api/sessions/${id}/settle`, { file, skip_all: skipAll });
-}
-
-/** Sessions the caller was invited to and has not answered. Drives the banner. */
-export function getMyInvites(): Promise<InvitesResponse> {
-  return request<InvitesResponse>('/api/me/invites');
-}
-
-type MaybeHistoryItem = SessionItem & { attendance_summary?: HistorySessionItem['attendance_summary'] };
-
-function isHistoryItem(item: MaybeHistoryItem): item is HistorySessionItem {
-  return typeof item.attendance_summary === 'object' && item.attendance_summary !== null;
-}
-
-/**
- * P2-3: sessions that started, cancelled ones too, newest first; `before` = the
- * last id of the previous page (fewer than a full page = no more). undefined
- * from an API without scope=history: it reads an unknown scope as 'upcoming'
- * and answers 200, so the sign is items without attendance_summary.
- */
-export async function getSessionHistory(before?: number): Promise<HistorySessionItem[] | undefined> {
-  const cursor = before === undefined ? '' : `&before=${before}`;
-  const { sessions } = await request<{ sessions: MaybeHistoryItem[] }>(`/api/sessions?scope=history${cursor}`);
-  return sessions.every(isHistoryItem) ? sessions : undefined;
-}
-
-/**
- * Everyone the caller could invite (P2-2). Resolves `undefined` when the API
- * has no such endpoint — an older backend answers 404 — so the invite entry
- * can hide itself, like getDiscordLink. Any other failure throws ApiError.
- */
-export async function getInvitable(): Promise<InvitableUser[] | undefined> {
-  try {
-    const { users } = await request<InvitableResponse>('/api/me/invitable');
-    return users;
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return undefined;
-    throw err;
-  }
-}
-
-/** P2-1: invite more people after creation. Organizer or admin; rows already there are never changed. */
-export async function inviteToSession(id: number, userIds: string[]): Promise<InviteResponse> {
-  const res = await post<InviteResponse>(`/api/sessions/${id}/invite`, { user_ids: userIds });
-  emitSession(res.session);
-  return res;
 }
 
 // --- Weekly report ---------------------------------------------------------

@@ -14,7 +14,7 @@ import { env, pool } from './cloudflare-test';
 
 const CHANNEL = '200000000000000001';
 const FRONTEND = 'https://score.example';
-const OPTS = { offsetHours: OFFSET_HOURS, skipRateLimit: true };
+const OPTS = { offsetHours: OFFSET_HOURS };
 const CLAIM = '说好八点五排，等到八点四十还没上线，微信也不回。';
 
 // Letters only: render.ts escapes markdown characters, and an escaped

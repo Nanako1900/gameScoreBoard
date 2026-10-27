@@ -1,2 +1,0 @@
-.created { margin-top: 1rem; padding: 1rem; border: 1px solid var(--ok); border-radius: var(--r-md); font-size: var(--fs-md); }
-@media (forced-colors: active) { .created { border-color: CanvasText; } }

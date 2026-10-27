@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfirmInline } from '../../src/components/ConfirmInline';
 import { useInlineConfirm } from '../../src/lib/useInlineConfirm';
 
-// Labels are spec §3.5's cancel-session confirm (P0-6 is the first real caller).
+// Generic confirm labels are explicit about their action.
 // New confirms never use the bare 「取消」/「确认」: those names are locked to
 // DiscordLinkCard / OnboardingDialog / AdminScoreForm (spec §6.5).
-const QUESTION = '取消这局？';
-const CONFIRM = '确认取消';
-const CANCEL = '不取消了';
+const QUESTION = '删除这条？';
+const CONFIRM = '确认删除';
+const CANCEL = '保留';
 
 function renderConfirm(props: Partial<React.ComponentProps<typeof ConfirmInline>> = {}) {
   const onConfirm = vi.fn();
@@ -30,7 +30,7 @@ function renderConfirm(props: Partial<React.ComponentProps<typeof ConfirmInline>
 
 describe('ConfirmInline', () => {
   it('is a labelled group: question, optional detail, then cancel before confirm', () => {
-    renderConfirm({ children: '说了不来的人不会收到。' });
+    renderConfirm({ children: '删除之后无法恢复。' });
     const group = screen.getByRole('group', { name: QUESTION });
     expect(Array.from(group.children).map((el) => el.className)).toEqual([
       'ci__q',
@@ -110,12 +110,12 @@ describe('ConfirmInline', () => {
 });
 
 /** The trigger and the confirm swap places, as every caller will do it. */
-function CancelSession({ onDone }: { onDone: () => void }) {
+function ConfirmAction({ onDone }: { onDone: () => void }) {
   const confirm = useInlineConfirm();
   if (!confirm.confirming) {
     return (
       <button ref={confirm.triggerRef} type="button" onClick={confirm.ask}>
-        取消这局
+        删除这条
       </button>
     );
   }
@@ -136,24 +136,24 @@ function CancelSession({ onDone }: { onDone: () => void }) {
 describe('useInlineConfirm', () => {
   it('backing out puts focus back on the trigger', async () => {
     const user = userEvent.setup();
-    render(<CancelSession onDone={() => {}} />);
+    render(<ConfirmAction onDone={() => {}} />);
 
-    await user.click(screen.getByRole('button', { name: '取消这局' }));
+    await user.click(screen.getByRole('button', { name: '删除这条' }));
     expect(screen.getByRole('button', { name: CANCEL })).toHaveFocus();
 
     await user.click(screen.getByRole('button', { name: CANCEL }));
     expect(screen.queryByRole('group', { name: QUESTION })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '取消这局' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: '删除这条' })).toHaveFocus();
   });
 
   it('close() after a confirm hides it without moving focus to the trigger', async () => {
     const user = userEvent.setup();
     const onDone = vi.fn();
-    render(<CancelSession onDone={onDone} />);
+    render(<ConfirmAction onDone={onDone} />);
 
-    await user.click(screen.getByRole('button', { name: '取消这局' }));
+    await user.click(screen.getByRole('button', { name: '删除这条' }));
     await user.click(screen.getByRole('button', { name: CONFIRM }));
     expect(onDone).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: '取消这局' })).not.toHaveFocus();
+    expect(screen.getByRole('button', { name: '删除这条' })).not.toHaveFocus();
   });
 });

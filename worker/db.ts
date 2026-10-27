@@ -1,5 +1,5 @@
 // D1 data-access layer: users, roles, profiles, score application, weekly heal.
-// Case (records) logic lives in worker/cases.ts; sessions in worker/sessions.ts.
+// Case (records) logic lives in worker/cases.ts.
 //
 // PREPARED STATEMENTS ONLY — every value is bound with `?`, never concatenated.
 // Column names in dynamic SET/WHERE clauses are static literals. All boolean

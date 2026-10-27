@@ -5,11 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import { confirmEscalation, dismissEscalation, fileCase, reclassifyCase, submitStatement } from '../../worker/cases';
 import { adminUpdateUser } from '../../worker/db';
-import { createSession } from '../../worker/sessions';
 import { ensureWeeklyReport, previousWeekStart } from '../../worker/report';
 import { linkAccounts } from '../../server/src/discord/links';
 import { handleVerdictButton } from '../../server/src/discord/verdict';
-import { handleRsvpButton } from '../../server/src/discord/sessions';
 import { handleCommand } from '../../server/src/discord/commands';
 import { createDispatcher, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import type { ChannelMessage } from '../../server/src/discord/verdict';
@@ -17,7 +15,7 @@ import type { User } from '../../worker/types';
 import { expireDeadline, inThisWeek, noAiEnv, OFFSET_HOURS, seedUser } from '../worker/helpers';
 import { env, pool } from './cloudflare-test';
 
-const OPTS = { offsetHours: OFFSET_HOURS, skipRateLimit: true };
+const OPTS = { offsetHours: OFFSET_HOURS };
 const FRONTEND = 'https://score.example';
 const CHANNEL = '200000000000000009';
 const ctx = { db: env.DB, appUrl: 'https://api.example', frontendUrl: FRONTEND, offsetHours: OFFSET_HOURS };
@@ -257,14 +255,6 @@ describe('links in the bot’s replies', () => {
     ).run();
     const id = Number((await env.DB.prepare('SELECT id FROM records').first<{ id: number }>())?.id);
     expect((await handleVerdictButton(id, JUDGE_DC, ctx)).buttons?.[0].url).toBe(`${FRONTEND}/?case=${id}`);
-  });
-
-  it('an RSVP to a moved session links to that session', async () => {
-    const { judge } = await cast();
-    const session = await createSession(env.DB, judge, { starts_at: new Date(Date.now() + 2 * 3_600_000).toISOString() }, OFFSET_HOURS);
-    const reply = await handleRsvpButton(session.id, 'going', new Date(Date.now() + 9 * 3_600_000).toISOString(), SUBJECT_DC, ctx);
-    expect(reply.content).toContain('改时间');
-    expect(reply.buttons?.[0].url).toBe(`${FRONTEND}/?session=${session.id}`);
   });
 
   it('/todo counts every appeal and lists the ten that have waited longest', async () => {

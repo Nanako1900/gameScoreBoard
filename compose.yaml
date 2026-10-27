@@ -163,9 +163,6 @@ services:
       # AI as the web — so the bot needs the same key.
       AI_API_KEY: ${AI_API_KEY:-}
       AI_ENABLED: ${AI_ENABLED:-true}
-      # P7: where session cards go (#约局). Empty: no cards. /yue's "今晚 20:00"
-      # is in this time zone, like the web's.
-      DISCORD_SESSION_CHANNEL_ID: ${DISCORD_SESSION_CHANNEL_ID:-}
       RESET_TZ_OFFSET: ${RESET_TZ_OFFSET:-8}
     depends_on:
       postgres:

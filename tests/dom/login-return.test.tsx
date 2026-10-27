@@ -1,14 +1,12 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import type { RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App';
-import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
 import { LOGIN_RETURN_TTL_MS } from '../../src/lib/constants';
 import { LOGIN_RETURN_KEY, serializeLoginReturn } from '../../src/lib/loginReturnShape';
-import type { LoginIntent } from '../../src/lib/loginReturnShape';
 import { navigate, resetRouterForTests } from '../../src/lib/router';
-import type { RecordItem, SessionDetail, User } from '../../src/types';
+import type { RecordItem, User } from '../../src/types';
 import { preventNavigation } from './history';
 
 // P1-3 (spec §3.5, §4.1 登录回跳): a visitor on a read-only page clicks 来, logs
@@ -21,9 +19,7 @@ interface Call {
 }
 
 const HOUR = 3_600_000;
-const QUESTION = '你登录前点的是「来」，确认一下？';
-const SUGGESTED = 'sdt__rsvp-btn--suggested';
-const GOING: LoginIntent = { kind: 'rsvp', sessionId: 5, rsvp: 'going' };
+const GOING = { kind: 'rsvp', sessionId: 5, rsvp: 'going' };
 
 const ME: User = {
   id: 'p',
@@ -64,40 +60,14 @@ function json(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(body)) } as Response;
 }
 
-function session(id: number, myRsvp: SessionDetail['my_rsvp']): SessionDetail {
-  return {
-    id,
-    organizer: { id: 'org', username: '组织者', avatar_url: null },
-    title: '周五五排',
-    game: null,
-    starts_at: new Date(Date.now() + 2 * HOUR).toISOString(),
-    duration_min: null,
-    capacity: null,
-    note: null,
-    status: 'open',
-    settled_at: null,
-    created_at: '2026-10-01 00:00:00',
-    counts: { invited: 0, going: 1, maybe: 0, out: 0 },
-    my_rsvp: myRsvp,
-    players: [],
-  };
-}
-
 interface Stub {
   calls: Call[];
   /** Back from the login page: /api/me answers with ME from now on. */
   signIn: () => void;
 }
 
-interface StubOptions {
-  /** GET /api/sessions?scope=upcoming. */
-  listed?: SessionDetail[];
-  /** my_rsvp on session 5 once signed in. */
-  myRsvp?: SessionDetail['my_rsvp'];
-}
-
 /** The app's reads — a visitor until signIn() — and an RSVP that answers like the server. */
-function stubApi(options: StubOptions = {}): Stub {
+function stubApi(signedInUser: User = ME): Stub {
   const calls: Call[] = [];
   let me: User | null = null;
   const routes: Record<string, () => Response> = {
@@ -106,7 +76,6 @@ function stubApi(options: StubOptions = {}): Stub {
         violations: [],
         tiers: [],
         weeklyHeal: 5,
-        weeklyBonusCap: 5,
         statementWindowHours: 12,
         aiEnabled: false,
         maxBatchSubjects: 5,
@@ -115,12 +84,8 @@ function stubApi(options: StubOptions = {}): Stub {
     'GET /api/leaderboard': () => json(200, { participants: [] }),
     'GET /api/records?limit=50': () => json(200, { records: [] }),
     'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
-    'GET /api/me/invites': () => json(200, { sessions: [] }),
+    'GET /api/me/discord': () => json(404, { error: 'unsupported' }),
     'GET /api/report/latest': () => json(200, { report: null }),
-    'GET /api/sessions?scope=upcoming': () => json(200, { sessions: options.listed ?? [] }),
-    'GET /api/sessions/3': () => json(200, { session: session(3, null), records: [] }),
-    'GET /api/sessions/5': () =>
-      json(200, { session: session(5, me ? (options.myRsvp ?? null) : null), records: [] }),
     'GET /api/records/7': () => json(200, { record: CASE }),
     'GET /api/users/q': () =>
       json(200, {
@@ -128,7 +93,6 @@ function stubApi(options: StubOptions = {}): Stub {
         records: [CASE],
         history: [],
       }),
-    'POST /api/sessions/5/rsvp': () => json(200, { session: session(5, 'going') }),
     'POST /auth/logout': () => json(200, { ok: true }),
   };
   vi.stubGlobal(
@@ -145,7 +109,7 @@ function stubApi(options: StubOptions = {}): Stub {
   return {
     calls,
     signIn: () => {
-      me = ME;
+      me = signedInUser;
     },
   };
 }
@@ -188,18 +152,18 @@ describe('LoginLink — every way into the login page', () => {
   it('the header’s 登录 remembers the page it was clicked on', async () => {
     stubApi();
     const user = userEvent.setup();
-    window.history.replaceState(null, '', '/sessions/5');
+    window.history.replaceState(null, '', '/players/q');
     render(<App />);
     const login = await screen.findByRole('link', { name: '登录' });
     expect(login).toHaveAttribute('href', '/auth/login');
     await user.click(login);
-    expect(stored()).toEqual({ v: 1, path: '/sessions/5', savedAt: expect.any(Number) });
+    expect(stored()).toEqual({ v: 1, path: '/players/q', savedAt: expect.any(Number) });
   });
 
   it('the lobby’s 用 Nanako 账号登录 forgets an older one (nothing to come back to)', async () => {
     stubApi();
     const user = userEvent.setup();
-    window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/sessions/5', GOING, Date.now()));
+    window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/players/q', Date.now()));
     render(<App />);
     const login = await screen.findByRole('link', { name: '用 Nanako 账号登录' });
     expect(login).toHaveAttribute('href', '/auth/login');
@@ -209,225 +173,116 @@ describe('LoginLink — every way into the login page', () => {
   });
 });
 
-describe('the session page — ResumeHint and the visitor prompt', () => {
-  function renderDetail(resumeRsvp: 'going' | null, myRsvp: SessionDetail['my_rsvp'] = null) {
-    const stub = stubApi({ myRsvp });
-    stub.signIn();
-    const onResumeDone = vi.fn();
-    render(
-      <SessionDetailDialog
-        sessionId={5}
-        me={ME}
-        onClose={() => {}}
-        onChanged={() => {}}
-        resumeRsvp={resumeRsvp}
-        onResumeDone={onResumeDone}
-      />,
-    );
-    return { stub, onResumeDone };
-  }
-
-  it('asks about the earlier click and rings that button — without answering', async () => {
-    const { stub, onResumeDone } = renderDetail('going');
-    const hint = (await screen.findByText(QUESTION)).closest('.resume-hint');
-    expect(hint).toHaveAttribute('role', 'status');
-    expect(screen.getByRole('button', { name: '来' })).toHaveClass(SUGGESTED);
-    expect(screen.getByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'false');
-    // Focusing the ringed button reads the question too (a status region inserted with its text may go unannounced).
-    expect(screen.getByRole('button', { name: '来' })).toHaveAccessibleDescription(QUESTION);
-    expect(screen.getByRole('button', { name: '待定' })).not.toHaveClass(SUGGESTED);
-    expect(screen.getByRole('button', { name: '待定' })).not.toHaveAttribute('aria-describedby');
-    expect(screen.getAllByRole('button', { name: '来' })).toHaveLength(1);
-    await settle();
-    expect(onResumeDone).not.toHaveBeenCalled();
-    expect(writes(stub.calls)).toEqual([]);
-  });
-
-  it('不用了 forgets the click without answering, and focus lands on the title', async () => {
-    const { stub, onResumeDone } = renderDetail('going');
-    const user = userEvent.setup();
-    await screen.findByText(QUESTION);
-    await user.click(screen.getByRole('button', { name: '不用了' }));
-    expect(onResumeDone).toHaveBeenCalled();
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: '周五五排' }));
-    expect(writes(stub.calls)).toEqual([]);
-  });
-
-  it('clicking the ringed 来 again is what answers — once', async () => {
-    const { stub, onResumeDone } = renderDetail('going');
-    const user = userEvent.setup();
-    await screen.findByText(QUESTION);
-    await user.click(screen.getByRole('button', { name: '来' }));
-    await waitFor(() => expect(onResumeDone).toHaveBeenCalled());
-    expect(writes(stub.calls)).toEqual([{ method: 'POST', path: '/api/sessions/5/rsvp' }]);
-  });
-
-  it('already that answer: nothing to ask, and the hint is done', async () => {
-    const { stub, onResumeDone } = renderDetail('going', 'going');
-    expect(await screen.findByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'true');
-    await waitFor(() => expect(onResumeDone).toHaveBeenCalled());
-    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '来' })).not.toHaveClass(SUGGESTED);
-    expect(writes(stub.calls)).toEqual([]);
-  });
-
-  it('a visitor gets 登录后报名: three login links that remember the answer, and the login button', async () => {
-    stubApi();
-    const user = userEvent.setup();
-    window.history.replaceState(null, '', '/sessions/5');
-    render(<SessionDetailDialog sessionId={5} me={null} onClose={() => {}} onChanged={() => {}} />);
-    const prompt = await screen.findByRole('group', { name: '登录后报名' });
-    expect(within(prompt).getByText('登录后就能回『来 / 待定 / 不来』，没绑 Discord 也行。')).toBeInTheDocument();
-    for (const name of ['来', '待定', '不来', '用 Nanako 账号登录']) {
-      expect(within(prompt).getByRole('link', { name })).toHaveAttribute('href', '/auth/login');
-    }
-    expect(screen.queryByRole('button', { name: '来' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: '我的报名' })).not.toBeInTheDocument();
-
-    await user.click(within(prompt).getByRole('link', { name: '待定' }));
-    expect(stored()).toEqual({
-      v: 1,
-      path: '/sessions/5',
-      savedAt: expect.any(Number),
-      intent: { kind: 'rsvp', sessionId: 5, rsvp: 'maybe' },
-    });
-  });
-});
-
-describe('a lobby row for a visitor', () => {
-  it('登录后报名 comes back to that session', async () => {
-    stubApi({ listed: [session(5, null)] });
-    const user = userEvent.setup();
-    render(<App />);
-    const link = await screen.findByRole('link', { name: '登录后报名 周五五排' });
-    expect(link).toHaveAttribute('href', '/auth/login');
-    await user.click(link);
-    expect(stored()).toEqual({ v: 1, path: '/sessions/5', savedAt: expect.any(Number) });
-    expect(window.location.pathname).toBe('/');
-  });
-});
-
 describe('登录回跳 — back from the login page', () => {
-  it('a visitor clicks 来, logs in, is back on the page and asked — nothing is written', async () => {
+  it('reads an old intent-bearing value as an address only and never writes on resume', async () => {
     const stub = stubApi();
-    const user = userEvent.setup();
-    window.history.replaceState(null, '', '/sessions/5');
-    const { unmount } = render(<App />);
-
-    const prompt = await screen.findByRole('group', { name: '登录后报名' });
-    expect(within(prompt).queryByRole('button', { name: '来' })).not.toBeInTheDocument();
-    await user.click(within(prompt).getByRole('link', { name: '来' }));
-    expect(stored()).toEqual({
-      v: 1,
-      path: '/sessions/5',
-      savedAt: expect.any(Number),
-      intent: { kind: 'rsvp', sessionId: 5, rsvp: 'going' },
-    });
-
-    unmount();
-    backFromLogin(stub, null);
-
-    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
-    expect(window.location.pathname).toBe('/sessions/5');
-    expect(screen.getByRole('button', { name: '来' })).toHaveClass(SUGGESTED);
-    expect(screen.getByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'false');
-    expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull();
-    await settle();
+    backFromLogin(stub, JSON.stringify({ v: 1, path: '/players/q', savedAt: Date.now(), intent: GOING }));
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe('/players/q');
+    expect(stored()).toBeNull();
     expect(writes(stub.calls)).toEqual([]);
   });
 
-  it('the first-run dialog goes first, then the way back', async () => {
+  it.each(['/sessions/5', '/sessions/new?again=5'])('a saved retired address %s goes home', async (path) => {
     const stub = stubApi();
-    const user = userEvent.setup();
-    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()), '/?onboarding=1');
+    backFromLogin(stub, JSON.stringify({ v: 1, path, savedAt: Date.now(), intent: GOING }), '/players/q');
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(stored()).toBeNull();
+    expect(writes(stub.calls)).toEqual([]);
+  });
 
-    expect(await screen.findByRole('radiogroup', { name: '选择身份' })).toBeInTheDocument();
-    await settle();
+  it('the first-run dialog goes first, then the saved address', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?onboarding=1');
+    await screen.findByRole('radiogroup', { name: '选择身份' });
     await settle();
     expect(window.location.pathname).toBe('/');
-    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
-
-    await user.keyboard('{Escape}');
-    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
-    expect(window.location.pathname).toBe('/sessions/5');
+    expect(stored()).not.toBeNull();
+    await userEvent.setup().keyboard('{Escape}');
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe('/players/q');
     expect(writes(stub.calls)).toEqual([]);
   });
 
   it.each([
     ['/?case=7', '/players/q/cases/7'],
-    ['/?session=3', '/sessions/3'],
-  ])('an old link (%s) wins: edg.return is dropped, not followed', async (url, landing) => {
+    ['/?session=3&utm=dc', '/'],
+    ['/?session=3&case=7&utm=dc', '/players/q/cases/7'],
+  ])('an old link (%s) wins over the saved address', async (url, landing) => {
     const stub = stubApi();
-    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()), url);
-
+    backFromLogin(stub, serializeLoginReturn('/players/q?return=old', Date.now()), url);
+    await waitFor(() => expect(stored()).toBeNull());
     await waitFor(() => expect(window.location.pathname).toBe(landing));
-    await settle();
-    expect(stub.calls.some((c) => c.path === '/api/sessions/5')).toBe(false);
-    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
-    expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull();
+    expect(window.location.search).not.toContain('return=old');
+    expect(window.location.search).not.toMatch(/case=|session=/);
+    if (landing === '/') expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('a session retirement toast waits for the first-run dialog', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?session=3&onboarding=1');
+    await screen.findByRole('radiogroup', { name: '选择身份' });
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
+    await userEvent.setup().keyboard('{Escape}');
+    expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+    expect(stored()).toBeNull();
+  });
+
+  it('binding return still asks an unfinished identity before announcing retirement', async () => {
+    const stub = stubApi({ ...ME, is_participant: false });
+    backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?session=3&linked=discord');
+    await screen.findByRole('radiogroup', { name: '选择身份' });
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
+    expect(window.location.search).toBe('');
+    await userEvent.setup().keyboard('{Escape}');
+    expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+    expect(stored()).toBeNull();
     expect(writes(stub.calls)).toEqual([]);
   });
 
   it('a stale or tampered value goes nowhere and is removed', async () => {
     const values = [
-      serializeLoginReturn('/sessions/5', GOING, Date.now() - LOGIN_RETURN_TTL_MS - 1),
-      JSON.stringify({ v: 1, path: '//evil.example/sessions/5', savedAt: Date.now() }),
-      JSON.stringify({ v: 1, path: '/sessions/abc', savedAt: Date.now() }),
+      serializeLoginReturn('/players/q', Date.now() - LOGIN_RETURN_TTL_MS - 1),
+      JSON.stringify({ v: 1, path: '//evil.example/players/q', savedAt: Date.now() }),
+      JSON.stringify({ v: 1, path: '/players/%E0%A4%A', savedAt: Date.now() }),
       JSON.stringify({ v: 1, path: '/auth/login', savedAt: Date.now() }),
       '{not json',
     ];
     for (const raw of values) {
       const stub = stubApi();
       const { unmount } = backFromLogin(stub, raw);
-      await screen.findByRole('heading', { name: /约局/ });
-      await settle();
+      await waitFor(() => expect(stored()).toBeNull());
       expect(window.location.pathname, raw).toBe('/');
-      expect(stub.calls.some((c) => c.path === '/api/sessions/5'), raw).toBe(false);
-      expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY), raw).toBeNull();
       expect(writes(stub.calls), raw).toEqual([]);
       unmount();
     }
   });
 
-  it('a visitor load neither follows nor removes it', async () => {
-    const raw = serializeLoginReturn('/sessions/5', GOING, Date.now());
+  it('a visitor load neither follows nor removes a saved address', async () => {
+    const raw = serializeLoginReturn('/players/q', Date.now());
     window.sessionStorage.setItem(LOGIN_RETURN_KEY, raw);
     stubApi();
     render(<App />);
-    await screen.findByRole('heading', { name: /约局/ });
-    await settle();
+    await screen.findByRole('heading', { name: '信誉榜' });
     expect(window.location.pathname).toBe('/');
     expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe(raw);
   });
 
-  it('once the session page is left, the question is not asked again', async () => {
-    const stub = stubApi();
-    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()));
-    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
-
-    act(() => navigate('/'));
-    await waitFor(() => expect(screen.queryByText(QUESTION)).not.toBeInTheDocument());
-    act(() => navigate('/sessions/5'));
-    expect(await screen.findByRole('button', { name: '来' })).not.toHaveClass(SUGGESTED);
-    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
-    expect(writes(stub.calls)).toEqual([]);
-  });
-
-  it('logging out forgets it', async () => {
-    // jsdom cannot reload (handleLogout ends with location.reload()) and says so on console.error.
+  it('logging out forgets the saved address', async () => {
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const stub = stubApi();
-      const user = userEvent.setup();
       backFromLogin(stub, null);
-      await screen.findByRole('heading', { name: /约局/ });
-      window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/sessions/5', GOING, Date.now()));
+      const user = userEvent.setup();
+      await screen.findByRole('heading', { name: '要你处理' });
+      window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/players/q', Date.now()));
       await user.click(screen.getByRole('button', { name: /选手/ }));
       await user.click(screen.getByRole('button', { name: '退出登录' }));
-      await waitFor(() => expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull());
+      await waitFor(() => expect(stored()).toBeNull());
       expect(quiet.mock.calls.every(([first]) => String(first).includes('Not implemented: navigation'))).toBe(true);
-    } finally {
-      quiet.mockRestore();
-    }
+    } finally { quiet.mockRestore(); }
   });
 });

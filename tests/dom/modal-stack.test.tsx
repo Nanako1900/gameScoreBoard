@@ -99,7 +99,7 @@ describe('modalStack', () => {
 });
 
 /**
- * SessionDetailDialog → RollCallDialog in miniature: the inner dialog is a sibling
+ * Two nested modal layers in miniature: the inner dialog is a sibling
  * of the outer one, both open at once. Before the stack, both document listeners
  * acted on every key: Escape closed both (the roll-call result was lost) and the
  * outer trap yanked Tab focus back into the outer panel.

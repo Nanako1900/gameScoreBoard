@@ -47,3 +47,24 @@ describe('reportPost', () => {
     expect(reportEmbed(report({ source: 'fallback' })).footer?.text).toBe('数字由系统统计');
   });
 });
+
+
+describe('S1 report figures', () => {
+  it('keeps nonzero figures in a stored legacy report', () => {
+    expect(reportEmbed(report()).fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: '开局', value: '3 局' }),
+      expect.objectContaining({ name: '出勤率', value: '75%' }),
+    ]));
+  });
+  it.each(['missing', 'zero'])('omits %s session figures without breaking the rest', (shape) => {
+    const old = report();
+    const { sessionsPlayed, sessionsCollapsed, attendanceRate, upcomingNextWeek, topOrganizer, ...stats } = old.stats;
+    const current = { ...old, stats: shape === 'zero' ? { ...stats, sessionsPlayed: 0, attendanceRate: 0 } : stats } as WeeklyReport;
+    const embed = reportEmbed(current);
+    const names = embed.fields?.map((field) => field.name);
+    expect(names).not.toContain('开局');
+    expect(names).not.toContain('出勤率');
+    expect(JSON.stringify(embed)).not.toMatch(/NaN|undefined/);
+    expect(embed.fields).toEqual(expect.arrayContaining([expect.objectContaining({ name: '合计扣分', value: '-18' })]));
+  });
+});

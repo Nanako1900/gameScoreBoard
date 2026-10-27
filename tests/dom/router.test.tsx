@@ -39,12 +39,12 @@ describe('navigate', () => {
     bootRouter();
     render(<RouteName />);
     const before = window.history.length;
-    act(() => navigate('/sessions/5?x=1'));
-    expect(window.location.pathname).toBe('/sessions/5');
+    act(() => navigate('/players/p?x=1'));
+    expect(window.location.pathname).toBe('/players/p');
     expect(window.location.search).toBe('?x=1');
     expect(window.history.length).toBe(before + 1);
     expect(window.history.state).toEqual({ edg: 1, idx: 1 });
-    expect(routeText()).toBe('session?x=1');
+    expect(routeText()).toBe('player?x=1');
   });
 
   it('replaces in place, keeping the index', () => {
@@ -60,19 +60,21 @@ describe('navigate', () => {
 
   it('does not push the address it is already on', () => {
     bootRouter();
-    act(() => navigate('/sessions/5'));
+    act(() => navigate('/players/p'));
     const before = window.history.length;
-    act(() => navigate('/sessions/5'));
+    act(() => navigate('/players/p'));
     expect(window.history.length).toBe(before);
   });
 
   it('scrolls to the top on a push, unless asked to keep the scroll', () => {
     const scrollTo = vi.spyOn(window, 'scrollTo');
-    act(() => navigate('/sessions/5'));
+    act(() => navigate('/players/p'));
     expect(scrollTo).toHaveBeenCalledWith(0, 0);
     scrollTo.mockClear();
-    act(() => navigate('/players/p', { keepScroll: true }));
-    act(() => navigate('/players/q', { replace: true }));
+    act(() => navigate('/players/q', { keepScroll: true }));
+    expect(window.location.pathname).toBe('/players/q');
+    act(() => navigate('/players/r', { replace: true }));
+    expect(window.location.pathname).toBe('/players/r');
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
@@ -83,8 +85,8 @@ describe('navigate', () => {
   });
 
   it('currentPath is pathname + search', () => {
-    act(() => navigate('/sessions/5?utm=dc'));
-    expect(currentPath()).toBe('/sessions/5?utm=dc');
+    act(() => navigate('/players/p?utm=dc'));
+    expect(currentPath()).toBe('/players/p?utm=dc');
   });
 });
 
@@ -133,14 +135,14 @@ describe('popstate', () => {
 describe('goBack', () => {
   it('steps back through our own entries', async () => {
     bootRouter();
-    act(() => navigate('/sessions/5'));
+    act(() => navigate('/players/p'));
     goBack();
     await waitFor(() => expect(window.location.pathname).toBe('/'));
   });
 
   it('from the entry the tab landed on, replaces with the fallback instead of leaving the site', () => {
     // P1-2: bootRouter pads `/` under a fresh deep entry, so idx 0 on a deep address is set by hand here.
-    window.history.replaceState({ edg: 1, idx: 0 }, '', '/sessions/5');
+    window.history.replaceState({ edg: 1, idx: 0 }, '', '/players/p');
     const before = window.history.length;
     render(<RouteName />);
     act(() => goBack());
@@ -155,12 +157,12 @@ describe('<Link>', () => {
     bootRouter();
     render(
       <>
-        <Link to="/sessions/5">周五五排</Link>
+        <Link to="/players/p">选手详情</Link>
         <RouteName />
       </>,
     );
-    const link = screen.getByRole('link', { name: '周五五排' });
-    expect(link).toHaveAttribute('href', '/sessions/5');
+    const link = screen.getByRole('link', { name: '选手详情' });
+    expect(link).toHaveAttribute('href', '/players/p');
     const guard = stopDocumentNavigation();
     try {
       fireEvent.click(link);
@@ -168,14 +170,14 @@ describe('<Link>', () => {
     } finally {
       guard.restore();
     }
-    expect(window.location.pathname).toBe('/sessions/5');
-    expect(routeText()).toBe('session');
+    expect(window.location.pathname).toBe('/players/p');
+    expect(routeText()).toBe('player');
   });
 
   it('leaves modified clicks, other buttons, other targets and API paths to the browser', () => {
     render(
       <>
-        <Link to="/sessions/5">本页</Link>
+        <Link to="/players/p">本页</Link>
         <Link to="/sessions/6" target="_blank">
           新标签
         </Link>
@@ -201,11 +203,11 @@ describe('<Link>', () => {
   it('runs the caller’s onClick first, and respects its preventDefault', () => {
     const onClick = vi.fn((event: React.MouseEvent) => event.preventDefault());
     render(
-      <Link to="/sessions/5" onClick={onClick}>
-        周五五排
+      <Link to="/players/p" onClick={onClick}>
+        选手详情
       </Link>,
     );
-    fireEvent.click(screen.getByRole('link', { name: '周五五排' }));
+    fireEvent.click(screen.getByRole('link', { name: '选手详情' }));
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(window.location.pathname).toBe('/');
   });

@@ -65,7 +65,6 @@ const appRoutes = {
       violations: [],
       tiers: [],
       weeklyHeal: 5,
-      weeklyBonusCap: 5,
       statementWindowHours: 24,
       aiEnabled: false,
       maxBatchSubjects: 5,
@@ -75,7 +74,6 @@ const appRoutes = {
   'GET /api/records?limit=50': () => json(200, { records: [] }),
   'GET /api/me': () => json(200, { user: null, pending: { statements: 0, appeals: 0 } }),
   'GET /api/report/latest': () => json(200, { report: null }),
-  'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
   'GET /api/records/7': () => json(200, { record: CASE }),
   'GET /api/users/p': () =>
     json(200, {
@@ -112,7 +110,7 @@ describe('App — links into the app', () => {
       const calls = mockFetch(appRoutes);
       window.history.replaceState(null, '', `/?case=${bad}`);
       const { unmount } = render(<App />);
-      await screen.findByRole('heading', { name: /约局/ });
+      await screen.findByRole('heading', { name: '信誉榜' });
       await settle();
       expect(calls.some((c) => c.path.startsWith('/api/records/')), bad).toBe(false);
       expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
@@ -131,12 +129,24 @@ describe('App — links into the app', () => {
     expect(window.location.pathname).toBe('/');
   });
 
-  it('?session= opens the session', async () => {
+  it('?session= remains home, announces retirement in a toast and strips only its parameters', async () => {
     const calls = mockFetch(appRoutes);
-    window.history.replaceState(null, '', '/?session=3');
+    window.history.replaceState(null, '', '/?session=3&utm=dc');
     render(<App />);
-    await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.path === '/api/sessions/3')).toBe(true));
-    expect(window.location.search).toBe('');
-    expect(window.location.pathname).toBe('/sessions/3');
+    const notice = await screen.findByText('约局功能已下线');
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(window.location.search).toBe('?utm=dc');
+    expect(window.location.pathname).toBe('/');
+    expect(calls.some((c) => c.path === '/api/sessions/3')).toBe(false);
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+  it('a case still takes priority when a session parameter is also present', async () => {
+    mockFetch(appRoutes);
+    window.history.replaceState(null, '', '/?session=3&case=7&utm=dc');
+    render(<App />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(window.location.pathname).toBe('/players/p/cases/7');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
   });
 });

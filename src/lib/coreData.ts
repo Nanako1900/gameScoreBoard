@@ -1,11 +1,10 @@
 // The home page's data: loaded all at once on the first visit, then refreshed
-// by key (P0-3). Moved out of App.tsx; the first-load request URLs are unchanged.
+// by key (P0-3). Only account, board, cases and report data are loaded.
 import {
   getConfig,
   getLatestReport,
   getLeaderboard,
   getMe,
-  getMyInvites,
   getRecords,
 } from '../api';
 import type {
@@ -13,7 +12,6 @@ import type {
   PendingCounts,
   PublicUser,
   RecordItem,
-  InvitedSessionItem,
   User,
   WeeklyReport,
 } from '../types';
@@ -33,8 +31,6 @@ export interface CoreData {
   pending: PendingCounts;
   /** Cases where the signed-in user still owes a statement. */
   myPending: RecordItem[];
-  /** Sessions the user was invited to and has not answered. */
-  invites: InvitedSessionItem[];
   report: WeeklyReport | null;
 }
 
@@ -43,26 +39,17 @@ export interface ReloadResult {
   failed: readonly { key: CoreKey; error: unknown }[];
 }
 
-type MePart = Pick<CoreData, 'me' | 'pending' | 'myPending' | 'invites'>;
+type MePart = Pick<CoreData, 'me' | 'pending' | 'myPending'>;
 
 const NO_PENDING: PendingCounts = { statements: 0, appeals: 0 };
 
-/** 'me' and its two follow-ups; a failed invites read falls back to `fallbackInvites`. */
-async function loadMe(fallbackInvites: InvitedSessionItem[]): Promise<MePart> {
+/** The current account plus cases where it owes a statement. */
+async function loadMe(): Promise<MePart> {
   const { user, pending = NO_PENDING } = await getMe();
-  // Only fetch the follow-ups that can possibly be non-empty: /api/me already
-  // tells us whether anything is pending, and invites need a session at all.
-  const [myPending, invites] = await Promise.all([
-    user && pending.statements > 0
-      ? getRecords({ mine: 'pending', limit: PENDING_STATEMENTS_LIMIT }).then((r) => r.records)
-      : Promise.resolve<RecordItem[]>([]),
-    user
-      ? getMyInvites()
-          .then((r) => r.sessions)
-          .catch(() => fallbackInvites)
-      : Promise.resolve<InvitedSessionItem[]>([]),
-  ]);
-  return { me: user, pending, myPending, invites };
+  const myPending = user && pending.statements > 0
+    ? (await getRecords({ mine: 'pending', limit: PENDING_STATEMENTS_LIMIT })).records
+    : [];
+  return { me: user, pending, myPending };
 }
 
 /** A missing report is normal (first week, or nothing happened) — never fatal. */
@@ -76,7 +63,7 @@ const LOADERS: Record<CoreKey, (prev: CoreData) => Promise<Partial<CoreData>>> =
   config: async () => ({ config: await getConfig() }),
   leaderboard: async () => ({ participants: (await getLeaderboard()).participants }),
   records: async () => ({ records: (await getRecords({ limit: CORE_FEED_LIMIT })).records }),
-  me: (prev) => loadMe(prev.invites),
+  me: () => loadMe(),
   report: async (prev) => ({ report: await loadReport(prev.report) }),
 };
 
@@ -86,7 +73,7 @@ export async function loadInitialCore(): Promise<CoreData> {
     getConfig(),
     getLeaderboard(),
     getRecords({ limit: CORE_FEED_LIMIT }),
-    loadMe([]),
+    loadMe(),
     loadReport(null),
   ]);
   return { config, participants: leaderboard.participants, records: records.records, ...me, report };

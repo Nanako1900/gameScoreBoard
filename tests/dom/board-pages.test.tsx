@@ -3,13 +3,12 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BoardPage, type BoardData } from '../../src/components/BoardPage';
 import { App } from '../../src/App';
-import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
 import { PlayerDetail } from '../../src/components/PlayerDetail';
 import { useDesktopViewport } from './viewport';
 import type { Config, WeeklyReport } from '../../src/types';
 import type { BoardTab } from '../../src/lib/routes';
 
-const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5, weeklyBonusCap: 5,
+const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5,
   statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2026-11-01T16:00:00Z', boardTzOffsetHours: 8 };
 const REPORT: WeeklyReport = { week_start: '2026-10-19', narrative: '大家好好约局。', source: 'ai', created_at: '2026-10-26 02:30:00',
   stats: { weekStart: '2026-10-19', weekEnd: '2026-10-25', sessionsPlayed: 3, sessionsCollapsed: 0,
@@ -23,7 +22,6 @@ function mockApp() {
   const routes: Record<string, unknown> = {
     '/api/config': CONFIG, '/api/leaderboard': { participants: [] }, '/api/records?limit=50': { records: [] },
     '/api/me': { user: null, pending: { statements: 0, appeals: 0 } }, '/api/report/latest': { report: REPORT },
-    '/api/sessions?scope=upcoming': { sessions: [] }, '/api/sessions?scope=history': { sessions: [] },
   };
   const fetch = vi.fn((input: RequestInfo | URL) => {
     const path = String(input); const status = routes[path] === undefined ? 404 : 200;
@@ -64,9 +62,9 @@ describe('the board destination', () => {
     expect(screen.queryByText('上周鸽王')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '本周不再显示' })).not.toBeInTheDocument();
   });
-  it('reads heal from config and renders the four guide cards, glossary, and open rules without blurb', () => {
+  it('reads heal from config and renders the guide cards, glossary, and open rules without blurb', () => {
     const { container } = render(<BoardPage tab="rules" config={CONFIG} me={null} />);
-    for (const heading of ['约局', '守约', '分数与回血', '出事了怎么办', '用词表']) {
+    for (const heading of ['守约', '分数与回血', '出事了怎么办', '用词表']) {
       expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
     }
     expect(screen.getByText(/每人从 100 分起/)).toHaveTextContent('回血 +5');
@@ -75,6 +73,8 @@ describe('the board destination', () => {
     expect(screen.getByRole('heading', { name: '计分规则' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /计分规则/ })).not.toBeInTheDocument();
     expect(container.querySelector('.rules__tier-blurb')).toBeNull();
+    expect(container.textContent).not.toMatch(/约局|点名|守约守时|组局召集/);
+    expect(screen.getByText(/迟到、放鸽子由裁判记一笔。/)).toBeInTheDocument();
   });
   it.each(['list', 'feed', 'report'] as BoardTab[])('has an empty state without data: %s', (tab) => {
     render(<BoardPage tab={tab} config={CONFIG} me={null} />);
@@ -91,13 +91,10 @@ describe('board route integration', () => {
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
     expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus();
   });
-  it('links the hall to full report and history; history opens with the existing API', async () => {
+  it('links home to the full report and all recent activity', async () => {
     mockApp(); render(<App />);
     expect(await screen.findByRole('link', { name: '读全文' })).toHaveAttribute('href', '/board/report');
-    expect(screen.getByRole('link', { name: '历史' })).toHaveAttribute('href', '/sessions/history');
-    await userEvent.setup().click(screen.getByRole('link', { name: '历史' }));
-    expect(await screen.findByText('还没有开过的局。')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '约局历史' })).toHaveFocus();
+    expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
   });
   it.each(['/board', '/board/report', '/board/rules'])('keeps block labels unique over the hidden hall: %s', async (path) => {
     window.history.replaceState(null, '', path); mockApp(); render(<App />);
@@ -106,11 +103,8 @@ describe('board route integration', () => {
     const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
-  it('offers secondary destinations for missing sessions and players', async () => {
+  it('offers a board destination for a missing player', async () => {
     mockApp();
-    const first = render(<SessionDetailDialog sessionId={99} me={null} variant="page" onClose={() => {}} onChanged={() => {}} />);
-    expect(await screen.findByRole('link', { name: '看约局历史' })).toHaveAttribute('href', '/sessions/history');
-    expect(screen.getAllByRole('link', { name: '回大厅' })).toHaveLength(1); first.unmount();
     render(<PlayerDetail userId="gone" me={null} config={CONFIG} variant="page" onClose={() => {}} onChanged={() => {}} onOpenStatement={() => {}} />);
     expect(await screen.findByRole('link', { name: '看信誉榜' })).toHaveAttribute('href', '/board');
     expect(screen.getAllByRole('link', { name: '回大厅' })).toHaveLength(1);

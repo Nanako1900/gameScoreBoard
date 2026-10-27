@@ -1,17 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../../src/api';
 import { ToastProvider, useToast, type ToastApi, type ToastOptions } from '../../src/components/Toast';
-import { useUndo, type UndoRequest } from '../../src/lib/useUndo';
 
-// P0-3: the Toast and useUndo primitives (spec §6.4).
+// P0-3: the Toast primitive (spec §6.4).
 
 let api: ToastApi | null = null;
-let undo: ((request: UndoRequest) => void) | null = null;
 
 function Probe(): null {
   api = useToast();
-  undo = useUndo();
   return null;
 }
 
@@ -36,7 +32,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   api = null;
-  undo = null;
 });
 
 describe('Toast', () => {
@@ -130,42 +125,5 @@ describe('Toast', () => {
     render(<ToastProvider><Probe /></ToastProvider>);
     expect(show({ message: '   ' })).toBe(-1);
     expect(document.querySelectorAll('.toast')).toHaveLength(0);
-  });
-});
-
-describe('useUndo', () => {
-  async function clickUndo(): Promise<void> {
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '撤销' }));
-    });
-  }
-
-  it('undoes, says so, then calls onUndone', async () => {
-    const onUndone = vi.fn();
-    const reverse = vi.fn(() => Promise.resolve());
-    render(<ToastProvider><Probe /></ToastProvider>);
-    act(() => undo?.({ message: '已改成：不来', undo: reverse, onUndone }));
-    await clickUndo();
-    expect(reverse).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('已撤销')).toBeInTheDocument();
-    expect(onUndone).toHaveBeenCalledTimes(1);
-  });
-
-  it('a failed undo shows the server’s reason, and onUndone is not called', async () => {
-    const onUndone = vi.fn();
-    render(<ToastProvider><Probe /></ToastProvider>);
-    act(() =>
-      undo?.({ message: '已改成：不来', undo: () => Promise.reject(new ApiError('约局已开始', 409)), onUndone }),
-    );
-    await clickUndo();
-    expect(screen.getByText('撤销没成功：约局已开始')).toBeInTheDocument();
-    expect(onUndone).not.toHaveBeenCalled();
-  });
-
-  it('any other failure: a generic retry message', async () => {
-    render(<ToastProvider><Probe /></ToastProvider>);
-    act(() => undo?.({ message: '已改成：不来', undo: () => Promise.reject(new Error('offline')) }));
-    await clickUndo();
-    expect(screen.getByText('撤销没成功，请稍后重试')).toBeInTheDocument();
   });
 });

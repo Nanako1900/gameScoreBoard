@@ -21,7 +21,7 @@ import {
 import { COMMANDS, handleCommand } from './discord/commands';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
-import { handleRsvpButton, parseRsvpButton } from './discord/sessions';
+import { handleRetiredSessionButton } from './discord/sessions-off';
 import { handleEscalationButton, parseEscalationButton } from './discord/escalation';
 import { resetOffsetHours } from '../../worker/time';
 import {
@@ -148,7 +148,6 @@ function main(): void {
     frontendUrl: config.frontendUrl,
     readOnly: envFlag(process.env.READ_ONLY, false, 'READ_ONLY'),
     offsetHours: resetOffsetHours(process.env.RESET_TZ_OFFSET),
-    sessionCards: config.sessionChannelId !== null,
   };
   // The Worker's Env for the domain calls that need one: a statement sent from
   // Discord is judged right away, with the same AI settings as the web.
@@ -179,7 +178,6 @@ function main(): void {
       api: restChannelApi(ready.rest),
       config: {
         verdictChannelId: config.verdictChannelId,
-        sessionChannelId: config.sessionChannelId,
         frontendUrl: config.frontendUrl,
         offsetHours: ctx.offsetHours,
       },
@@ -191,11 +189,6 @@ function main(): void {
       config.verdictChannelId
         ? `posting verdicts and weekly reports to channel ${config.verdictChannelId}`
         : 'DISCORD_VERDICT_CHANNEL_ID is not set: verdicts and weekly reports are not posted',
-    );
-    console.log(
-      config.sessionChannelId
-        ? `posting session cards to channel ${config.sessionChannelId}`
-        : 'DISCORD_SESSION_CHANNEL_ID is not set: no session cards',
     );
   });
   client.on(Events.ShardReady, () => (gateway = 'ready'));
@@ -227,16 +220,16 @@ function main(): void {
     } else if (interaction.isButton()) {
       const verdictId = parseVerdictButton(interaction.customId);
       const caseButton = parseCaseButton(interaction.customId);
-      const rsvp = parseRsvpButton(interaction.customId);
+      const retiredSession = handleRetiredSessionButton(interaction.customId);
       const escalation = parseEscalationButton(interaction.customId);
       if (escalation) {
         // Pressed in the filing judge's DM: no guild check.
         work = answer(interaction, 'escalation button', () =>
           handleEscalationButton(escalation.recordId, escalation.choice, caller, ctx),
         );
-      } else if (rsvp) {
-        // On a card in the channel or on an invitation DM: no guild check.
-        work = answer(interaction, 'rsvp button', () => handleRsvpButton(rsvp.sessionId, rsvp.choice, rsvp.startsAt, caller, ctx));
+      } else if (retiredSession) {
+        // Old channel cards and invitation DMs both receive a private notice.
+        work = answer(interaction, 'retired session button', async () => retiredSession);
       } else if (verdictId !== null) {
         work = answer(interaction, 'verdict button', () => handleVerdictButton(verdictId, caller, ctx), {
           guildId: config.guildId,

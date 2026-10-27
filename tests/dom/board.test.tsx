@@ -144,7 +144,7 @@ describe('WeekHighlights', () => {
     const { rerender } = render(<WeekHighlights records={[onTime(2, 'a'), OLD]} nextResetAt={NEXT_RESET} />);
     expect(screen.getByText('本周全员守约 🎉')).toBeInTheDocument();
     rerender(<WeekHighlights records={[rec(2, 'a', 'no_show', -12), OLD]} nextResetAt={NEXT_RESET} />);
-    expect(screen.getByText('本周还没人摘星，今晚去约一局？')).toBeInTheDocument();
+    expect(screen.getByText('本周还没人摘星。')).toBeInTheDocument();
   });
 
   it('is never a heading', () => {
@@ -248,7 +248,6 @@ describe('RulesPanel', () => {
     violations: [],
     tiers: [],
     weeklyHeal: 5,
-    weeklyBonusCap: 5,
     statementWindowHours: 12,
     aiEnabled: false,
     maxBatchSubjects: 5,
@@ -287,7 +286,7 @@ describe('WelcomeCard', () => {
   it('says what the board is, with the heal from config', () => {
     renderCard();
     expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
-    expect(screen.getByText('说了来就来；来不了，开局前说一声。')).toBeInTheDocument();
+    expect(screen.getByText('说了来就来；来不了，提前说一声。')).toBeInTheDocument();
     expect(screen.getByText(/放鸽子会被记一笔，每周一 0 点自动回血/)).toHaveTextContent('+5');
     expect(screen.getByRole('link', { name: '用 Nanako 账号登录' })).toHaveAttribute('href', '/auth/login');
     expect(screen.queryByRole('heading', { name: /约局/ })).not.toBeInTheDocument();
@@ -382,7 +381,6 @@ describe('App — the board on the home page', () => {
         violations: [],
         tiers: [],
         weeklyHeal: 5,
-        weeklyBonusCap: 5,
         statementWindowHours: 12,
         aiEnabled: false,
         maxBatchSubjects: 5,
@@ -391,15 +389,13 @@ describe('App — the board on the home page', () => {
     'GET /api/leaderboard': () => json(200, { participants: TIED }),
     'GET /api/records?limit=50': () => json(200, { records: STAR_FEED }),
     'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
-    'GET /api/me/invites': () => json(200, { sessions: [] }),
     'GET /api/report/latest': () => json(200, { report: REPORT }),
-    'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
   });
 
-  it('signed out: welcome card first, one /约局/ heading, stars in the board, no 鸽王 anywhere', async () => {
+  it('signed out: welcome card first, recent cases and stars in the board, no 鸽王 anywhere', async () => {
     mockFetch(routes(null));
     render(<App />);
-    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '最近案件' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
     expect(screen.getByText('⭐', { exact: false }).closest('.lb')).not.toBeNull();
     expect(document.body.textContent).not.toContain('鸽王');
@@ -414,7 +410,7 @@ describe('App — the board on the home page', () => {
     await user.click(await screen.findByRole('link', { name: '30 秒看懂' }));
     expect(window.location.pathname).toBe('/board/rules');
     await waitFor(() => expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus());
-    for (const title of ['约局', '守约', '分数与回血', '出事了怎么办', '计分规则']) {
+    for (const title of ['守约', '分数与回血', '出事了怎么办', '计分规则']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: /计分规则/ })).not.toBeInTheDocument();
@@ -423,7 +419,7 @@ describe('App — the board on the home page', () => {
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {
     mockFetch(routes(ME));
     render(<App />);
-    await screen.findByRole('heading', { name: /约局/ });
+    await screen.findByRole('heading', { name: '最近案件' });
     await settle();
     expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);

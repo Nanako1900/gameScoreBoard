@@ -1,8 +1,8 @@
 # EDG 信誉分 — 前后端契约 (single source of truth for implementers)
 
 > Both the Worker (`worker/*`) and the React frontend (`src/*`) MUST match this
-> document exactly. Scoring constants live in `shared/scoring.ts` and attendance
-> mapping in `shared/attendance.ts` — import them, never re-hardcode. Do not
+> document exactly. Scoring constants live in `shared/scoring.ts`; historical
+> case reclassification rules live in `shared/attendance.ts` — import them, never re-hardcode. Do not
 > invent new endpoints or field names.
 >
 > Design rationale — why the trial flow exists, the threat model, and why
@@ -33,10 +33,6 @@
 | `worker/case-filing.ts` | filing (single + batch) and the human overrides on the AI's category |
 | `worker/case-reads.ts` | case reads + row→JSON mapping |
 | `worker/case-limits.ts` | write-side validation and the per-day filing caps |
-| `worker/sessions.ts` | 约局: create / RSVP / roll call / settle |
-| `worker/invitable.ts` | invite candidates, including friends who are not on the board |
-| `worker/session-invites.ts` | invite more people to an existing session without changing existing replies |
-| `worker/session-extras.ts` | batch reads for invitation context, attendance summaries and going-player previews |
 | `worker/ai/config.ts` | runtime AI config resolution (`app_settings` > env > default) |
 | `worker/ai/prompt.ts` | prompt building, input sanitisation, verdict parsing |
 | `worker/ai/provider.ts` | sentencing client (OpenAI-compatible), never throws |
@@ -71,7 +67,6 @@ export interface Env {
   AI_SYSTEM_PROMPT?: string;
   AI_TEMPERATURE?: string;
   STATEMENT_WINDOW_HOURS?: string;     // default 12
-  SESSION_ORGANIZER_CAN_FILE?: string; // 'false' = organizers may only record attendance
 
   // Split deployment (see DEPLOY-EDGEONE.md)
   FRONTEND_ORIGIN?: string;
@@ -106,7 +101,7 @@ interface ViolationDef {
   accused. `no_show_group` is filed as `no_show` with `escalation_suggested = 1`
   and needs a human tap to promote.
 - **Penalties** run the full trial (statement → AI verdict).
-- **Bonuses** settle instantly at `base`, bounded by `WEEKLY_BONUS_CAP`.
+- **Bonus types** remain in `VIOLATIONS` only for historical records; new manual filings reject them with 400 「加分类型已停用」. Rules list penalties only.
 - `clampVerdictDelta(def, raw)` is applied to **every** verdict server-side. It is
   the decisive guard: a penalty can never become a bonus, and no delta can leave
   `[min, max]` or exceed `MAX_SINGLE_PENALTY`. See `docs/DESIGN-v2.md` §1.4.
@@ -151,7 +146,7 @@ interface RecordItem {
   claim_summary: string | null;  // AI's one-line condensation; the feed headline
   classified_by: 'ai' | 'fallback' | 'human' | 'derived';
   escalation_suggested: boolean; // AI wants no_show_group; a judge must co-sign
-  session_id: number | null;     // originating 约局, if any
+  session_id: number | null;     // originating historical session, if any; read-only context is retained
   statement: string | null;      // PRIVATE: the subject's one statement
   statement_at: string | null;   // public: whether (and when) they spoke up
   appeal_reason: string | null;  // PRIVATE: why the subject contested; for the reviewing admin
@@ -182,56 +177,12 @@ interface RecordItem {
   pending_hidden?: true;
 }
 
-interface SessionItem {
-  id: number;
-  organizer: { id: string; username: string; avatar_url: string | null };
-  title: string; game: string | null;
-  starts_at: string;             // ISO 8601 UTC — NOT the sqlite datetime format
-  duration_min: number | null; capacity: number | null; note: string | null;
-  status: 'open' | 'cancelled' | 'settled';
-  settled_at: string | null; created_at: string;
-  counts: { invited: number; going: number; maybe: number; out: number };
-  my_rsvp: 'invited' | 'going' | 'maybe' | 'out' | null;
-  going_preview: { id: string; username: string; avatar_url: string | null }[];  // up to GOING_PREVIEW_MAX (5) who said 来, earliest answer first; never a score
-  cancel_reason: string | null;  // P2-3: the organizer's reason (trimmed, ≤ 80 chars); public like `note`
-  cancelled_at: string | null;   // P2-3: sqlite datetime format; null if not cancelled (or cancelled before P2-3)
-}
-
-interface SessionDetail extends SessionItem { players: SessionPlayer[] }
-
-// P2-3: GET /api/sessions?scope=history
-interface HistorySessionItem extends SessionItem {
-  attendance_summary: { on_time: number; late: number; no_show: number; left_early: number; excused: number }; // all five keys
-}
-
-// P2-3: GET /api/me/invites — the context is the caller's own, never shown elsewhere
-interface InvitedSessionItem extends SessionItem {
-  invite_reason: 'new' | 'moved';            // 'moved' = they had answered, then the time changed
-  prev_rsvp: 'going' | 'maybe' | 'out' | null; // what they had said to the old time
-  prev_starts_at: string | null;               // the old time (ISO), as they answered it
-}
-
-interface SessionPlayer {
-  user: { id: string; username: string; avatar_url: string | null };
-  rsvp: Rsvp; rsvp_at: string;
-  attendance: Attendance | null; late_minutes: number | null;
-  attendance_note: string | null; record_id: number | null;
-  is_participant: boolean;
-}
-
-interface CaseDraft {            // roll-call proposal; nothing is filed yet
-  user_id: string; username: string;
-  type: ViolationType; kind: 'penalty' | 'bonus';
-  range: { min: number; max: number; base: number };
-  suggested_claim: string; already_filed: boolean;
-}
-
 interface HistoryPoint { at: string; score: number; }
 ```
 
 > **Timestamp formats are not interchangeable.** `created_at` / `deadline_at` use
-> D1's `datetime('now')` shape (`YYYY-MM-DD HH:MM:SS`, UTC); `starts_at` is ISO
-> 8601. SQL compares both as plain strings, so a query must use the matching
+> D1's `datetime('now')` shape (`YYYY-MM-DD HH:MM:SS`, UTC); historical session
+> `starts_at` is ISO 8601. SQL compares both as plain strings, so a query must use the matching
 > format — `'T'` sorts above `' '`, which silently inverts same-day comparisons.
 
 ## Endpoints
@@ -241,13 +192,13 @@ Booleans in JSON are real booleans (convert D1's 0/1). All error responses:
 
 ### Public (no auth)
 
-Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`,
-`/api/sessions/:id`) shape each case for the caller (see `RecordItem`'s PRIVATE
+Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`)
+shape each case for the caller (see `RecordItem`'s PRIVATE
 fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/config`
-  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt, boardTzOffsetHours }`
+  → `{ violations, tiers, weeklyHeal, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt, boardTzOffsetHours }`
   `boardTzOffsetHours` is `RESET_TZ_OFFSET` as a number of hours (default 8; may be fractional, e.g. 5.5): the board's
-  time zone, the one `/yue` and the weekly reset use. Times are still sent as ISO instants; the web shows them on this clock.
+  time zone used by the weekly reset and report boundaries.
   Also fires (non-blocking) three idempotent jobs: the weekly heal, the
   overdue-case sweep, and last week's report generation.
 - `GET /api/leaderboard` → `{ participants: PublicUser[] }` — `is_participant = 1`, `score DESC, username ASC`.
@@ -256,11 +207,6 @@ fields) and answer `Cache-Control: private, no-store`.
   `mine=pending` requires auth and returns only the caller's `awaiting_statement` cases.
 - `GET /api/records/:id` → `{ record }`.
 - `GET /api/users/:id` → `{ user: PublicUser, records: RecordItem[], history: HistoryPoint[] }`.
-- `GET /api/sessions?scope=upcoming|past|mine` → `{ sessions: SessionItem[] }` (`mine` requires auth).
-  `scope=history[&before=<id>]` → `{ sessions: HistorySessionItem[] }`: sessions that have started,
-  **cancelled ones included** (`past` leaves them out), newest first (`starts_at`, then id), 20 a page;
-  `before` is the last id of the previous page (an unknown id gives `[]`; not a positive integer → 400).
-- `GET /api/sessions/:id` → `{ session: SessionDetail, records: RecordItem[] }`.
 - `GET /api/avatar?u=<https url>` → proxied image (worker/avatar.ts). The host
   must be exactly the OAuth host or one in `AVATAR_ALLOWED_HOSTS`, or the URL must
   be an exact stored avatar URL; this app's own hosts, IP literals and localhost
@@ -283,16 +229,6 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/me` → `{ user: User | null, pending: { statements: number, appeals: number } }` (200 either way).
 - `POST /api/me/roles` `{ is_participant?, is_judge? }` → `{ user }`.
 - `POST /api/me/display-name` `{ display_name: string | null }` → `{ user }`.
-- `GET /api/me/invitable` → `{ users: InvitableUser[] }`, `Cache-Control: private, no-store`
-  (P2-2). Everyone but the caller (at most 500), each exactly `{ id, username,
-  avatar_url, is_participant, last_played_with_me_at }` — `username` is the display
-  name; never a score, a role, an email or anything about Discord.
-  `last_played_with_me_at` is the `starts_at` of the latest session that has started,
-  was not cancelled, and where both said `going` and neither was marked `no_show` /
-  `excused` (unmarked counts as there); `null` if none. Order: people played with
-  (latest first), then participants, then name, then id. 401 signed out. An older
-  API answers 404: the client hides the invite entry.
-
 **Cases**
 - `POST /api/records` — two shapes, both requiring `is_judge`:
   - **v3 default (batch, AI classifies):** `{ subject_ids: string[], claim, extras?, note? }`
@@ -302,12 +238,11 @@ fields) and answer `Cache-Control: private, no-store`.
     **Partial failure is not an error**: an invalid subject lands in `failed` and
     the rest are still filed, so a judge never loses everything they typed.
   - **Deterministic (single):** `{ subject_id, type?, claim?, note? }` → `{ record, records, failed }`.
-    Used by roll-call settlement, bonuses, and corrections. Omitting `type` here
-    also triggers AI classification.
+    Used when the judge already knows a penalty type. Omitting `type` here
+    also triggers AI classification; explicit bonus types return 400 「加分类型已停用」.
   - Common rules: reject self-reports, unknown types, non-participants; penalties
     require `claim` (≥ `MIN_CLAIM_LEN`) and open `awaiting_statement` with
-    `delta = 0` and `deadline_at = now + STATEMENT_WINDOW_HOURS`; bonuses settle
-    immediately at `base` under `WEEKLY_BONUS_CAP`; rate limits ≤ 40 cases per
+    `delta = 0` and `deadline_at = now + STATEMENT_WINDOW_HOURS`; rate limits ≤ 40 cases per
     reporter / 24h and ≤ 5 per subject / 24h → 429.
 - `POST /api/records/:id/escalate` → `{ record }`. Filing judge or admin; promotes
   a flagged case to `no_show_group`. `awaiting_statement` only — after a verdict
@@ -316,8 +251,8 @@ fields) and answer `Cache-Control: private, no-store`.
   Same rules as `escalate`: filing judge or admin, a flagged case, `awaiting_statement`
   only (400 otherwise), 409 if it changed meanwhile.
 - `POST /api/records/:id/reclassify` `{ type }` → `{ record }`. Filing judge or
-  admin overrides the AI's category, pre-verdict, penalties only. A roll-call case
-  (filed by settling a session) may only move between `no_show` and
+  admin overrides the AI's category, pre-verdict, penalties only. A historical roll-call case
+  (`classified_by = 'derived'`) may only move between `no_show` and
   `no_show_group` unless an admin does it — the charge follows the roll call.
 - `POST /api/records/:id/statement` `{ statement }` → `{ record }`. Subject only,
   `awaiting_statement` only, **once**. Claims the case atomically and runs the
@@ -328,61 +263,15 @@ fields) and answer `Cache-Control: private, no-store`.
 - `POST /api/records/:id/revoke` → `{ record }`. Admin anytime, or the reporter
   within 15 min of creation. Reverses the applied delta.
 
-**Sessions**
-- `POST /api/sessions` `{ starts_at, invite?, title?, game?, duration_min?, capacity?, note? }`
-  → `{ session }`. Any signed-in user. Only `starts_at` is required — the title is
-  **synthesised server-side** from the time (a client cannot inject one). Everyone
-  in `invite` (max 20) lands in `rsvp='invited'`; unknown ids are dropped rather
-  than failing creation. The organizer is auto-RSVP'd `going`. **429** when the
-  organizer already has 5 open sessions still ahead, or created 10 in the last
-  24 h (checked again inside the write, so parallel creates cannot slip past).
-  `starts_at` may not be in the past (5 minutes' grace) nor more than 90 days ahead.
-- `PATCH /api/sessions/:id` → `{ session }`. Organizer/admin, `open` only, and only
-  before it starts (400 afterwards). A new `starts_at` (a different instant, not
-  just another spelling) puts every other player — yes, maybe or no — back to
-  `invited`: they answer again for the new time.
-- `POST /api/sessions/:id/cancel` `{ reason? }` → `{ session }`. The body is optional (none = no
-  reason). `reason` is trimmed and cut to 80 characters; blank or not a string → null. Stored with
-  `cancelled_at`; cancelling again changes neither. The cancel DM quotes it.
-- `POST /api/sessions/:id/invite` `{ user_ids: string[] }` → `{ session, added, skipped }` (P2-1).
-  Invite more people after creation. Organizer/admin (403 first, like `PATCH`), `open`
-  and not started (400). `user_ids` is required and not empty; at most 20 distinct ids
-  at once, the session's organizer dropped (nobody left → 200 with `added: 0`). The
-  roster never grows past 50 by invitation (400 「这局最多 50 人，已经有 N 人了」).
-  New people land in `invited`; a row already there — going, maybe, out or invited — is
-  never touched, and unknown ids are dropped. `added` = rows inserted, `skipped` = the
-  other requested ids. On PostgreSQL each new row queues one invitation DM under the
-  same allowances as at creation; nothing in the answer says who can be reached by DM.
-- `POST /api/sessions/:id/rsvp` `{ rsvp, starts_at? }` → `{ session }`. Self only, and only
-  `going | maybe | out` — `invited` is organizer-assigned and rejected here.
-  `starts_at` is the start time the client showed: for `going` / `maybe`, **409**
-  if the session has moved since (nothing is written; reload and answer again).
-  Omitted, the answer is to the current time (but still 409 if a move lands
-  between the read and the write).
-  Blocked once the session started, is full, or is not `open`. The organizer
-  cannot RSVP out. **Only `going` consumes a capacity slot**, so over-inviting is
-  intentional and safe.
-- `GET /api/me/invites` → `{ sessions: InvitedSessionItem[] }`. Open, future sessions the
-  caller was invited to and has not answered. Drives the one-tap invite banner. Each says why:
-  `invite_reason: 'moved'` with `prev_rsvp` / `prev_starts_at` when the caller had answered and the
-  time then changed (a later move keeps the time they answered; answering again clears it), else `'new'`.
-- `POST /api/sessions/:id/rollcall` `{ entries: [{ user_id, attendance, late_minutes?, note? }] }`
-  → `{ session, drafts: CaseDraft[] }`. Organizer/admin, after `starts_at`, only
-  for signed-up players. **Writes attendance only — no score changes.** Repeatable
-  until settlement.
-- `POST /api/sessions/:id/settle` `{ file: [{ user_id, type?, claim? }], skip_all? }`
-  → `{ session, created, skipped }`. Organizer/admin, once (409 afterwards).
-  - `skip_all` or an empty `file` settles with **zero** score impact;
-  - only players who answered `going` are filed against — penalties and the
-    `on_time_bonus` alike (an invitee or a `maybe` made no promise);
-  - the violation type is always re-derived server-side from stored attendance;
-    a client `type` is honoured only for `no_show → no_show_group`;
-  - a non-judge organizer may file inside their own session unless
-    `SESSION_ORGANIZER_CAN_FILE="false"`;
-  - `organizer_bonus` is granted automatically when ≥ 2 people who answered
-    `going` actually attended, still bounded by `WEEKLY_BONUS_CAP`.
+### Retired scheduling data
+
+Scheduling and invitation API routes have been removed and return the existing 404 response.
+`game_sessions` and `session_players`, their historical rows and `records.session_id` remain.
+`worker/cases.ts` keeps its read-only historical context lookup; `GET /api/records` still accepts
+`session` to filter those records. There is no new scheduling, attendance, settlement or bonus entry.
 
 ### Weekly report
+
 - `GET /api/report/latest` → `{ report: WeeklyReport | null }` (public, read-only).
   `null` is normal — first week, or nothing has happened yet.
 - Every figure in `stats` is computed in SQL (`worker/report.ts`); the AI writes
@@ -393,7 +282,7 @@ fields) and answer `Cache-Control: private, no-store`.
 - Last week's report is written from **Monday 10:30** board time on (not at
   midnight), and once every case filed that week has been judged — waiting at
   most one statement window past the week's end, plus an hour. Cases, total
-  penalty, group wipes and 最会说话 count the week a case was judged — its first
+  penalty and 最会说话 count the week a case was judged — its first
   `record:<id>` score event for the subject; older rows without that event fall
   back to when they were filed. New stats carry `basis: 'verdict'`; reports
   written before this change keep the numbers they were written with. On the
@@ -401,6 +290,14 @@ fields) and answer `Cache-Control: private, no-store`.
   本周之星 / 鸽王 count score movement within the week (a case judged on Monday
   moves next week's), and neither the weekly heal nor an admin's corrections.
   Until last week's report is out, `/api/report/latest` is the one before.
+- New `stats` contain `basis`, `weekStart`, `weekEnd`, `casesFiled`, `totalPenalty`,
+  `absentVerdicts`, `star`, `pigeon`, `bestTalker` and `harshest`. They do not query
+  `game_sessions` / `session_players` or include `sessionsPlayed`, `sessionsCollapsed`,
+  `attendanceRate`, `topOrganizer` or `upcomingNextWeek`; a week with only old scheduling
+  activity does not generate a new report. AI input and the fallback narrative omit those figures.
+- Stored reports keep their original JSON and narrative. Web and Discord continue to read old
+  reports; any historical scheduling figures they display are hidden when absent or zero.
+  Admin-customized report prompts are not rewritten.
 - On the Node backend, a newly written report is posted to the Discord verdict
   channel (once per week, the latest finished week only) and a rewrite edits
   that post.
@@ -453,27 +350,36 @@ reaches `decided` rather than stranding a player's score.
   double-judge. Capped at 5 per web request, 50 per cron run.
 
 ## Frontend expectations
+
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
   `/api/records?mine=pending` when `pending.statements > 0`. Signed-in readers also load
-  `/api/sessions?scope=mine` and `/api/me/discord`; admins with pending appeals load
+  `/api/me/discord`; admins with pending appeals load
   `/api/records?limit=50&status=appealed`. These supplemental reads settle independently;
   their failure never blocks the page or raises a global notice.
-- Import display constants from `@shared/scoring` and `@shared/attendance`.
+- Import scoring display constants from `@shared/scoring` and board timezone labels from `@shared/boardTime`.
 - A pre-verdict case must never render its `delta` as `0` — show the pending
   range, or 判决后公开 when the API hid it (`pending_hidden`). Such a case says
   only that it exists — for a subject named 老王, 「老王有一起记录在处理中，判决后公开。」
   — and its feed row shows only the name and 「处理中」.
 - Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
   label when it is null (pre-v3 rows).
-- Invitations and other actions the user owes appear in 「要你处理」 before the
-  score and sessions; the weekly report follows the compact board.
+- Home DOM order: 「要你处理」 for signed-in readers / the welcome card for visitors,
+  then the participant's score, `BoardMini`, 「最近案件」 and the compact weekly report.
+  Desktop uses two columns: todo / welcome and recent cases on the left, score / board / report
+  on the right. The same DOM serves both layouts. Recent cases reuse `RecordsFeed` with
+  `previewCount={5}`, retain 「看更多」 and add 「全部动态」 to `/board/feed` below it.
+- Navigation calls the home page 「首页」; no create-session entry remains. Phone bottom tabs are
+  exactly 「首页·N」「信誉榜」「我的」. Judges and admins keep 「记一笔」 in the avatar menu.
+  Todos include statements, escalation, appeal outcomes / admin review, unbound Discord and failed
+  DMs. S1 retains `OnboardingDialog` and these Discord status cards; the welcome wizard is S2.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
   `/?session=<id>` and `/?case=<id>`. Only a positive integer id is read
   (anything else is ignored and simply stripped), and the parameter is
-  translated into that view's own address: `/?session=<id>` becomes
-  `/sessions/<id>`; `/?case=<id>` looks the case up once
+  handled once: `?session=N` stays on the home page（首页）, shows Toast「约局功能已下线」
+  and clears the parameter with replace.
+  `/?case=<id>` looks the case up once
   (`GET /api/records/<id>`) and becomes
   `/players/<subject>/cases/<id>`, where that case is moved (not copied) to the
   top of its subject's page, scrolled to the centre and focused. Other query
@@ -483,31 +389,29 @@ reaches `decided` rather than stranding a player's score.
   「链接里的案件不存在了。」 (any other failure: 「打不开链接里的案件，稍后再试。」).
   These parameters are read on `/` only. `?linked=discord` is stripped and shows
   the Discord-linked notice; `?onboarding=1` (on any path) opens the first-login
-  dialog first, and the link's target opens once it is closed.
+  dialog first; the case target opens or the retired-session Toast appears once it is closed.
 - Routes (`src/lib/routes.ts` parses, `src/lib/router.ts` owns `history`; no
   router library). Only these exist; every other path renders the front-end
   page 「这页不存在」 with a 「回大厅」 link:
 
   | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
   |---|---|---|
-  | `/` | the hall | the hall |
-  | `/sessions/new` (`?again=<id>` optional) | session form page, returning to the created session with replace | center dialog over the hall |
-  | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
-  | `/sessions/<id>/rollcall` | organizer/admin roll call and settlement, sharing the existing local draft | the same page |
-  | `/sessions/history` | history, including cancelled sessions and their reasons | the same page |
+  | `/` | the home page | the home page |
+  | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | the same page |
   | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
-  | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the home page |
   | `/players/<userId>/cases/<id>` | that player's page, the case moved to the top and focused | the same, in the drawer |
   | `/cases/<id>` | alias: looks the case up once, then replaces itself with the row above | the same |
 
-  Numeric ids match `^[1-9]\d{0,14}$` (so `/sessions/07` is not a session). A
+  Case ids match `^[1-9]\d{0,14}$` (so `/cases/07` is invalid). All paths under `/sessions` are retired landings. A
   user id is the OAuth subject: non-empty, at most 128 characters, no NUL,
   always `encodeURIComponent`-ed in the path. When a case's `subject.id` is not
   the `<userId>` in the address, the address is replaced with the subject's —
-  never an error. Not found: `/sessions/<id>` → 「找不到这局，链接可能写错了。」;
-  `/players/<userId>` → 「找不到这位选手。」; a case → 「链接里的案件不存在了。」, any
-  other failure → 「打不开链接里的案件，稍后再试。」. A cancelled session is not a
-  404; it shows as cancelled. A missing session also links to 「看约局历史」; a missing player links to 「看信誉榜」.
+  never an error. `/sessions` and any child path, including `/sessions/new`, `/sessions/history`
+  and `/sessions/<id>/rollcall`, show the fixed title 「约局功能已下线」, body
+  「约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。」 and a 「回首页」 button.
+  Not found: `/players/<userId>` → 「找不到这位选手。」 with 「看信誉榜」; a case →
+  「链接里的案件不存在了。」, any other failure → 「打不开链接里的案件，稍后再试。」.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
   routing never uses the hash: a `popstate` that only changed the hash is
   ignored. Every host must serve `index.html` for any other path (SPA
@@ -528,17 +432,15 @@ reaches `decided` rather than stranding a player's score.
 - Login return. Right before the top-level jump to the API's `/auth/login`, the
   current address (path and query, no hash) is saved as JSON in
   `sessionStorage['edg.return']` (a page not worth coming back to — `/` or an
-  unknown path — saves nothing and drops any old value; a lobby row's
-  「登录后报名」 saves that session's address instead), e.g.
-  `{"v":1,"path":"/sessions/5","savedAt":1761500000000,"intent":{"kind":"rsvp","sessionId":5,"rsvp":"going"}}`
-  (`intent` only when a visitor pressed 来 / 待定 / 不来). On the first signed-in
-  load (the OAuth callback lands on `/`; after the first-login dialog, if one
-  opens) it is read once and always deleted; a valid one saved less than 30
-  minutes ago opens that address. It is only ever an in-app path — at most 512
-  characters, starts with `/` but not `//`, no `\` or `#`, an app route other
-  than `/` — so it can never become an open redirect. The intent only becomes
-  a hint, 「你登录前点的是「来」，确认一下？」: nothing is sent until the user
-  presses the button again. A legacy `?case=` / `?session=` link wins over it;
+  unknown path — saves nothing and drops any old value), e.g.
+  `{"v":1,"path":"/players/player-5","savedAt":1761500000000}`.
+  On the first signed-in load (the OAuth callback lands on `/`; after the first-login dialog,
+  if one opens) it is read once and always deleted; a valid one saved less than 30 minutes ago
+  opens that address. It is only ever an in-app path — at most 512 characters, starts with `/`
+  but not `//`, no `\` or `#`, an app route other than `/` — so it can never become an open
+  redirect. Old values with an `intent` field still yield the validated address, with the
+  field ignored; a stored `/sessions` or child path resolves to `/`. No RSVP hint or automatic
+  business action remains. A legacy `?case=` / `?session=` link wins over the saved address;
   logging out clears it.
 - A case with `redacted: true` says a statement exists (when `statement_at` is
   set) rather than calling it a verdict in absence, and shows no verdict words.

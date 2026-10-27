@@ -5,13 +5,14 @@ import { CASE_STATUS_LABEL } from '@shared/scoring';
 import type { RecordItem } from '../types';
 import { PENDING_HIDDEN_LABEL, isPendingHidden, violationLabel } from './recordView';
 
+export const SESSIONS_OFF = '约局功能已下线';
+export const SESSIONS_OFF_DESCRIPTION = '约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。';
+
 export const NOT_FOUND_TITLE = '这页不存在';
-export const SESSION_NOT_FOUND = '找不到这局，链接可能写错了。';
 export const PLAYER_NOT_FOUND = '找不到这位选手。';
 export const CASE_GONE = '链接里的案件不存在了。';
 export const CASE_UNAVAILABLE = '打不开链接里的案件，稍后再试。';
 export const BACK_HOME = '回大厅';
-export const SEE_HISTORY = '看约局历史';
 export const SEE_BOARD = '看信誉榜';
 export const CASE_OPENING = '正在打开案件…';
 /** PageBar's button: history decides where it goes, so it does not promise 大厅 (contract §8 #11). */

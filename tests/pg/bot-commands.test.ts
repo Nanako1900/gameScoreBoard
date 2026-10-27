@@ -1,5 +1,5 @@
 // The Discord slash-command handlers against PostgreSQL: seeded users, cases,
-// sessions, bindings and a weekly report in, BotReply out. Besides each
+// bindings and a weekly report in, BotReply out. Besides each
 // command's happy and unbound paths, the privacy rules are
 // checked directly: what is ephemeral, that /verdicts never shows a word a
 // person or the AI wrote, and that public replies cannot ping anyone.
@@ -105,18 +105,6 @@ async function seedRecord(r: SeedRecord): Promise<void> {
     .run();
 }
 
-async function seedInvite(invitee: string, title: string): Promise<void> {
-  const startsAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
-  const session = await env.DB.prepare(
-    `INSERT INTO game_sessions (organizer_id, title, starts_at, status) VALUES ('judge', ?, ?, 'open')`,
-  )
-    .bind(title, startsAt)
-    .run();
-  await env.DB.prepare(`INSERT INTO session_players (session_id, user_id, rsvp) VALUES (?, ?, 'invited')`)
-    .bind(Number(session.meta.last_row_id), invitee)
-    .run();
-}
-
 /** alice (92, bound), bob (40, bound), judge (unbound), evil (unbound, hostile name). */
 async function seedPeople(): Promise<void> {
   await seedUser({ id: 'alice', username: '爱丽丝', score: 92 });
@@ -181,7 +169,6 @@ describe('/score', () => {
   it('shows the caller their score, tier and pending counts — ephemerally', async () => {
     await seedPeople();
     await seedRecord({ subject: 'alice', status: 'awaiting_statement', createdAt: '2026-10-20 12:00:00', statement: null, verdictSource: null });
-    await seedInvite('alice', '周五开黑');
     const reply = await run('score', ALICE_DC);
     expect(reply.ephemeral).toBe(true);
     const text = textOf(reply);
@@ -189,7 +176,7 @@ describe('/score', () => {
     expect(text).toContain('守时楷模');
     const fields = reply.embeds?.[0].fields ?? [];
     expect(fields.find((f) => f.name === '待写陈述')?.value).toBe('1 件');
-    expect(fields.find((f) => f.name === '待回应的约局')?.value).toBe('1 个');
+    expect(fields.map((f) => f.name)).not.toContain('待回应的约局');
     expect(reply.embeds?.[0].color).toBe(GOLD);
     expect(reply.buttons?.[0].url).toBe('https://score.example/');
   });
@@ -346,7 +333,7 @@ describe('/verdicts', () => {
 });
 
 describe('/todo', () => {
-  it('lists pending statements and unanswered invites with a web link', async () => {
+  it('lists pending statements with a web link', async () => {
     await seedPeople();
     const deadline = new Date(Date.now() + 6 * 3_600_000).toISOString();
     await seedRecord({
@@ -359,31 +346,25 @@ describe('/todo', () => {
       deadlineAt: deadline,
       claimSummary: '没来 [点我](https://evil.example)',
     });
-    await seedInvite('alice', '周五 @everyone 开黑');
-    // Someone else's case and invite are not alice's to-dos.
+    // Someone else's case is not alice's to-do.
     await seedRecord({ subject: 'bob', status: 'awaiting_statement', createdAt: '2026-10-20 12:00:00', statement: null, verdictSource: null });
-    await seedInvite('bob', '鲍勃的局');
 
     const reply = await run('todo', ALICE_DC);
     expect(reply.ephemeral).toBe(true);
     const fields = reply.embeds?.[0].fields ?? [];
-    expect(fields.map((f) => f.name)).toEqual(['待写陈述（1）', '待回应的约局（1）']);
+    expect(fields.map((f) => f.name)).toEqual(['待写陈述（1）']);
     expect(fields[0].value).toContain('放鸽子');
     expect(fields[0].value).toContain(`<t:${Math.floor(Date.parse(deadline) / 1000)}:R>`);
-    expect(fields[1].value).toContain('周五');
-    expect(fields[1].value).toContain('裁判 组织');
     expect(reply.buttons?.[0].url).toBe('https://score.example/');
 
     const text = textOf(reply);
-    expect(text).not.toContain('鲍勃的局');
     expect(text).not.toContain('@everyone');
     expect(text).not.toMatch(/https?:\/\/evil/);
-    // The only links are the bot's own: straight to the case and to the invite.
+    // The only link is the bot's own, straight to the case.
     const links = [...text.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1]);
-    expect(links).toHaveLength(2);
-    for (const link of links) expect(link).toMatch(/^https:\/\/score\.example\/\?(case|session)=\d+$/);
+    expect(links).toHaveLength(1);
+    for (const link of links) expect(link).toMatch(/^https:\/\/score\.example\/\?case=\d+$/);
     expect(fields[0].value).toMatch(/\[去处理\]\(https:\/\/score\.example\/\?case=\d+\)/);
-    expect(fields[1].value).toMatch(/\[查看\]\(https:\/\/score\.example\/\?session=\d+\)/);
   });
 
   it('shows an admin the appeals to review — who and what, not the reason — with a way there', async () => {

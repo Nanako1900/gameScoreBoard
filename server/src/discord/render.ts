@@ -1,5 +1,5 @@
-// Text for Discord. Everything a user or the AI wrote — display names, session
-// titles, claims, the weekly narrative — goes through safeText()/safeLine()
+// Text for Discord. Everything a user or the AI wrote — display names,
+// claims, the weekly narrative — goes through safeText()/safeLine()
 // before it is put into a reply. Discord renders markdown,
 // masked links, auto-linked URLs and mention syntax inside message content and
 // embeds alike, so a display name like "[写陈述](https://evil)" or "@everyone"
@@ -14,7 +14,7 @@ import type { BotEmbed, BotEmbedField, BotLinkButton, BotReply } from './types';
 /** Scoreboard theme (src/theme.css): gold for good news, red for bad. */
 export const GOLD = 0xf5c542;
 export const RED = 0xe5484d;
-/** Something no longer in force (a revoked verdict, a cancelled session). */
+/** Something no longer in force (a revoked verdict). */
 export const GREY = 0x8b8579;
 
 /** Discord's hard limits; a reply over any of them is rejected outright. */
@@ -154,17 +154,18 @@ export function joinUrl(base: string, path = ''): string {
   return `${root}/${path.replace(/^\/+/, '')}`;
 }
 
-/** What a web link opens: a case (in its subject's page) or a session. */
-export type WebTarget = { case: number } | { session: number };
+/** What a web link opens: a case (in its subject's page). */
+export type WebTarget = { case: number };
 
 /**
- * A link into the web app: its front page, or `?case=<id>` / `?session=<id>`,
+ * A link into the web app: its front page, or `?case=<id>`,
  * which the SPA opens on load (src/lib/deepLink.ts). Ids only — never names.
  */
 export function webUrl(frontendUrl: string, target?: WebTarget): string {
   const url = new URL(joinUrl(frontendUrl, '/'));
   if (target) {
-    const [key, id] = 'case' in target ? ['case', target.case] : ['session', target.session];
+    const key = 'case';
+    const id = target.case;
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`not a ${key} id: ${id}`);
     url.searchParams.set(key, String(id));
   }
