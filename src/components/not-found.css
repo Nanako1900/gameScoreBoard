@@ -1,0 +1,22 @@
+/* NotFound (P1-1): unknown addresses and the detail views' 404s. */
+
+.notfound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: clamp(3rem, 2rem + 6vw, 6rem) 1rem;
+  text-align: center;
+}
+
+.notfound__title {
+  font-size: var(--text-h2);
+  color: var(--text);
+}
+
+.notfound__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}

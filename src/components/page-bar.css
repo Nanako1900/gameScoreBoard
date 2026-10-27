@@ -1,0 +1,60 @@
+/* PageBar (P1-1): back, and a quiet title, pinned to the top of a page-form view. */
+
+.pagebar {
+  position: sticky;
+  top: 0;
+  /* Over the sticky .hdr (z-index 40) once stuck, under every modal layer (--z-modal). */
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.25rem 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.pagebar__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  padding: 0 0.75rem 0 0.25rem;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .pagebar__back:hover {
+    background: var(--panel-2);
+  }
+}
+
+.pagebar__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.pagebar__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+/* The account menu (.hdr__dropdown, z-index 50) only counts inside the header's
+   own stacking context (z-index 40), so it would open under a stuck PageBar:
+   lift the header above the bar while the menu is open (it renders only then). */
+.hdr:has(.hdr__dropdown) {
+  z-index: 42;
+}

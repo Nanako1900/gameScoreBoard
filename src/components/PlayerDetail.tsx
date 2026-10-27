@@ -14,8 +14,11 @@ import {
 } from '../api';
 import { REVOKE_TICK_MS } from '../lib/constants';
 import { healPreview, healPreviewText } from '../lib/forgiveness';
+import { PAGE_BACK_LABEL, PINNED_CASE_LABEL, PLAYER_NOT_FOUND, pinnedCaseEyebrow } from '../lib/routeCopy';
 import { useNow } from '../lib/useNow';
 import { Modal } from './Modal';
+import { NotFound } from './NotFound';
+import { PageBar } from './PageBar';
 import { Avatar } from './Avatar';
 import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
@@ -39,10 +42,17 @@ interface PlayerDetailProps {
   focusRecordId?: number | null;
   /** The board's config: with it, the player's own page previews the weekly heal (P0-5). */
   config?: Config;
+  /** Default 'center' — today's dialog. 'page' / 'drawer': the /players/:id route (P1-1). */
+  variant?: 'center' | 'page' | 'drawer';
+  /** The focused case as the route already read it: pinned even before (or without) the list's own copy. */
+  pinnedRecord?: RecordItem | null;
+  /** Bumped by the app when the cases changed elsewhere (a statement was judged): load again. */
+  refreshKey?: number;
 }
 
 interface DetailState {
-  status: 'loading' | 'ready' | 'error';
+  /** 'missing': a 404 on the page / drawer forms — NotFound instead of the error line. */
+  status: 'loading' | 'ready' | 'error' | 'missing';
   data: UserDetailResponse | null;
   error: string | null;
 }
@@ -51,6 +61,71 @@ interface DetailState {
 const JUDGE_BUSY = -1;
 /** busyId while the score is being set by hand. */
 const SCORE_BUSY = -2;
+const TITLE_ID = 'player-detail-title';
+const NOT_FOUND_STATUS = 404;
+
+/** The focused case: the list's own copy when it has one (it is the fresher), else the route's. */
+function pickPinned(
+  records: readonly RecordItem[] | undefined,
+  focusRecordId: number | null,
+  fallback: RecordItem | null,
+): RecordItem | null {
+  if (focusRecordId === null) return null;
+  const own = records?.find((r) => r.id === focusRecordId);
+  if (own) return own;
+  return fallback !== null && fallback.id === focusRecordId ? fallback : null;
+}
+
+function focusCase(id: number): void {
+  const card = document.getElementById(`case-${id}`);
+  if (!card) return;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  card.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  card.focus({ preventScroll: true });
+}
+
+interface EscalationButtonsProps {
+  busy: boolean;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}
+
+/** 确认是团灭级 / 维持原案由 — the filing judge's co-sign of an AI escalation hint. */
+function EscalationButtons({ busy, onConfirm, onDismiss }: EscalationButtonsProps): JSX.Element {
+  return (
+    <>
+      <button type="button" className="btn btn--danger btn--sm" disabled={busy} onClick={onConfirm}>
+        确认是团灭级
+      </button>
+      <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onDismiss}>
+        维持原案由
+      </button>
+    </>
+  );
+}
+
+/**
+ * Once, when the page first has its data: the linked case is brought into view
+ * and focused (else the page opens unscrolled — CONTRACT); a page-form view
+ * without one focuses its heading (spec §6.4). Reloads never move focus again.
+ */
+function useFirstFocus(
+  ready: boolean,
+  focusRecordId: number | null,
+  pinnedShown: boolean,
+  variant: NonNullable<PlayerDetailProps['variant']>,
+): void {
+  const done = useRef(false);
+  useEffect(() => {
+    if (done.current || !ready) return;
+    done.current = true;
+    if (focusRecordId !== null) {
+      if (pinnedShown) focusCase(focusRecordId);
+      return;
+    }
+    if (variant === 'page') document.getElementById(TITLE_ID)?.focus();
+  }, [ready, focusRecordId, pinnedShown, variant]);
+}
 
 export function PlayerDetail({
   userId,
@@ -60,6 +135,9 @@ export function PlayerDetail({
   onChanged,
   focusRecordId = null,
   config,
+  variant = 'center',
+  pinnedRecord = null,
+  refreshKey = 0,
 }: PlayerDetailProps): JSX.Element {
   const [state, setState] = useState<DetailState>({
     status: 'loading',
@@ -68,21 +146,9 @@ export function PlayerDetail({
   });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [overriding, setOverriding] = useState<number | null>(null);
-  const focused = useRef(false);
   const [appealing, setAppealing] = useState<RecordItem | null>(null);
   // One clock for the page: the reporter's revoke countdown and the heal line.
   const now = useNow(REVOKE_TICK_MS);
-
-  // Once the cases are in: bring the linked one into view, and focus it.
-  useEffect(() => {
-    if (focused.current || focusRecordId === null || state.status !== 'ready') return;
-    focused.current = true;
-    const card = document.getElementById(`case-${focusRecordId}`);
-    if (!card) return; // not among the cases shown here
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    card.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
-    card.focus({ preventScroll: true });
-  }, [focusRecordId, state.status]);
 
   const load = useCallback(async (): Promise<void> => {
     setState({ status: 'loading', data: null, error: null });
@@ -90,17 +156,18 @@ export function PlayerDetail({
       const data = await getUserDetail(userId);
       setState({ status: 'ready', data, error: null });
     } catch (err) {
+      const gone = variant !== 'center' && err instanceof ApiError && err.status === NOT_FOUND_STATUS;
       setState({
-        status: 'error',
+        status: gone ? 'missing' : 'error',
         data: null,
         error: err instanceof ApiError ? err.message : '加载失败',
       });
     }
-  }, [userId]);
+  }, [userId, variant]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const isSelf = me !== null && me.id === userId;
 
@@ -123,10 +190,64 @@ export function PlayerDetail({
   const data = state.data;
   const score = data?.user.score ?? 0;
   const tier = tierFor(score);
+  const pinned = pickPinned(data?.records, focusRecordId, pinnedRecord);
+  useFirstFocus(state.status === 'ready', focusRecordId, pinned !== null, variant);
+
+  // Only the filing judge (or an admin) may co-sign the -25 charge, so only they
+  // get the buttons — a reporter who is no judge (any more) does not.
+  const canCoSign = (r: RecordItem): boolean =>
+    me !== null && (me.is_admin || (me.is_judge && r.reporter.id === me.id));
+
+  // One card, wherever it sits: pinned at the top (focused) or in the list below.
+  const renderCase = (r: RecordItem, focusedCard: boolean): JSX.Element => (
+    <VerdictCard
+      key={r.id}
+      record={r}
+      focused={focusedCard}
+      escalation={
+        canCoSign(r) ? (
+          <EscalationButtons
+            busy={busyId === r.id}
+            onConfirm={() => void run(r.id, () => confirmEscalation(r.id))}
+            onDismiss={() => void run(r.id, () => dismissEscalation(r.id))}
+          />
+        ) : undefined
+      }
+      actions={
+        <CaseActions
+          record={r}
+          me={me}
+          isSelf={isSelf}
+          busy={busyId === r.id}
+          overriding={overriding === r.id}
+          onStartOverride={() => setOverriding(r.id)}
+          onCancelOverride={() => setOverriding(null)}
+          now={now}
+          note={
+            isSelf && config && data && r.status === 'decided' && r.delta < 0 ? (
+              <ForgivenessNote delta={r.delta} scoreAfter={data.user.score} weeklyHeal={config.weeklyHeal} />
+            ) : undefined
+          }
+          onStatement={() => onOpenStatement?.(r)}
+          onAppeal={() => setAppealing(r)}
+          onWithdraw={() => void run(r.id, () => withdrawCase(r.id))}
+          onRevoke={() => void run(r.id, () => revokeRecord(r.id))}
+          onOverride={(delta, reason) => {
+            setOverriding(null);
+            void run(r.id, () => overrideCase(r.id, delta, reason));
+          }}
+        />
+      }
+    />
+  );
 
   return (
     <>
-      <Modal open onClose={onClose} labelledBy="player-detail-title" size="lg">
+      <Modal open onClose={onClose} labelledBy={TITLE_ID} size="lg" variant={variant}>
+        {variant === 'page' && <PageBar backLabel={PAGE_BACK_LABEL} onBack={onClose} />}
+
+        {state.status === 'missing' && <NotFound title={PLAYER_NOT_FOUND} headingId={TITLE_ID} />}
+
         {state.status === 'loading' && (
           <div className="pd__status" aria-live="polite">
             加载中…
@@ -145,7 +266,8 @@ export function PlayerDetail({
         {data && (
           <div className="pd">
             <header className="pd__header" style={{ ['--accent' as string]: tier.color }}>
-              <ScoreGauge score={score} size={128} strokeWidth={11} />
+              {/* Everyone's score is public; the 段位 colour and name are the viewer's own only (spec §3.8). */}
+              <ScoreGauge score={score} size={128} strokeWidth={11} tone={isSelf ? 'tier' : 'neutral'} />
               <div className="pd__id">
                 <div className="pd__name-row">
                   <Avatar
@@ -155,7 +277,7 @@ export function PlayerDetail({
                     ring
                     ringColor={tier.color}
                   />
-                  <h2 id="player-detail-title" className="pd__name">
+                  <h2 id={TITLE_ID} className="pd__name" tabIndex={-1}>
                     {data.user.username}
                   </h2>
                 </div>
@@ -191,6 +313,14 @@ export function PlayerDetail({
               </div>
             </header>
 
+            {/* Moved here, not copied: the list below skips it, so the page has one #case-N (spec §3.8). */}
+            {pinned && (
+              <section className="pd__section pd__pinned" aria-label={PINNED_CASE_LABEL}>
+                <p className="pd__pinned-eyebrow">{pinnedCaseEyebrow(pinned)}</p>
+                {renderCase(pinned, true)}
+              </section>
+            )}
+
             <section className="pd__section" aria-label="分数走势">
               <h3 className="pd__section-title">分数走势</h3>
               <HistoryChart history={data.history} color={tier.color} />
@@ -210,63 +340,7 @@ export function PlayerDetail({
                 <p className="pd__empty">还没有任何记录，保持靠谱！</p>
               ) : (
                 <div className="pd__cases">
-                  {data.records.map((r) => (
-                    <VerdictCard
-                      key={r.id}
-                      record={r}
-                      focused={r.id === focusRecordId}
-                      escalation={
-                        // Only the filing judge (or an admin) may co-sign the -25
-                        // charge, so only they get the buttons — a reporter who is
-                        // no judge (any more) does not.
-                        me !== null && (me.is_admin || (me.is_judge && r.reporter.id === me.id)) ? (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn--danger btn--sm"
-                              disabled={busyId === r.id}
-                              onClick={() => void run(r.id, () => confirmEscalation(r.id))}
-                            >
-                              确认是团灭级
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn--ghost btn--sm"
-                              disabled={busyId === r.id}
-                              onClick={() => void run(r.id, () => dismissEscalation(r.id))}
-                            >
-                              维持原案由
-                            </button>
-                          </>
-                        ) : undefined
-                      }
-                      actions={
-                        <CaseActions
-                          record={r}
-                          me={me}
-                          isSelf={isSelf}
-                          busy={busyId === r.id}
-                          overriding={overriding === r.id}
-                          onStartOverride={() => setOverriding(r.id)}
-                          onCancelOverride={() => setOverriding(null)}
-                          now={now}
-                          note={
-                            isSelf && config && r.status === 'decided' && r.delta < 0 ? (
-                              <ForgivenessNote delta={r.delta} scoreAfter={data.user.score} weeklyHeal={config.weeklyHeal} />
-                            ) : undefined
-                          }
-                          onStatement={() => onOpenStatement?.(r)}
-                          onAppeal={() => setAppealing(r)}
-                          onWithdraw={() => void run(r.id, () => withdrawCase(r.id))}
-                          onRevoke={() => void run(r.id, () => revokeRecord(r.id))}
-                          onOverride={(delta, reason) => {
-                            setOverriding(null);
-                            void run(r.id, () => overrideCase(r.id, delta, reason));
-                          }}
-                        />
-                      }
-                    />
-                  ))}
+                  {data.records.filter((r) => r.id !== pinned?.id).map((r) => renderCase(r, false))}
                 </div>
               )}
             </section>
