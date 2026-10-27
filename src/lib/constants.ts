@@ -47,3 +47,9 @@ export const USER_ID_MAX = 128;
 export const SILENT_BACK_TIMEOUT_MS = 1_000;
 /** The `sheet` mark on an overlay's history entry (its historyKey), kept short. */
 export const HISTORY_SHEET_NAME_MAX = 32;
+
+// --- P1-3 ---
+/** edg.return older than this is ignored: a login that took longer is not the same visit. */
+export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
+/** edg.return.path upper bound. */
+export const RETURN_PATH_MAX = 512;
