@@ -3,6 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ConfirmInline } from '../../src/components/ConfirmInline';
+import { useInlineConfirm } from '../../src/lib/useInlineConfirm';
 
 // Labels are spec §3.5's cancel-session confirm (P0-6 is the first real caller).
 // New confirms never use the bare 「取消」/「确认」: those names are locked to
@@ -105,5 +106,54 @@ describe('ConfirmInline', () => {
     renderConfirm();
     expect(addSpy.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(0);
     addSpy.mockRestore();
+  });
+});
+
+/** The trigger and the confirm swap places, as every caller will do it. */
+function CancelSession({ onDone }: { onDone: () => void }) {
+  const confirm = useInlineConfirm();
+  if (!confirm.confirming) {
+    return (
+      <button ref={confirm.triggerRef} type="button" onClick={confirm.ask}>
+        取消这局
+      </button>
+    );
+  }
+  return (
+    <ConfirmInline
+      question={QUESTION}
+      confirmLabel={CONFIRM}
+      cancelLabel={CANCEL}
+      onCancel={confirm.dismiss}
+      onConfirm={() => {
+        onDone();
+        confirm.close();
+      }}
+    />
+  );
+}
+
+describe('useInlineConfirm', () => {
+  it('backing out puts focus back on the trigger', async () => {
+    const user = userEvent.setup();
+    render(<CancelSession onDone={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: '取消这局' }));
+    expect(screen.getByRole('button', { name: CANCEL })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: CANCEL }));
+    expect(screen.queryByRole('group', { name: QUESTION })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '取消这局' })).toHaveFocus();
+  });
+
+  it('close() after a confirm hides it without moving focus to the trigger', async () => {
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    render(<CancelSession onDone={onDone} />);
+
+    await user.click(screen.getByRole('button', { name: '取消这局' }));
+    await user.click(screen.getByRole('button', { name: CONFIRM }));
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '取消这局' })).not.toHaveFocus();
   });
 });
