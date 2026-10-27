@@ -1,11 +1,12 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { VIOLATION_MAP } from '../../shared/scoring';
-import { fallbackNarrative } from '../../worker/ai/report';
+import { buildReportMessage, DEFAULT_REPORT_PROMPT, fallbackNarrative } from '../../worker/ai/report';
 import {
   computeStats,
   ensureWeeklyReport,
   getReport,
+  hadActivity,
   previousWeekStart,
   regenerateReport,
   reportDue,
@@ -21,16 +22,6 @@ function inLastWeek(dayOffset = 1, hour = 12): string {
     dayOffset * 86_400_000 +
     hour * 3_600_000;
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
-}
-
-function isoInLastWeek(dayOffset = 1, hour = 20): string {
-  const week = previousWeekStart(OFFSET_HOURS);
-  const ms =
-    Date.parse(`${week}T00:00:00Z`) -
-    OFFSET_HOURS * 3_600_000 +
-    dayOffset * 86_400_000 +
-    hour * 3_600_000;
-  return new Date(ms).toISOString();
 }
 
 /** Insert a decided penalty directly so the week and delta are exact. */
@@ -186,31 +177,16 @@ describe('computeStats — every figure comes from SQL', () => {
     expect(s.absentVerdicts).toBe(1);
   });
 
-  it('derives sessions, organizer and attendance rate from the session tables', async () => {
-    const org = await seedUser({ id: 'org', username: '团长' });
-    const a = await seedUser({ id: 'a' });
-    const b = await seedUser({ id: 'b' });
-
-    const res = await env.DB.prepare(
-      `INSERT INTO game_sessions (organizer_id, title, starts_at, status, settled_at)
-       VALUES (?, '周五开黑', ?, 'settled', datetime('now'))`,
-    )
-      .bind(org.id, isoInLastWeek(4))
-      .run();
-    const sid = Number(res.meta?.last_row_id);
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO session_players (session_id, user_id, rsvp, attendance) VALUES (?, ?, 'going', 'on_time')",
-      ).bind(sid, a.id),
-      env.DB.prepare(
-        "INSERT INTO session_players (session_id, user_id, rsvp, attendance) VALUES (?, ?, 'going', 'no_show')",
-      ).bind(sid, b.id),
-    ]);
-
-    const s = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
-    expect(s.sessionsPlayed).toBe(1);
-    expect(s.topOrganizer?.name).toBe('团长');
-    expect(s.attendanceRate).toBeCloseTo(0.5);
+  it('does not query retired session tables or include their figures in new stats', async () => {
+    const queries: string[] = [];
+    const db = { prepare(sql: string) { queries.push(sql); return env.DB.prepare(sql); } } as D1Database;
+    const stats = await computeStats(db, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
+    expect(queries.some((sql) => /game_sessions|session_players/.test(sql))).toBe(false);
+    for (const key of ['sessionsPlayed', 'sessionsCollapsed', 'attendanceRate', 'upcomingNextWeek', 'topOrganizer']) {
+      expect(stats).not.toHaveProperty(key);
+    }
+    // An old sessions-only shape must not make a new week look active.
+    expect(hadActivity({ ...stats, sessionsPlayed: 3 } as typeof stats)).toBe(false);
   });
 
   it('returns an all-empty shape for a quiet week rather than throwing', async () => {
@@ -220,11 +196,19 @@ describe('computeStats — every figure comes from SQL', () => {
     expect(s.star).toBeNull();
     expect(s.pigeon).toBeNull();
     expect(s.bestTalker).toBeNull();
-    expect(s.attendanceRate).toBeNull();
   });
 });
 
 describe('fallbackNarrative', () => {
+  it('keeps retired session figures out of fallback prose and the AI message', async () => {
+    const stats = { ...await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS),
+      sessionsPlayed: 3, sessionsCollapsed: 1, attendanceRate: 0.5, upcomingNextWeek: 2,
+      topOrganizer: { name: '历史组织者', count: 3 } };
+    expect(fallbackNarrative(stats)).not.toMatch(/开了|约局|下周已经约/);
+    expect(buildReportMessage(stats)).not.toMatch(/约局|散局|出勤率|组局|历史组织者/);
+    expect(DEFAULT_REPORT_PROMPT).not.toContain('开黑约局');
+  });
+
   it('describes a quiet week without inventing anyone', async () => {
     const s = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
     const text = fallbackNarrative(s);
@@ -447,19 +431,10 @@ describe('P3-7 verdict-time report basis', () => {
     expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).casesFiled).toBe(0);
   });
 
-  it('counts group wipes in the verdict week with the same expression', async () => {
-    const organizer = await seedUser({ id: 'verdict-org' });
-    const row = await env.DB.prepare(`INSERT INTO game_sessions (organizer_id, title, starts_at, status) VALUES (?, '团灭测试', ?, 'settled')`)
-      .bind(organizer.id, isoInLastWeek()).run();
-    await judgedCase({ judgedAt: sqlNowWeek(), type: 'no_show_group', delta: -20, sessionId: Number(row.meta?.last_row_id) });
-    expect((await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).sessionsCollapsed).toBe(0);
-    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).sessionsCollapsed).toBe(1);
-  });
-
   it('still excludes cases that have not been decided', async () => {
     const id = await judgedCase({ judgedAt: sqlNowWeek() });
     await env.DB.prepare(`UPDATE records SET status = 'awaiting_statement' WHERE id = ?`).bind(id).run();
-    expect(await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).toMatchObject({ casesFiled: 0, sessionsCollapsed: 0, bestTalker: null });
+    expect(await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).toMatchObject({ casesFiled: 0, bestTalker: null });
   });
 
   it('persists the same verdict-basis stats returned directly by computeStats', async () => {

@@ -112,10 +112,12 @@ function CompactBody({ report }: { report: WeeklyReport }): JSX.Element {
     <>
       <p className="wr__narrative wr__narrative--compact">{firstSentence(report.narrative)}</p>
       <p className="wr__compact-stats">
-        <span>开局 <strong className="tabular">{s.sessionsPlayed}</strong></span>
-        <span aria-hidden="true">·</span>
+        {(s.sessionsPlayed ?? 0) > 0 && <>
+          <span>开局 <strong className="tabular">{s.sessionsPlayed}</strong></span>
+          <span aria-hidden="true">·</span>
+        </>}
         <span>{s.basis === 'verdict' ? '判决' : '立案'} <strong className="tabular">{s.casesFiled}</strong></span>
-        {s.attendanceRate !== null && (
+        {s.attendanceRate != null && s.attendanceRate > 0 && (
           <>
             <span aria-hidden="true">·</span>
             <span>出勤率 <strong className="tabular">{attendance(s.attendanceRate)}</strong></span>
@@ -133,10 +135,10 @@ function FullBody({ report, hidePigeon }: { report: WeeklyReport; hidePigeon?: b
       <p className="wr__narrative">{report.narrative}</p>
 
       <div className="wr__stats">
-        <Stat value={String(s.sessionsPlayed)} label="开局" />
+        {(s.sessionsPlayed ?? 0) > 0 && <Stat value={String(s.sessionsPlayed)} label="开局" />}
         <Stat value={String(s.casesFiled)} label={s.basis === 'verdict' ? '判决' : '立案'} />
         <Stat value={String(s.totalPenalty)} label="总扣分" tone={s.totalPenalty < 0 ? 'down' : undefined} />
-        <Stat value={attendance(s.attendanceRate)} label="出勤率" />
+        {s.attendanceRate != null && s.attendanceRate > 0 && <Stat value={attendance(s.attendanceRate)} label="出勤率" />}
       </div>
 
       <ul className="wr__awards">
@@ -153,7 +155,7 @@ function FullBody({ report, hidePigeon }: { report: WeeklyReport; hidePigeon?: b
             tone="up"
           />
         )}
-        {s.topOrganizer && (
+        {s.topOrganizer && s.topOrganizer.count > 0 && (
           <Award
             emoji="📣"
             label="组局劳模"
@@ -163,7 +165,7 @@ function FullBody({ report, hidePigeon }: { report: WeeklyReport; hidePigeon?: b
         )}
       </ul>
 
-      {s.upcomingNextWeek > 0 && (
+      {(s.upcomingNextWeek ?? 0) > 0 && (
         <p className="wr__foot">
           接下来已经约了 <strong className="tabular">{s.upcomingNextWeek}</strong> 局。
         </p>

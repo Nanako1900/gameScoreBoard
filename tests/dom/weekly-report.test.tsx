@@ -44,3 +44,27 @@ describe('P3-7 weekly report labels and compatibility', () => {
     expect(container.querySelector('.wr-award')).toBeNull();
   });
 });
+
+
+describe('S1 stored report compatibility', () => {
+  it.each([false, true])('keeps nonzero legacy session figures, compact=%s', (compact) => {
+    const { container } = render(<WeeklyReportCard report={report()} compact={compact} />);
+    expect(container.querySelector(compact ? '.wr__compact-stats' : '.wr__stats')).toHaveTextContent('开局');
+    expect(container.querySelector(compact ? '.wr__compact-stats' : '.wr__stats')).toHaveTextContent('3');
+    expect(container).toHaveTextContent('80%');
+  });
+  it.each([false, true])('hides missing session figures from new reports, compact=%s', (compact) => {
+    const old = report('verdict');
+    const { sessionsPlayed, sessionsCollapsed, attendanceRate, upcomingNextWeek, topOrganizer, ...stats } = old.stats;
+    const current = { ...old, stats } as WeeklyReport;
+    const { container } = render(<WeeklyReportCard report={current} compact={compact} />);
+    expect(container).not.toHaveTextContent(/开局|出勤率|组局劳模|接下来|NaN|undefined/);
+    expect(container).toHaveTextContent('判决');
+  });
+  it.each([false, true])('hides zero legacy session figures, compact=%s', (compact) => {
+    const old = report();
+    const { container } = render(<WeeklyReportCard report={{ ...old, stats: { ...old.stats,
+      sessionsPlayed: 0, attendanceRate: 0, upcomingNextWeek: 0, topOrganizer: { name: '零次', count: 0 } } }} compact={compact} />);
+    expect(container).not.toHaveTextContent(/开局|出勤率|组局劳模|接下来|零次/);
+  });
+});

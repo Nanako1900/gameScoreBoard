@@ -20,14 +20,12 @@ function dateOnly(value: string | null | undefined): string {
 export function reportEmbed(report: WeeklyReport): BotEmbed {
   const s = report.stats;
   const fields: BotEmbedField[] = [
-    { name: '开局', value: `${s.sessionsPlayed} 局`, inline: true },
+    ...((s.sessionsPlayed ?? 0) > 0 ? [{ name: '开局', value: `${s.sessionsPlayed} 局`, inline: true }] : []),
     { name: '立案', value: `${s.casesFiled} 起`, inline: true },
     { name: '合计扣分', value: String(s.totalPenalty), inline: true },
-    {
-      name: '出勤率',
-      value: s.attendanceRate === null ? '—' : `${Math.round(s.attendanceRate * 100)}%`,
-      inline: true,
-    },
+    ...(s.attendanceRate != null && s.attendanceRate > 0
+      ? [{ name: '出勤率', value: `${Math.round(s.attendanceRate * 100)}%`, inline: true }]
+      : []),
   ];
   if (s.star) {
     fields.push({ name: '🏆 本周之星', value: `${safeLine(s.star.name, NAME_MAX)}（${formatDelta(s.star.delta)}）`, inline: true });

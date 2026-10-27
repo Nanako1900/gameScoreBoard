@@ -15,7 +15,7 @@ import { sanitizeNarrative } from './prompt';
 
 export const NARRATIVE_MAX = 500;
 
-export const DEFAULT_REPORT_PROMPT = `你是「EDG 信誉分」的周报主笔。这是朋友之间开黑约局的娱乐性信誉分系统。
+export const DEFAULT_REPORT_PROMPT = `你是「EDG 信誉分」的周报主笔。这是朋友之间开黑的娱乐性信誉分系统。
 
 写一段 120–200 字的中文周报，把下面给你的数据串成人话。
 
@@ -42,29 +42,19 @@ export interface ReportStats {
   basis?: 'verdict';
   weekStart: string;
   weekEnd: string;
-  sessionsPlayed: number;
-  sessionsCollapsed: number;
   casesFiled: number;
   totalPenalty: number;
   absentVerdicts: number;
-  attendanceRate: number | null;
-  upcomingNextWeek: number;
   star: { name: string; delta: number } | null;
   pigeon: { name: string; delta: number } | null;
   /** Biggest gap between the sentence and the anchor — best self-defence. */
   bestTalker: { name: string; savedBy: number } | null;
   harshest: { name: string; delta: number } | null;
-  topOrganizer: { name: string; count: number } | null;
 }
 
 /** Deterministic prose used when the AI is unavailable. Dull, but never wrong. */
 export function fallbackNarrative(s: ReportStats): string {
   const bits: string[] = [];
-  bits.push(
-    s.sessionsPlayed > 0
-      ? `这周开了 ${s.sessionsPlayed} 局${s.sessionsCollapsed > 0 ? `，散了 ${s.sessionsCollapsed} 局` : ''}。`
-      : '这周没有已结算的约局。',
-  );
   if (s.casesFiled > 0) {
     bits.push(`一共立案 ${s.casesFiled} 起，合计扣了 ${Math.abs(s.totalPenalty)} 分。`);
   } else {
@@ -76,7 +66,6 @@ export function fallbackNarrative(s: ReportStats): string {
     bits.push(`${s.bestTalker.name} 靠一段说明把处罚说轻了 ${s.bestTalker.savedBy} 分。`);
   }
   if (s.absentVerdicts > 0) bits.push(`有 ${s.absentVerdicts} 起是缺席判决。`);
-  if (s.upcomingNextWeek > 0) bits.push(`下周已经约了 ${s.upcomingNextWeek} 局。`);
   return bits.join('');
 }
 
@@ -92,12 +81,9 @@ function line(label: string, value: string | null): string | null {
 export function buildReportMessage(s: ReportStats): string {
   const rows = [
     line('统计周期', `${s.weekStart} 到 ${s.weekEnd}`),
-    line('已结算约局数', String(s.sessionsPlayed)),
-    line('其中散局数', s.sessionsCollapsed > 0 ? String(s.sessionsCollapsed) : null),
     line('立案数', String(s.casesFiled)),
     line('本周合计扣分', String(s.totalPenalty)),
     line('缺席判决数', s.absentVerdicts > 0 ? String(s.absentVerdicts) : null),
-    line('出勤率', s.attendanceRate === null ? null : `${Math.round(s.attendanceRate * 100)}%`),
     line('本周之星', s.star ? `${s.star.name}（${formatDelta(s.star.delta)}）` : null),
     line('本周鸽王', s.pigeon ? `${s.pigeon.name}（${formatDelta(s.pigeon.delta)}）` : null),
     line(
@@ -108,8 +94,6 @@ export function buildReportMessage(s: ReportStats): string {
       '本周最重的一笔',
       s.harshest ? `${s.harshest.name}，${formatDelta(s.harshest.delta)}` : null,
     ),
-    line('组局最多的人', s.topOrganizer ? `${s.topOrganizer.name}（${s.topOrganizer.count} 局）` : null),
-    line('下周已约局数', s.upcomingNextWeek > 0 ? String(s.upcomingNextWeek) : null),
   ].filter((r): r is string => r !== null);
 
   return `<data>\n${rows.join('\n')}\n</data>`;

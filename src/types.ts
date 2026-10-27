@@ -347,23 +347,27 @@ export interface ReportStats {
   basis?: 'verdict';
   weekStart: string;
   weekEnd: string;
-  sessionsPlayed: number;
-  sessionsCollapsed: number;
   casesFiled: number;
   totalPenalty: number;
   absentVerdicts: number;
-  attendanceRate: number | null;
-  upcomingNextWeek: number;
   star: { name: string; delta: number } | null;
   pigeon: { name: string; delta: number } | null;
   bestTalker: { name: string; savedBy: number } | null;
   harshest: { name: string; delta: number } | null;
-  topOrganizer: { name: string; count: number } | null;
+}
+
+/** Optional figures from reports stored before S1; new reports omit them. */
+export interface StoredReportStats extends ReportStats {
+  sessionsPlayed?: number;
+  sessionsCollapsed?: number;
+  attendanceRate?: number | null;
+  upcomingNextWeek?: number;
+  topOrganizer?: { name: string; count: number } | null;
 }
 
 export interface WeeklyReport {
   week_start: string;
-  stats: ReportStats;
+  stats: StoredReportStats;
   narrative: string;
   source: 'ai' | 'fallback';
   created_at: string;
