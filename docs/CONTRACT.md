@@ -252,6 +252,15 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/me` → `{ user: User | null, pending: { statements: number, appeals: number } }` (200 either way).
 - `POST /api/me/roles` `{ is_participant?, is_judge? }` → `{ user }`.
 - `POST /api/me/display-name` `{ display_name: string | null }` → `{ user }`.
+- `GET /api/me/invitable` → `{ users: InvitableUser[] }`, `Cache-Control: private, no-store`
+  (P2-2). Everyone but the caller (at most 500), each exactly `{ id, username,
+  avatar_url, is_participant, last_played_with_me_at }` — `username` is the display
+  name; never a score, a role, an email or anything about Discord.
+  `last_played_with_me_at` is the `starts_at` of the latest session that has started,
+  was not cancelled, and where both said `going` and neither was marked `no_show` /
+  `excused` (unmarked counts as there); `null` if none. Order: people played with
+  (latest first), then participants, then name, then id. 401 signed out. An older
+  API answers 404: the client hides the invite entry.
 
 **Cases**
 - `POST /api/records` — two shapes, both requiring `is_judge`:
