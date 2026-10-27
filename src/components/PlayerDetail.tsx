@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { tierFor } from '@shared/scoring';
+import { REVOKE_WINDOW_MS, tierFor } from '@shared/scoring';
 import type { HistoryPoint, RecordItem, User, UserDetailResponse } from '../types';
 import {
   ApiError,
@@ -41,7 +41,6 @@ interface DetailState {
   error: string | null;
 }
 
-const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 /** busyId while the judge role is being changed (record ids are positive). */
 const JUDGE_BUSY = -1;
 /** busyId while the score is being set by hand. */

@@ -7,6 +7,7 @@
 import {
   MAX_NARRATIVE_LEN,
   MIN_CLAIM_LEN,
+  REVOKE_WINDOW_MS,
   STATEMENT_WINDOW_HOURS,
   VIOLATION_MAP,
   WEEKLY_BONUS_CAP,
@@ -91,8 +92,6 @@ import {
 export const JUDGING_STALE_MINUTES = 2;
 /** Cases judged per lazy sweep — bounds AI spend on a single page load. */
 export const SWEEP_BATCH = 5;
-/** Reporter self-revoke window for instantly-settled (bonus) records. */
-const REVOKE_WINDOW_MS = 15 * 60 * 1000;
 const PRIORS_WINDOW_DAYS = 30;
 
 // --- Mapping -----------------------------------------------------------------
