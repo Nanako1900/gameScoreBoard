@@ -247,12 +247,14 @@ export const YUE_SLOTS = BOARD_SLOTS;
 /** `dayOffset` days from today at `hour`:00, board-local, as an ISO instant. Lives in shared/quickTime now. */
 export { slotIso };
 
-/** /yue: propose a session. The card is posted by the dispatcher, like any new session. */
+/**
+ * /yue: propose a session. The card is posted by the dispatcher, like any new session.
+ * Anyone bound may, on the board or not — as on the web (spec §11 #7); createSession keeps the caps.
+ */
 export async function handleYue(input: CommandInput, ctx: BotContext & { offsetHours: number }): Promise<BotReply> {
   if (ctx.readOnly) return ephemeralReply(READ_ONLY_TEXT);
   const user = await boundUser(ctx.db, input.caller.id);
   if (!user) return ephemeralReply(NOT_LINKED);
-  if (!user.is_participant) return ephemeralReply('只有上榜选手可以发起约局（网页上可以改身份）。');
   const slot = YUE_SLOTS.find((s) => s.value === input.when) ?? YUE_SLOTS[0];
   const startsAt = slotIso(slot.dayOffset, slot.hour, ctx.offsetHours);
   if (Date.parse(startsAt) < Date.now() + BOARD_SLOT_MIN_LEAD_MS) {

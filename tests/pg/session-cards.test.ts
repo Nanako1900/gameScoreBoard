@@ -350,12 +350,15 @@ describe('RSVP buttons and /yue', () => {
     expect(Date.parse(row!.starts_at) - Date.now()).toBeGreaterThan(24 * 3_600_000);
   });
 
-  it('/yue is for bound players only', async () => {
+  // P2-4 (spec §11 #7): the bot follows the web, where anyone signed in may organise.
+  it('/yue is for anyone bound — on the board or not', async () => {
     await seedUser({ id: 'viewer', participant: false });
     await bind('viewer', 5);
-    expect((await handleCommand({ commandName: 'yue', caller: dc(5), targetUser: null, when: 'dayafter20' }, ctx)).content).toContain(
-      '上榜选手',
-    );
+    const reply = await handleCommand({ commandName: 'yue', caller: dc(5), targetUser: null, when: 'dayafter20' }, ctx);
+    expect(reply.content).toContain('已发起约局');
+    expect(reply.content).not.toContain('上榜选手');
+    const rows = await pool.query<{ organizer_id: string }>('SELECT organizer_id FROM game_sessions');
+    expect(rows.rows.map((r) => r.organizer_id)).toEqual(['viewer']);
     expect((await handleCommand({ commandName: 'yue', caller: dc(8), targetUser: null, when: 'dayafter20' }, ctx)).content).toContain(
       '/link',
     );
