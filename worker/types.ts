@@ -238,10 +238,35 @@ export interface RecordItem {
  * reason and the verdict's words (headline, reasoning, factors — written after
  * reading the statement, often quoting it) are only for the subject, the
  * reporter, judges and admins; anyone else gets them blanked and `redacted`.
- * The outcome (type, delta, status, who) stays public.
+ * After the verdict the outcome (type, delta, status, who) stays public;
+ * before it, see PendingHiddenRecordView.
  */
-export interface RecordView extends RecordItem {
+export type RecordView = OpenRecordView | PendingHiddenRecordView;
+
+/** Every case a viewer may read in full, and every decided case. Never carries `pending_hidden`. */
+export interface OpenRecordView extends RecordItem {
   redacted: boolean;
+  pending_hidden?: never;
+}
+
+/** The accusation's fields an outsider must not read before the verdict (B1-1, spec §11 #3 tier b). */
+export type PendingHiddenField = 'type' | 'range' | 'claim' | 'claim_summary' | 'note' | 'escalation_suggested';
+
+/**
+ * Before the verdict (awaiting_statement / judging), to anyone but the subject,
+ * the reporter, judges and admins: only that a case exists. The type, the
+ * accusation, the judge's note, the sentencing range and the escalation hint are
+ * blanked; statement_at stays, so the UI can still say a statement was written.
+ */
+export interface PendingHiddenRecordView extends Omit<RecordItem, PendingHiddenField> {
+  type: null;
+  range: null;
+  claim: null;
+  claim_summary: null;
+  note: null;
+  escalation_suggested: false;
+  redacted: true;
+  pending_hidden: true;
 }
 
 export interface HistoryPoint {

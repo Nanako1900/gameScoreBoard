@@ -282,3 +282,11 @@
   flex-wrap: wrap;
   gap: 0.45rem;
 }
+
+/* --- B1-1: 判决前对无关的人只说「有一起记录在处理中」 ----------------------- */
+
+/* Where the delta would be: never a 0 before the verdict. */
+.vc__delta-hidden {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

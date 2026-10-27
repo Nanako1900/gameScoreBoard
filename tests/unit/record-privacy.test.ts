@@ -79,3 +79,75 @@ describe('redactRecord', () => {
     expect(redactRecord(record, user('s'))).toEqual({ ...record, redacted: false });
   });
 });
+
+// B1-1 (spec §11 #3 tier b): before the verdict, an outsider learns only that a case exists.
+describe('redactRecord before the verdict', () => {
+  const pendingCase: RecordItem = {
+    ...record,
+    type: 'no_show',
+    delta: 0,
+    note: '立案短评',
+    claim: '说好八点五排结果没来',
+    claim_summary: '八点没来',
+    escalation_suggested: true,
+    session_id: 5,
+    statement: '家里有事',
+    statement_at: '2026-10-26 10:00:00',
+    appeal_reason: null,
+    deadline_at: '2026-10-26 21:00:00',
+    status: 'awaiting_statement',
+    verdict: null,
+  };
+
+  for (const status of ['awaiting_statement', 'judging'] as const) {
+    for (const viewer of [null, user('x')]) {
+      it(`hides the accusation itself while ${status}, from ${viewer ? 'an unrelated user' : 'a visitor'}`, () => {
+        const view = redactRecord({ ...pendingCase, status }, viewer);
+        expect(view).toEqual({
+          ...pendingCase,
+          status,
+          type: null,
+          range: null,
+          claim: null,
+          claim_summary: null,
+          note: null,
+          escalation_suggested: false,
+          statement: null,
+          appeal_reason: null,
+          verdict: null,
+          redacted: true,
+          pending_hidden: true,
+        });
+      });
+    }
+  }
+
+  it('keeps statement_at, so the page can still say a statement was written', () => {
+    expect(redactRecord(pendingCase, null)).toMatchObject({ pending_hidden: true, statement_at: '2026-10-26 10:00:00' });
+    expect(redactRecord({ ...pendingCase, statement_at: null }, null)).toMatchObject({ pending_hidden: true, statement_at: null });
+  });
+
+  it('leaves the input as it is', () => {
+    const frozen = Object.freeze({ ...pendingCase });
+    const view = redactRecord(frozen, null);
+    expect(view).not.toBe(frozen);
+    expect(frozen.claim).toBe('说好八点五排结果没来');
+    expect(frozen.type).toBe('no_show');
+  });
+
+  it('hides nothing more from the subject, the reporter, judges and admins', () => {
+    for (const viewer of [user('s'), user('r'), user('j', { is_judge: true }), user('a', { is_admin: true })]) {
+      const view = redactRecord(pendingCase, viewer);
+      expect(view).toEqual({ ...pendingCase, redacted: false });
+      expect(view).not.toHaveProperty('pending_hidden');
+    }
+  });
+
+  it('stops once there is a verdict: decided, appealed, revoked and withdrawn cases keep their type', () => {
+    for (const status of ['decided', 'appealed', 'revoked', 'withdrawn'] as const) {
+      const view = redactRecord({ ...pendingCase, status }, null);
+      expect(view, status).not.toHaveProperty('pending_hidden');
+      expect(view, status).toMatchObject({ type: 'no_show', claim: '说好八点五排结果没来', note: '立案短评', range: pendingCase.range, redacted: true });
+    }
+  });
+});
