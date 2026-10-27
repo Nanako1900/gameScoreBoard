@@ -152,3 +152,34 @@ describe('src/**/*.css', () => {
     expect(offenders.map(where)).toEqual([]);
   });
 });
+
+describe('theme.css primitives later PRs build on', () => {
+  const FORCED = '@media (forced-colors: active)';
+  const theme = STYLE_RULES.filter((rule) => rule.file === 'theme.css');
+  const forced = theme.filter((rule) => rule.ancestors.includes(FORCED));
+
+  it('keeps the focus ring in forced-colors mode', () => {
+    const focus = forced.find((rule) => rule.prelude === ':focus-visible');
+    expect(focus?.body).toMatch(/outline-color:\s*Highlight/);
+  });
+
+  it('gives controls and status chips an edge in forced-colors mode', () => {
+    const edged = (pattern: RegExp): string =>
+      forced
+        .filter((rule) => pattern.test(rule.body))
+        .map((rule) => rule.prelude)
+        .join(', ');
+    expect(edged(/border-color:\s*ButtonText/)).toMatch(/\.btn\b.*\binput\b/);
+    const chips = edged(/border:\s*1px solid CanvasText/);
+    for (const chip of ['.feed-row__status', '.sdt__chip', '.tier-badge']) {
+      expect(chips).toContain(chip);
+    }
+  });
+
+  it('defines .btn--danger-outline for inline danger confirms', () => {
+    const body = theme.find((rule) => rule.prelude === '.btn--danger-outline')?.body ?? '';
+    expect(body).toMatch(/color:\s*var\(--danger-text\)/);
+    expect(body).toMatch(/border-color:\s*var\(--danger\)/);
+    expect(body).toMatch(/background:\s*transparent/);
+  });
+});

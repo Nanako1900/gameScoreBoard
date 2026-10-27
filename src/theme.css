@@ -291,6 +291,22 @@ h3 {
   box-shadow: var(--glow-red);
 }
 
+/* The quieter danger button: inline confirms such as ConfirmInline's 「确认取消」,
+   where a solid red block would shout louder than the choice deserves. */
+.btn--danger-outline {
+  color: var(--danger-text);
+  background: transparent;
+  border-color: var(--danger);
+}
+
+@media (hover: hover) {
+  /* Restate the edge: .btn:hover would otherwise grey it out. */
+  .btn--danger-outline:hover {
+    border-color: var(--danger);
+    background: color-mix(in oklab, var(--danger) 14%, transparent);
+  }
+}
+
 .btn--ghost {
   background: transparent;
   border-color: var(--border);
@@ -361,5 +377,36 @@ h3 {
   .modal__close {
     min-width: 44px;
     min-height: 44px;
+  }
+}
+
+/* --- Forced colors (Windows high contrast) ---------------------------------
+ * The browser swaps our palette and drops backgrounds: the focus ring takes the
+ * system highlight, controls keep an edge, and status chips that were only a
+ * tinted fill get a border so they don't vanish. The chips carry an `html`
+ * prefix: theme.css loads first, so it needs one more selector to beat the
+ * components' own single-class rules (e.g. .feed-row__status--escalate). */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+
+  .btn,
+  input,
+  select,
+  textarea {
+    border-color: ButtonText;
+  }
+
+  html .feed-row__status,
+  html .sdt__chip,
+  html .sdt-player__rsvp,
+  html .sdt-player__att,
+  html .srow__game,
+  html .srow__count,
+  html .srow__status,
+  html .rc-row__tag,
+  html .tier-badge {
+    border: 1px solid CanvasText;
   }
 }
