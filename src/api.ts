@@ -9,6 +9,7 @@ import type {
   FileCasesResponse,
   InvitableResponse,
   InvitableUser,
+  InviteResponse,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
@@ -285,6 +286,11 @@ export async function getInvitable(): Promise<InvitableUser[] | undefined> {
     if (err instanceof ApiError && err.status === 404) return undefined;
     throw err;
   }
+}
+
+/** P2-1: invite more people after creation. Organizer or admin; rows already there are never changed. */
+export function inviteToSession(id: number, userIds: string[]): Promise<InviteResponse> {
+  return post<InviteResponse>(`/api/sessions/${id}/invite`, { user_ids: userIds });
 }
 
 // --- Weekly report ---------------------------------------------------------

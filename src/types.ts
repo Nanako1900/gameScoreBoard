@@ -224,6 +224,15 @@ export interface SettleResponse {
   skipped: number;
 }
 
+/** POST /api/sessions/:id/invite (P2-1). */
+export interface InviteResponse {
+  session: SessionDetail;
+  /** People this request actually invited. */
+  added: number;
+  /** The other ids asked for: already in it, or unknown. */
+  skipped: number;
+}
+
 export interface RoleUpdate {
   is_participant?: boolean;
   is_judge?: boolean;
