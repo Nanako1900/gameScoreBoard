@@ -6,11 +6,13 @@ import { playerCasePath } from '../lib/routes';
 import { readDraft } from '../lib/drafts';
 import { validateStatementDraft } from '../lib/draftShapes';
 import { Link } from './Link';
-import { IconAwaiting, IconDiscord, IconWarning } from './icons';
+import { IconAwaiting, IconDiscord } from './icons';
 export interface TodoCardProps {
   item: TodoItem; now: number; boardTzOffsetHours?: number;
   onOpenStatement: (record: RecordItem) => void; onOpenNotify: () => void;
+  /** Kept for hosts using the previous card signature. */
   onDismissUnbound: () => void;
+  onDismissOnboarding?: () => void;
 }
 function StatementCard({ item, ...props }: TodoCardProps & { item: Extract<TodoItem, { kind: 'statement' }> }): JSX.Element {
   const r = item.record;
@@ -26,15 +28,14 @@ function AccountTodo({ item, ...props }: TodoCardProps): JSX.Element {
   if (item.kind === 'escalation') return <><p className="tcard__title"><IconAwaiting />待你确认 · AI 建议升级</p>
     <p>{item.record.subject.username} · {violationLabel(item.record.type)} → 是团灭级吗？</p><p>需要在判决前确认。</p>
     <Link className="btn btn--gold" to={playerCasePath(item.record.subject.id, item.record.id)}>去看看 ›</Link></>;
-  if (item.kind === 'dm-broken') return <><p className="tcard__title"><IconWarning />Bot 上次给你的私信没发出去</p>
-    <p>确认你还在服务器里，并打开「允许服务器成员私信」。</p><button type="button" className="btn btn--gold" onClick={props.onOpenNotify}>去设置 ›</button></>;
-  return <><p className="tcard__title"><IconDiscord />还没绑定 Discord</p><p>绑定后可以在 Discord 里查分、看榜、看自己的待办。</p>
-    <button type="button" className="btn btn--gold" onClick={props.onOpenNotify}>去绑定 ›</button>
-    <button type="button" className="btn btn--ghost" onClick={props.onDismissUnbound}>不再提示</button></>;
+  if (item.kind !== 'onboarding') return <></>;
+  return <><p className="tcard__title"><IconDiscord />还差 {item.missing.length} 步完成入户</p>
+    <Link to="/welcome" className="btn btn--gold">继续</Link>
+    <button type="button" className="btn btn--ghost" onClick={props.onDismissOnboarding ?? props.onDismissUnbound}>7 天内不再提示</button></>;
 }
 export function TodoCard(props: TodoCardProps): JSX.Element {
   const item = props.item;
-  const attention = item.kind === 'dm-broken' || (item.kind === 'statement' && item.urgent);
+  const attention = item.kind === 'statement' && item.urgent;
   return <li className={`tcard tcard--${item.kind}${attention ? ' tcard--attention' : ''}`}>
     {item.kind === 'statement' ? <StatementCard {...props} item={item} /> : <AccountTodo {...props} item={item} />}
   </li>;

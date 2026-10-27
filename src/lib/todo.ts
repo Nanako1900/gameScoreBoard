@@ -1,6 +1,8 @@
 // Pure inbox rules. Network and browser state are supplied by the caller.
 import { isFilingJudge } from '@shared/scoring';
 import type { PendingCounts, RecordItem, User } from '../types';
+import { missingOnboardingSteps, type OnboardingStepId } from './onboardingSteps';
+import { isOnboardingDismissed, type OnboardingDismissal } from './todoMarks';
 import { TODO_RANKS } from './constants';
 import { isUrgent, parseTimestamp } from './time';
 
@@ -8,15 +10,15 @@ export type TodoItem =
   | { kind: 'statement'; key: string; record: RecordItem; urgent: boolean }
   | { kind: 'escalation'; key: string; record: RecordItem }
   | { kind: 'appeals'; key: string; count: number; earliest: RecordItem | null }
-  | { kind: 'dm-broken' | 'unbound'; key: string };
+  | { kind: 'onboarding'; key: string; missing: readonly OnboardingStepId[] };
 export type TodoKind = TodoItem['kind'];
 export interface TodoSources {
   me: User | null; now: number; pending: PendingCounts | null;
   myPending: readonly RecordItem[] | null;
   feed: readonly RecordItem[] | null; appealed: readonly RecordItem[] | null;
-  /** Only the caller's delivery flag is needed; unsupported and failed reads stay distinct. */
-  discord: { dm_ok?: boolean } | null | undefined | 'error';
-  unboundDismissed: boolean;
+  /** Current caller's server flags; unsupported and failed reads stay distinct. */
+  discord: { notify_dm?: boolean; dm_ok?: boolean } | null | undefined | 'error';
+  onboardingDismissed: OnboardingDismissal | null;
 }
 function recordTodos(source: TodoSources & { me: User }): TodoItem[] {
   const statements: TodoItem[] = (source.myPending ?? []).filter((r) => r.status === 'awaiting_statement').map((record) => ({
@@ -34,9 +36,10 @@ function recordTodos(source: TodoSources & { me: User }): TodoItem[] {
 export function collectTodo(source: TodoSources): TodoItem[] {
   if (!source.me) return [];
   const own = { ...source, me: source.me };
-  const settings: TodoItem[] = source.discord === null && !source.unboundDismissed ? [{ kind: 'unbound', key: 'unbound' }]
-    : source.discord && source.discord !== 'error' && source.discord.dm_ok === false ? [{ kind: 'dm-broken', key: 'dm-broken' }] : [];
-  return [...recordTodos(own), ...settings];
+  const missing = missingOnboardingSteps(source.me, source.discord);
+  const settings: TodoItem[] = missing.length > 0 && !isOnboardingDismissed(source.onboardingDismissed, source.me.id, missing, source.now)
+    ? [{ kind: 'onboarding', key: 'onboarding', missing }] : [];
+  return [...settings, ...recordTodos(own)];
 }
 export function todoRank(item: TodoItem): number {
   return item.kind === 'statement' && item.urgent ? TODO_RANKS['urgent-statement'] : TODO_RANKS[item.kind];
@@ -61,8 +64,8 @@ export function sortTodo(items: readonly TodoItem[]): TodoItem[] {
 }
 export function buildTodo(source: TodoSources): TodoItem[] { return sortTodo(collectTodo(source)); }
 export function todoBadgeCount(items: readonly TodoItem[]): number {
-  return items.reduce((n, item) => n + (item.kind === 'unbound' ? 0 : item.kind === 'appeals' ? item.count : 1), 0);
+  return items.reduce((n, item) => n + (item.kind === 'onboarding' ? 0 : item.kind === 'appeals' ? item.count : 1), 0);
 }
 export function meNeedsAttention(items: readonly TodoItem[]): boolean {
-  return items.some((item) => item.kind === 'appeals' || item.kind === 'escalation' || item.kind === 'dm-broken');
+  return items.some((item) => item.kind === 'appeals' || item.kind === 'escalation');
 }

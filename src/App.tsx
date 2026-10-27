@@ -37,7 +37,7 @@ import type { BoardData } from './components/BoardPage';
 import { boardPath } from './lib/routes';
 import { COUNTDOWN_TICK_MS, BOARD_MINI_ROWS_PHONE, BOARD_MINI_ROWS_DESKTOP } from './lib/constants';
 import { buildTodo, meNeedsAttention, todoBadgeCount } from './lib/todo';
-import { readUnboundDismissed, dismissUnbound, clearTodoMarks } from './lib/todoMarks';
+import { readOnboardingDismissed, dismissOnboarding, clearTodoMarks } from './lib/todoMarks';
 import { useTodoSources } from './lib/useTodoSources';
 import { useNow } from './lib/useNow';
 import { TodoInbox } from './components/TodoInbox';
@@ -89,7 +89,7 @@ function AppMain(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [todoRefreshKey, setTodoRefreshKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
-  const [unboundDismissed, setUnboundDismissed] = useState(readUnboundDismissed);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(readOnboardingDismissed);
   // ?linked=discord is where the API lands the browser after a successful bind.
   // Read once at mount; the effect below strips it so a reload doesn't repeat it.
   const [discordLinked, setDiscordLinked] = useState(
@@ -212,7 +212,7 @@ function AppMain(): JSX.Element {
   const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: todoRefreshKey });
   const items = useMemo(() => ready?.me ? buildTodo({ me: ready.me, now, pending: ready.pending, myPending: ready.myPending,
     feed: ready.records, appealed: extra.appealed, discord: extra.discord,
-    unboundDismissed }) : [], [ready, now, extra.appealed, extra.discord, unboundDismissed]);
+    onboardingDismissed }) : [], [ready, now, extra.appealed, extra.discord, onboardingDismissed]);
   useTabTitle(todoBadgeCount(items));
   if (state.status === 'loading') {
     return <div className="app"><Header pending config={null} me={null} onLogout={() => {}} onOpenOnboarding={() => {}} />
@@ -247,7 +247,10 @@ function AppMain(): JSX.Element {
   const myPath = me ? playerPath(me.id) : '/';
   const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
     onOpenStatement={setStatementCase} onOpenNotify={() => navigate(WELCOME_PATH)}
-    onDismissUnbound={() => { dismissUnbound(); setUnboundDismissed(true); }} />
+    onDismissUnbound={() => {}} onDismissOnboarding={() => {
+      const item = items.find((item) => item.kind === 'onboarding');
+      if (item?.kind === 'onboarding') setOnboardingDismissed(dismissOnboarding(me.id, item.missing, now));
+    }} />
     : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
       rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
   const score = me?.is_participant ? <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} /> : null;

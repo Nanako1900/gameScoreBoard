@@ -19,7 +19,7 @@ function record(patch: Partial<RecordItem> = {}): RecordItem {
 }
 function sources(patch: Partial<TodoSources> = {}): TodoSources {
   return { me, now: NOW, pending: { statements: 0, appeals: 0 }, myPending: [], feed: [],
-    appealed: [], discord: undefined, unboundDismissed: false, ...patch };
+    appealed: [], discord: undefined, onboardingDismissed: null, ...patch };
 }
 
 describe('shared filing-judge permission', () => {
@@ -74,13 +74,24 @@ describe('collectTodo sources', () => {
     expect(collectTodo(sources({ pending: { statements: 0, appeals: 2 } }))).toEqual([]);
     expect(collectTodo(sources({ me: { ...me, is_admin: true } }))).toEqual([]);
   });
-  it('uses only the caller own explicit DM failure flag', () => {
-    expect(collectTodo(sources({ discord: { dm_ok: false } }))).toEqual([{ kind: 'dm-broken', key: 'dm-broken' }]);
-    for (const discord of [{ dm_ok: true }, {}, undefined, 'error' as const]) expect(collectTodo(sources({ discord }))).toEqual([]);
+  it('combines incomplete binding and DM permission into one onboarding card', () => {
+    expect(collectTodo(sources({ discord: null }))).toEqual([{ kind: 'onboarding', key: 'onboarding', missing: [2, 3] }]);
+    expect(collectTodo(sources({ discord: { notify_dm: true, dm_ok: false } }))).toEqual([{ kind: 'onboarding', key: 'onboarding', missing: [3] }]);
+    expect(collectTodo(sources({ me: { ...me, is_participant: false }, discord: null })))
+      .toEqual([{ kind: 'onboarding', key: 'onboarding', missing: [2, 3, 4] }]);
   });
-  it('offers binding only for explicit unbound and remembers dismissal', () => {
-    expect(collectTodo(sources({ discord: null }))).toEqual([{ kind: 'unbound', key: 'unbound' }]);
-    expect(collectTodo(sources({ discord: null, unboundDismissed: true }))).toEqual([]);
+  it('shows no reminder after server completion and invents no Discord facts for unknown reads', () => {
+    for (const discord of [{ notify_dm: true, dm_ok: true }, undefined, 'error' as const]) expect(collectTodo(sources({ discord }))).toEqual([]);
+    expect(collectTodo(sources({ me: { ...me, is_participant: false }, discord: undefined })))
+      .toEqual([{ kind: 'onboarding', key: 'onboarding', missing: [4] }]);
+  });
+  it('hides only a current-account dismissal for known missing steps within seven days', () => {
+    const mark = { userId: me.id, dismissedAt: NOW, missing: [2, 3] as const };
+    expect(collectTodo(sources({ discord: null, onboardingDismissed: mark }))).toEqual([]);
+    expect(collectTodo(sources({ me: { ...me, is_participant: false }, discord: null, onboardingDismissed: mark })))
+      .toEqual([{ kind: 'onboarding', key: 'onboarding', missing: [2, 3, 4] }]);
+    expect(collectTodo(sources({ me: { ...me, id: 'someone-else' }, discord: null, onboardingDismissed: mark }))).toHaveLength(1);
+    expect(collectTodo(sources({ discord: null, now: NOW + 7 * 86_400_000, onboardingDismissed: mark }))).toHaveLength(1);
   });
   it('degrades each optional source to no items when still unavailable', () => {
     expect(buildTodo(sources({ pending: null, myPending: null, feed: null, appealed: null }))).toEqual([]);
@@ -89,15 +100,14 @@ describe('collectTodo sources', () => {
 
 describe('todo ordering and navigation counts', () => {
   function allItems(): TodoItem[] {
-    return [...collectTodo(sources({ me: { ...me, is_admin: true }, discord: { dm_ok: false },
+    return [...collectTodo(sources({ me: { ...me, is_admin: true }, discord: { notify_dm: true, dm_ok: false },
       myPending: [record(), record({ id: 2, deadline_at: null })],
-      feed: [record({ id: 7, escalation_suggested: true })], pending: { statements: 0, appeals: 3 } })),
-    { kind: 'unbound', key: 'unbound' }];
+      feed: [record({ id: 7, escalation_suggested: true })], pending: { statements: 0, appeals: 3 } }))];
   }
   it('sorts every priority without mutating its input and leaves the P4 priority gap', () => {
     const items = allItems().reverse(); const before = [...items];
     const sorted = sortTodo(items);
-    expect(sorted.map(todoRank)).toEqual([1, 2, 5, 8, 9, 12]);
+    expect(sorted.map(todoRank)).toEqual([0, 2, 5, 8, 9]);
     expect(items).toEqual(before);
   });
   it('sorts explanation deadlines before missing ones, then by key on ties', () => {
@@ -109,14 +119,14 @@ describe('todo ordering and navigation counts', () => {
     const feed = [record({ id: 1, escalation_suggested: true }), record({ id: 2, escalation_suggested: true, created_at: iso(-3 * HOUR) })];
     expect(buildTodo(sources({ me: { ...me, is_admin: true }, feed })).map((i) => i.key)).toEqual(['escalation:2', 'escalation:1']);
   });
-  it('does not count notices or unbound; counts each appeal rather than the single card', () => {
-    expect(todoBadgeCount(allItems())).toBe(7);
+  it('does not count the onboarding notice; counts each appeal rather than the single card', () => {
+    expect(todoBadgeCount(allItems())).toBe(6);
     expect(todoBadgeCount([])).toBe(0);
   });
-  it('marks my account only for appeals, escalation and broken DMs', () => {
+  it('marks my account only for actionable appeals and escalation', () => {
     const items = allItems();
     expect(meNeedsAttention(items)).toBe(true);
-    expect(meNeedsAttention(items.filter((i) => !['appeals', 'escalation', 'dm-broken'].includes(i.kind)))).toBe(false);
-    for (const kind of ['appeals', 'escalation', 'dm-broken']) expect(meNeedsAttention(items.filter((i) => i.kind === kind))).toBe(true);
+    expect(meNeedsAttention(items.filter((i) => !['appeals', 'escalation'].includes(i.kind)))).toBe(false);
+    for (const kind of ['appeals', 'escalation']) expect(meNeedsAttention(items.filter((i) => i.kind === kind))).toBe(true);
   });
 });
