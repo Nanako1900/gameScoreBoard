@@ -4,6 +4,7 @@ import { ApiError, getRecord, logout as apiLogout, regenerateReport } from './ap
 import { lastWeekStartOf } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
 import { computeCounts, computeTrends } from './lib/feedStats';
+import { FEED_PREVIEW_COUNT } from './lib/constants';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -317,6 +318,7 @@ function AppMain(): JSX.Element {
               title="最新动态"
               onSelectUser={setSelectedUserId}
               emptyHint="还没有任何记录，等待第一笔。"
+              previewCount={FEED_PREVIEW_COUNT}
             />
           </aside>
         </div>

@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Leaderboard } from '../../src/components/Leaderboard';
+import { RecordsFeed } from '../../src/components/RecordsFeed';
 import { WeekHighlights } from '../../src/components/WeekHighlights';
 import type { CaseStatus, PublicUser, RecordItem, ViolationType } from '../../src/types';
 
@@ -152,5 +153,33 @@ describe('WeekHighlights', () => {
     );
     expect(container.querySelector('.wh')?.textContent).toBe('⭐ 本周之星：小红（准时 2 次）');
     expect(container.textContent).not.toContain('鸽王');
+  });
+});
+
+describe('RecordsFeed previewCount', () => {
+  const many = Array.from({ length: 12 }, (_, i) => rec(100 - i, 'a', 'on_time_bonus', 2));
+
+  it('shows the first N rows, then 看更多 reveals the rest and takes focus there', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<RecordsFeed records={many} previewCount={10} />);
+    expect(container.querySelectorAll('.feed-row')).toHaveLength(10);
+    await user.click(screen.getByRole('button', { name: '看更多' }));
+    const rows = container.querySelectorAll('.feed-row');
+    expect(rows).toHaveLength(12);
+    expect(screen.queryByRole('button', { name: '看更多' })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(rows[10]);
+  });
+
+  it('has no 看更多 when everything fits, or without previewCount', () => {
+    const { rerender } = render(<RecordsFeed records={many.slice(0, 10)} previewCount={10} />);
+    expect(screen.queryByRole('button', { name: '看更多' })).not.toBeInTheDocument();
+    rerender(<RecordsFeed records={many} />);
+    expect(screen.queryByRole('button', { name: '看更多' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the .feed-row__status--escalate class for an open escalation', () => {
+    const open = { ...rec(9, 'a', 'no_show', 0, 'awaiting_statement'), escalation_suggested: true };
+    const { container } = render(<RecordsFeed records={[open]} previewCount={10} />);
+    expect(container.querySelector('.feed-row__status--escalate')).not.toBeNull();
   });
 });

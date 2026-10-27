@@ -172,3 +172,8 @@
   background: rgba(229, 72, 77, 0.14);
   border-color: rgba(229, 72, 77, 0.4);
 }
+
+.feed__more {
+  align-self: center;
+  margin-top: 0.75rem;
+}
