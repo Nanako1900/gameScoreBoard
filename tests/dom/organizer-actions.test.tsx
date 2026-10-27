@@ -1,0 +1,209 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import type { Rsvp } from '@shared/attendance';
+import { RescheduleSheet } from '../../src/components/RescheduleSheet';
+import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
+import { ToastProvider } from '../../src/components/Toast';
+import type { SessionDetail, SessionPlayer, User } from '../../src/types';
+
+// P0-6: 改时间 and 取消这局 inside the existing session dialog, and what an
+// answer says back. Only Date is faked — pinned to a local Wednesday morning so
+// quickSlots() is the same list on every machine; timers stay real.
+
+const NOW = new Date(2026, 9, 28, 10, 0);
+const at = (day: number, hour: number, minute = 0): string =>
+  new Date(2026, 9, day, hour, minute).toISOString();
+const START = at(28, 21); // 今晚 21:00
+
+interface Call {
+  method: string;
+  path: string;
+  body: unknown;
+}
+
+function json(status: number, body: unknown): Response {
+  return { ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(body)) } as Response;
+}
+
+/** Unrouted requests get a 500, so an extra request shows up as a failure. */
+function mockFetch(routes: Record<string, (call: Call) => Response>): Call[] {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const path = url.replace(/^https?:\/\/[^/]+/, '');
+      const method = init?.method ?? 'GET';
+      const call: Call = { method, path, body: init?.body ? JSON.parse(String(init.body)) : null };
+      calls.push(call);
+      const route = routes[`${method} ${path}`];
+      return Promise.resolve(route ? route(call) : json(500, { error: `unrouted ${method} ${path}` }));
+    }),
+  );
+  return calls;
+}
+
+const writes = (calls: Call[]): Call[] => calls.filter((c) => c.method !== 'GET');
+
+function makeUser(id: string, username: string, isAdmin = false): User {
+  return {
+    id,
+    username,
+    oauth_username: username,
+    avatar_url: null,
+    is_participant: true,
+    is_judge: false,
+    is_admin: isAdmin,
+    score: 100,
+    created_at: '2026-10-01 00:00:00',
+  };
+}
+
+const ORGANIZER = makeUser('org', '组织者');
+const PLAYER = makeUser('p', '选手');
+const ADMIN = makeUser('admin', '管理员', true);
+
+function player(id: string, rsvp: Rsvp): SessionPlayer {
+  return {
+    user: { id, username: `玩家${id}`, avatar_url: null },
+    rsvp,
+    rsvp_at: '2026-10-27 00:00:00',
+    attendance: null,
+    late_minutes: null,
+    attendance_note: null,
+    record_id: null,
+    is_participant: true,
+  };
+}
+
+function makeSession(overrides: Partial<SessionDetail> = {}): SessionDetail {
+  return {
+    id: 1,
+    organizer: { id: 'org', username: '组织者', avatar_url: null },
+    title: '周五五排',
+    game: null,
+    starts_at: START,
+    duration_min: null,
+    capacity: null,
+    note: null,
+    status: 'open',
+    settled_at: null,
+    created_at: '2026-10-27 00:00:00',
+    counts: { invited: 1, going: 2, maybe: 1, out: 1 },
+    my_rsvp: null,
+    players: [
+      player('org', 'going'),
+      player('a', 'going'),
+      player('b', 'maybe'),
+      player('c', 'out'),
+      player('d', 'invited'),
+    ],
+    ...overrides,
+  };
+}
+
+const detail = (s: SessionDetail): Response => json(200, { session: s, records: [] });
+
+/** The dialog inside a ToastProvider, as App renders it. */
+function renderDialog(me: User): Mock {
+  const onChanged = vi.fn();
+  render(
+    <ToastProvider>
+      <SessionDetailDialog sessionId={1} me={me} onClose={() => {}} onChanged={onChanged} />
+    </ToastProvider>,
+  );
+  return onChanged;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+describe('RescheduleSheet', () => {
+  function renderSheet(): { onClose: Mock; onRescheduled: Mock; sheet: HTMLElement } {
+    const onClose = vi.fn();
+    const onRescheduled = vi.fn();
+    render(<RescheduleSheet session={makeSession()} onClose={onClose} onRescheduled={onRescheduled} />);
+    return { onClose, onRescheduled, sheet: screen.getByRole('dialog', { name: '改到什么时候？' }) };
+  }
+
+  it('starts on 先不改, shows the current time as local, and never offers it again', () => {
+    mockFetch({});
+    const { sheet } = renderSheet();
+    expect(within(sheet).getByRole('button', { name: '先不改' })).toHaveFocus();
+    expect(within(sheet).getByText(/^现在：/)).toHaveTextContent('现在：10月28日 21:00 周三（本地时间）');
+    expect(within(sheet).queryByRole('radio', { name: '今晚 21:00' })).toBeNull();
+    expect(within(sheet).getByRole('radio', { name: '今晚 20:00' })).toBeChecked();
+    expect(within(sheet).getByRole('button', { name: '改到 今晚 20:00' })).toBeInTheDocument();
+  });
+
+  it('says what the move does before doing it', () => {
+    mockFetch({});
+    const { sheet } = renderSheet();
+    expect(within(sheet).getByText('改到 今晚 20:00 之后：')).toBeInTheDocument();
+    expect(within(sheet).getByText('已回复的 3 人要重新确认（说过不来的也要重新回答）')).toBeInTheDocument();
+    expect(
+      within(sheet).getByText('局里每个人约 3 分钟后收到一条「约局改时间了」私信，连改几次也只发一条'),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByText('开局提醒和点名提醒会跟着改')).toBeInTheDocument();
+  });
+
+  it('moves it with one PATCH of starts_at only', async () => {
+    const moved = makeSession({ starts_at: at(28, 22) });
+    const calls = mockFetch({ 'PATCH /api/sessions/1': () => json(200, { session: moved }) });
+    const user = userEvent.setup();
+    const { sheet, onRescheduled } = renderSheet();
+    await user.click(within(sheet).getByRole('radio', { name: '今晚 22:00' }));
+    expect(within(sheet).getByText('改到 今晚 22:00 之后：')).toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: '改到 今晚 22:00' }));
+    await waitFor(() => expect(onRescheduled).toHaveBeenCalledWith(moved));
+    expect(writes(calls)).toEqual([
+      { method: 'PATCH', path: '/api/sessions/1', body: { starts_at: at(28, 22) } },
+    ]);
+  });
+
+  it('先不改 closes without a request', async () => {
+    const calls = mockFetch({});
+    const user = userEvent.setup();
+    const { sheet, onClose } = renderSheet();
+    await user.click(within(sheet).getByRole('button', { name: '先不改' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([]);
+  });
+
+  it('takes 其他时间 as local wall-clock time and refuses an empty one', async () => {
+    const calls = mockFetch({
+      'PATCH /api/sessions/1': () => json(200, { session: makeSession({ starts_at: at(30, 20, 30) }) }),
+    });
+    const user = userEvent.setup();
+    const { sheet } = renderSheet();
+    await user.click(within(sheet).getByRole('button', { name: /其他时间/ }));
+    const input = within(sheet).getByLabelText('自定义开始时间');
+    expect(input).toHaveValue('2026-10-28T11:00');
+    fireEvent.change(input, { target: { value: '' } });
+    await user.click(within(sheet).getByRole('button', { name: '改时间' }));
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('选一个时间');
+    fireEvent.change(input, { target: { value: '2026-10-30T20:30' } });
+    await user.click(within(sheet).getByRole('button', { name: '改到 周五 20:30' }));
+    await waitFor(() => expect(writes(calls)).toHaveLength(1));
+    expect(writes(calls)[0].body).toEqual({ starts_at: at(30, 20, 30) });
+  });
+
+  it("shows the server's reason in the sheet and stays open", async () => {
+    mockFetch({ 'PATCH /api/sessions/1': () => json(400, { error: '约局已开始，不能再修改' }) });
+    const user = userEvent.setup();
+    const { sheet, onRescheduled } = renderSheet();
+    await user.click(within(sheet).getByRole('button', { name: '改到 今晚 20:00' }));
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('约局已开始，不能再修改');
+    expect(within(sheet).getByRole('button', { name: '改到 今晚 20:00' })).toBeEnabled();
+    expect(onRescheduled).not.toHaveBeenCalled();
+  });
+});
