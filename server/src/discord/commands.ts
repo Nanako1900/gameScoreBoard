@@ -11,6 +11,10 @@
 //     the web, behind its own rules;
 //   * every user- or AI-written string goes through render.ts first.
 
+import { VOICE_BOT_DAYS_MAX } from '../../../shared/voice';
+import { getVoiceHistory } from '../../../worker/voice';
+import { parseSqlUtc, sqlNow, toSqlUtc } from '../../../worker/time';
+import { renderVoiceHistory } from './voice';
 import { tierFor, VIOLATION_MAP } from '../../../shared/scoring';
 import { listRecords, pendingCounts } from '../../../worker/case-reads';
 import { getLeaderboard, getUserById, toUser } from '../../../worker/db';
@@ -50,6 +54,7 @@ import type {
 
 const CHAT_INPUT = 1;
 const STRING_OPTION = 3;
+const INTEGER_OPTION = 4;
 const USER_OPTION = 6;
 
 interface CommandOption {
@@ -58,6 +63,8 @@ interface CommandOption {
   description: string;
   required?: boolean;
   choices?: Array<{ name: string; value: string }>;
+  min_value?: number;
+  max_value?: number;
 }
 
 export interface CommandDefinition {
@@ -108,6 +115,10 @@ export const COMMANDS: readonly CommandDefinition[] = [
     ],
   },
   { type: CHAT_INPUT, name: 'help', description: '机器人指南（只有你自己看得到）' },
+  { type: CHAT_INPUT, name: 'voice', description: '语音进出记录（只有你自己看得到，默认最近 7 天）', options: [
+    { type: INTEGER_OPTION, name: 'days', description: '最近几天（默认 7 天）', required: false, min_value: 1, max_value: VOICE_BOT_DAYS_MAX },
+    userOption('要查谁（只有裁判和管理员可以指定）'),
+  ] },
 ];
 
 // --- Shared pieces -----------------------------------------------------------
@@ -340,10 +351,33 @@ async function handleHelp(_input: CommandInput, ctx: BotContext): Promise<BotRep
   return ephemeralReply(undefined, { embeds: [renderGuideEmbed()], buttons: [webButton(ctx)] });
 }
 
+async function handleVoice(input: CommandInput, ctx: BotContext): Promise<BotReply> {
+  const caller = await boundUser(ctx.db, input.caller.id);
+  if (!caller) return ephemeralReply(NOT_LINKED);
+  if (input.targetUser !== null && !caller.is_judge && !caller.is_admin) {
+    return ephemeralReply('只有裁判和管理员能查别人的语音记录');
+  }
+  const days = input.days ?? 7;
+  if (!Number.isInteger(days) || days < 1 || days > VOICE_BOT_DAYS_MAX) {
+    return ephemeralReply(`天数要是 1–${VOICE_BOT_DAYS_MAX} 之间的整数`);
+  }
+  const target = input.targetUser === null ? caller : await boundUser(ctx.db, input.targetUser.id);
+  if (!target) return ephemeralReply('TA 还没绑定 Nanako 账号');
+  const now = sqlNow();
+  const offset = ctx.offsetHours ?? 8;
+  const to = toSqlUtc(new Date(parseSqlUtc(now) + offset * 3_600_000)).slice(0, 10);
+  const from = new Date(Date.parse(`${to}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const history = await getVoiceHistory(ctx.db, target.id, from, to, offset, now);
+  const button = caller.is_judge || caller.is_admin
+    ? linkButton('在网页查看', joinUrl(ctx.frontendUrl, `/admin/voice?user=${encodeURIComponent(target.id)}`)) : webButton(ctx);
+  return ephemeralReply(undefined, { embeds: [renderVoiceHistory(history, offset)], buttons: [button] });
+}
+
 type Handler = (input: CommandInput, ctx: BotContext) => Promise<BotReply>;
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
   help: handleHelp,
+  voice: handleVoice,
   link: handleLink,
   unlink: handleUnlink,
   score: handleScore,

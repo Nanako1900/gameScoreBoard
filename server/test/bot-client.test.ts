@@ -87,6 +87,20 @@ describe('toCommandInput', () => {
     expect(toCommandInput(interaction).targetUser).toBeNull();
   });
 
+  it('reads only the voice integer range option and keeps other command inputs unchanged', () => {
+    const { interaction, fake } = fakeInteraction({ commandName: 'voice' });
+    const getInteger = vi.fn(() => 14); Object.assign(fake.options, { getInteger });
+    expect(toCommandInput(interaction)).toMatchObject({ commandName: 'voice', days: 14 });
+    expect(getInteger).toHaveBeenCalledExactlyOnceWith('days');
+    const other = fakeInteraction({ commandName: 'top' }); Object.assign(other.fake.options, { getInteger });
+    expect(toCommandInput(other.interaction)).not.toHaveProperty('days');
+    expect(getInteger).toHaveBeenCalledTimes(1);
+  });
+  it('leaves voice days absent when the caller uses its default', () => {
+    const { interaction, fake } = fakeInteraction({ commandName: 'voice' });
+    Object.assign(fake.options, { getInteger: vi.fn(() => null) });
+    expect(toCommandInput(interaction)).not.toHaveProperty('days');
+  });
   it('reads /notify’s on/off choice', () => {
     const { interaction, fake } = fakeInteraction({ commandName: 'notify' });
     Object.assign(fake.options, { getString: vi.fn((name: string) => (name === 'state' ? 'off' : null)) });

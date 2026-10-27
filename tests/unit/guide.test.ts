@@ -4,13 +4,19 @@ import { COMMANDS, handleCommand } from '../../server/src/discord/commands';
 
 const names = () => GUIDE_COMMANDS.map((command) => command.name.replace(/^\//, ''));
 
-describe('S2 shared bot guide', () => {
+describe('S3 shared bot guide', () => {
   it('documents every registered command exactly once, including help', () => {
     expect([...names()].sort()).toEqual(COMMANDS.map((command) => command.name).sort());
     expect(new Set(names()).size).toBe(names().length);
     expect(names()).toContain('help');
     expect(names()).not.toContain('yue');
-    expect(names()).not.toContain('voice');
+    expect(names()).toContain('voice');
+  });
+  it('registers bounded integer days and an optional person for voice', () => {
+    expect(COMMANDS.find((command) => command.name === 'voice')).toMatchObject({ options: [
+      { type: 4, name: 'days', required: false, min_value: 1, max_value: 14 },
+      { type: 6, name: 'user', required: false },
+    ] });
   });
   it('gives the daily entry and useful DM guidance without promising later phases', () => {
     expect(GUIDE_INTRO).toContain('Discord');
@@ -18,7 +24,7 @@ describe('S2 shared bot guide', () => {
     expect(GUIDE_TIPS.join(' ')).toContain('私信');
     expect(GUIDE_TIPS.join(' ')).toContain('陈述');
     for (const command of GUIDE_COMMANDS) expect(command.text.trim().length).toBeGreaterThan(0);
-    expect(JSON.stringify({ GUIDE_INTRO, GUIDE_COMMANDS, GUIDE_TIPS })).not.toMatch(/语音记录|信息板频道|discord_|频道 id/i);
+    expect(JSON.stringify({ GUIDE_INTRO, GUIDE_COMMANDS, GUIDE_TIPS })).not.toMatch(/信息板频道|discord_|频道 id/i);
   });
   it('answers help privately without looking up a binding', async () => {
     const db = { prepare() { throw new Error('help must not query an account'); } } as unknown as D1Database;

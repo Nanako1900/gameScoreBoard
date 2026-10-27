@@ -19,6 +19,7 @@
 | `/report` | 最新一期周报 | 频道里所有人 |
 | `/notify 开/关` | 私信提醒开关（默认开）；网页 `/welcome` 第 3 步也能开关（`POST /api/me/discord/notify`，和 bot 是同一个开关） | 只有自己 |
 | `/help` | 机器人指南，无需绑定；与网页 `/guide`、入户第 5 步和欢迎私信共用文案，附「打开网页」按钮 | 只有自己 |
+| `/voice [days] [user]` | 语音进出记录，默认 7 天、最多 14 天；指定他人仅限裁判和管理员 | 只有自己 |
 
 Discord 里**没有任何管理操作**，改判、撤销、改分都只在网页上做。
 
@@ -186,7 +187,7 @@ PG 迁移 `0008_sessions_off.sql` 删除约局触发器和未处理的约局 out
 
 ## S2 入户与欢迎私信上线
 
-本期命令为上表 9 个，新增 `/help`；它无需绑定，回复为 ephemeral，仍只在配置的服务器里使用。
+本期命令为上表 10 个，新增 `/help`；它无需绑定，回复为 ephemeral，仍只在配置的服务器里使用。
 语音记录与信息板在后续分期加入，本期没有 `/voice` 或信息板频道配置。
 
 PG 迁移 `0009_welcome.sql` 添加 `discord_links` 的插入触发器与 `queue_welcome_resend` 函数，
@@ -205,8 +206,8 @@ PG 迁移 `0009_welcome.sql` 添加 `discord_links` 的插入触发器与 `queue
 1. Coolify → `bot` 的日志里依次看到：
    - `gateway session starts left today: 9xx/1000`
    - `gateway ready as <bot 名字>`
-   - `registered 9 slash commands in guild 1114391825336250432`
-2. 在服务器里输入 `/`，能看到上面 9 个命令（服务器命令是即时生效的）。
+   - `registered 10 slash commands in guild 1114391825336250432`
+2. 在服务器里输入 `/`，能看到上面 10 个命令（服务器命令是即时生效的）。
 3. `/link` → 点按钮 → 网页登录 Nanako → Discord 授权页 → 确认页点「确认绑定」→ 跳回
    `https://community.nanako.org/?linked=discord`，前端进入 `/welcome` 并显示绑定成功提示；开启私信时会收到欢迎指南。
 4. `/score`：只有自己看得到的分数卡片；`/top`：频道里所有人都看得到的榜，没有人被 @；未绑定的人也能用 `/help` 看指南。
