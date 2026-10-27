@@ -207,3 +207,48 @@ describe('RescheduleSheet', () => {
     expect(onRescheduled).not.toHaveBeenCalled();
   });
 });
+
+describe('改时间 in the session dialog', () => {
+  it('opens over the dialog; Escape closes only the sheet', async () => {
+    const calls = mockFetch({ 'GET /api/sessions/1': () => detail(makeSession()) });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '改时间' }));
+    expect(screen.getByRole('dialog', { name: '改到什么时候？' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '改到什么时候？' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: '周五五排' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '改时间' })).toHaveFocus();
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('after a move the dialog shows the new time, tells the lists, and says so', async () => {
+    const moved = makeSession({
+      starts_at: at(28, 22),
+      counts: { invited: 4, going: 1, maybe: 0, out: 0 },
+      players: [
+        player('org', 'going'),
+        player('a', 'invited'),
+        player('b', 'invited'),
+        player('c', 'invited'),
+        player('d', 'invited'),
+      ],
+    });
+    const calls = mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'PATCH /api/sessions/1': () => json(200, { session: moved }),
+    });
+    const user = userEvent.setup();
+    const onChanged = renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '改时间' }));
+    const sheet = screen.getByRole('dialog', { name: '改到什么时候？' });
+    await user.click(within(sheet).getByRole('radio', { name: '今晚 22:00' }));
+    await user.click(within(sheet).getByRole('button', { name: '改到 今晚 22:00' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '改到什么时候？' })).toBeNull());
+    expect(screen.getByText('10月28日 22:00 周三')).toBeInTheDocument();
+    expect(await screen.findByText('已改到 今天 22:00。')).toBeInTheDocument();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '改时间' })).toHaveFocus();
+    expect(writes(calls)).toHaveLength(1);
+  });
+});

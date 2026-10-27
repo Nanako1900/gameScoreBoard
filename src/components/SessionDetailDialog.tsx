@@ -8,11 +8,13 @@ import {
 import type { SelfRsvp } from '@shared/attendance';
 import type { RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
-import { formatDateTime, parseTimestamp } from '../lib/time';
+import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { VerdictCard } from './VerdictCard';
 import { RollCallDialog } from './RollCallDialog';
+import { RescheduleSheet } from './RescheduleSheet';
+import { useToast } from './Toast';
 import './session-detail.css';
 
 interface SessionDetailDialogProps {
@@ -36,7 +38,9 @@ export function SessionDetailDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rollCallOpen, setRollCallOpen] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const toast = useToast();
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -72,6 +76,14 @@ export function SessionDetailDialog({
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleRescheduled = (updated: SessionDetail): void => {
+    setRescheduleOpen(false);
+    setSession(updated);
+    setError(null);
+    toast.show({ message: `已改到 ${formatWhen(updated.starts_at)}。`, tone: 'ok' });
+    onChanged();
   };
 
   const started = session !== null && parseTimestamp(session.starts_at) <= Date.now();
@@ -189,6 +201,16 @@ export function SessionDetailDialog({
                     type="button"
                     className="btn btn--ghost btn--sm"
                     disabled={busy}
+                    onClick={() => setRescheduleOpen(true)}
+                  >
+                    改时间
+                  </button>
+                )}
+                {!started && (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    disabled={busy}
                     onClick={() => void mutate(() => cancelSession(session.id))}
                   >
                     取消约局
@@ -228,6 +250,14 @@ export function SessionDetailDialog({
             void load();
             onChanged();
           }}
+        />
+      )}
+
+      {session && rescheduleOpen && (
+        <RescheduleSheet
+          session={session}
+          onClose={() => setRescheduleOpen(false)}
+          onRescheduled={handleRescheduled}
         />
       )}
     </>
