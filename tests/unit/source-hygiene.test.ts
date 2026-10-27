@@ -3,10 +3,12 @@
 // worker/ai/config.ts carried two from ca73f92 until they became `\u0000`
 // escapes — same string at runtime, reviewable in git.
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FILED_DM_GRACE_MS } from '../../shared/scoring';
+import { COMMANDS } from '../../server/src/discord/commands';
+import { BACK_HOME } from '../../src/lib/routeCopy';
 
 const ROOT = path.resolve(__dirname, '../..');
 const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations'];
@@ -86,5 +88,42 @@ describe('page sharing metadata', () => {
     const descriptions = [...html.matchAll(/<meta (?:name="description"|property="og:description") content="([^"]+)"/g)]
       .map((match) => match[1]);
     expect(descriptions).toEqual(['EDG 信誉分：开黑守约、榜单与案件。', 'EDG 信誉分：开黑守约、榜单与案件。']);
+  });
+});
+
+// S1: public setup and API documentation must not send readers to removed features.
+describe('public documentation after sessions retire', () => {
+  it('lists only existing Worker modules in the contract', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const modules = contract.split('## Worker modules')[1]?.split('\n## ')[0] ?? '';
+    const files = [...modules.matchAll(/`(worker\/[^`]+\.ts)`/g)].map((match) => match[1]);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((file) => !existsSync(path.join(ROOT, file)))).toEqual([]);
+  });
+
+  it('retires scheduling endpoints while documenting the permanent old URL landings', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    expect(contract).not.toMatch(/^- `(?:GET|POST|PATCH) \/api\/(?:sessions\b|me\/(?:invites|invitable)\b)/m);
+    expect(contract).toContain('`/sessions/*`');
+    expect(contract).toContain('约局功能已下线');
+    expect(contract).toContain(`page 「这页不存在」 with a 「${BACK_HOME}」 link:`);
+    expect(contract).toMatch(/`\/?\?session[^`]*`[^\n]*首页/);
+  });
+
+  it('keeps the Discord setup command table and count aligned with the bot', () => {
+    const deploy = readFileSync(path.join(ROOT, 'docs/DEPLOY-DISCORD.md'), 'utf8');
+    const names = [...deploy.matchAll(/^\| `\/([a-z]+)[^`]*` \|/gm)].map((match) => match[1]);
+    expect(names).toEqual(COMMANDS.map((command) => command.name));
+    expect(deploy).toContain(`registered ${COMMANDS.length} slash commands`);
+    expect(deploy).not.toContain('DISCORD_SESSION_CHANNEL_ID');
+  });
+
+  it('no longer advertises website scheduling and roll call in the README', () => {
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    expect(readme).not.toMatch(/^### 约局/m);
+    expect(readme).not.toContain('还能站内**约局**');
+    expect(readme).not.toContain('一键点名');
+    expect(readme).not.toContain('SESSION_ORGANIZER_CAN_FILE');
+    expect(readme).toContain(`| 其他任何路径 | 页面 | 「这页不存在」，附「${BACK_HOME}」 |`);
   });
 });
