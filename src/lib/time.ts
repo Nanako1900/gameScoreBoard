@@ -1,9 +1,12 @@
 // Time formatting helpers: relative timestamps and a countdown formatter.
 // All pure; no side effects.
 
+import { boardTzLabel } from '@shared/quickTime';
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
 
 /** SQLite `datetime('now')` shape: UTC, but with no `T` and no zone marker. */
 const SQLITE_DATETIME = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/;
@@ -102,6 +105,48 @@ export function formatDateTime(value: string): string {
   )} ${weekday}`;
 }
 
+/** One reading of a wall clock: the browser's (offsetHours omitted) or the board's (UTC + offsetHours). */
+interface WallClock {
+  month: number;
+  date: number;
+  weekday: number;
+  hours: number;
+  minutes: number;
+  /** 00:00 of that day on the same clock, as epoch ms. */
+  dayStart: number;
+}
+
+function wallClock(ms: number, offsetHours?: number): WallClock {
+  if (offsetHours === undefined) {
+    const d = new Date(ms);
+    const start = new Date(ms);
+    start.setHours(0, 0, 0, 0);
+    return {
+      month: d.getMonth() + 1,
+      date: d.getDate(),
+      weekday: d.getDay(),
+      hours: d.getHours(),
+      minutes: d.getMinutes(),
+      dayStart: start.getTime(),
+    };
+  }
+  // Shift so that the UTC getters read the board's wall clock.
+  const shift = offsetHours * HOUR;
+  const d = new Date(ms + shift);
+  return {
+    month: d.getUTCMonth() + 1,
+    date: d.getUTCDate(),
+    weekday: d.getUTCDay(),
+    hours: d.getUTCHours(),
+    minutes: d.getUTCMinutes(),
+    dayStart: Math.floor((ms + shift) / DAY) * DAY - shift,
+  };
+}
+
+function clockTime(at: WallClock): string {
+  return `${pad2(at.hours)}:${pad2(at.minutes)}`;
+}
+
 /**
  * Compact when-label for a scheduled session: '今天 20:00' / '明天 20:00' /
  * '周五 20:00', falling back to a date beyond a week out.
@@ -109,24 +154,44 @@ export function formatDateTime(value: string): string {
  * `formatDateTime` produces '7月28日 09:48 周二' — 14 characters, which wrapped
  * the invite banner onto three lines on a 375px screen and orphaned a word. For
  * a game that is days away at most, the weekday is the part people actually read.
+ *
+ * offsetHours omitted → today's output exactly (the browser's zone). Given → the
+ * same buckets (今天 / 明天 / 周X / M月D日) read on the board's wall clock (P2-4).
  */
-export function formatWhen(value: string, now: number = Date.now()): string {
+export function formatWhen(value: string, now: number = Date.now(), offsetHours?: number): string {
   const ms = parseTimestamp(value);
   if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  const startOfDay = (t: number): number => {
-    const x = new Date(t);
-    x.setHours(0, 0, 0, 0);
-    return x.getTime();
-  };
-  const days = Math.round((startOfDay(ms) - startOfDay(now)) / DAY);
+  const at = wallClock(ms, offsetHours);
+  const time = clockTime(at);
+  const days = Math.round((at.dayStart - wallClock(now, offsetHours).dayStart) / DAY);
   if (days === 0) return `今天 ${time}`;
   if (days === 1) return `明天 ${time}`;
-  if (days > 1 && days < 7) {
-    return `${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]} ${time}`;
-  }
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${time}`;
+  if (days > 1 && days < 7) return `${WEEKDAYS[at.weekday]} ${time}`;
+  return `${at.month}月${at.date}日 ${time}`;
+}
+
+/** '周五 10/30 21:00（北京时间）' — the board's wall clock and its zone label (spec §11 #8). '' when unparseable. */
+export function formatBoardDateTime(value: string, offsetHours: number): string {
+  const ms = parseTimestamp(value);
+  if (Number.isNaN(ms)) return '';
+  const at = wallClock(ms, offsetHours);
+  return `${WEEKDAYS[at.weekday]} ${at.month}/${at.date} ${clockTime(at)}（${boardTzLabel(offsetHours)}）`;
+}
+
+/**
+ * '你那边 22:00' when the viewer's UTC offset at that instant differs from the
+ * board's; '你那边 周六 01:00' when the viewer's date differs too; null when the
+ * zones agree or the value is unparseable.
+ */
+export function formatViewerAside(value: string, offsetHours: number): string | null {
+  const ms = parseTimestamp(value);
+  if (Number.isNaN(ms)) return null;
+  // getTimezoneOffset is minutes BEHIND UTC, for this instant (daylight saving included).
+  if (-new Date(ms).getTimezoneOffset() === Math.round(offsetHours * 60)) return null;
+  const viewer = wallClock(ms);
+  const board = wallClock(ms, offsetHours);
+  const sameDay = viewer.month === board.month && viewer.date === board.date;
+  return sameDay ? `你那边 ${clockTime(viewer)}` : `你那边 ${WEEKDAYS[viewer.weekday]} ${clockTime(viewer)}`;
 }
 
 /** `datetime-local` input value (local time, minute precision). */
