@@ -6,7 +6,7 @@
 // /link: those belong to the API, and the SPA only ever sees them when the
 // hosting is misconfigured.
 
-import { USER_ID_MAX } from './constants';
+import { HISTORY_SHEET_NAME_MAX, USER_ID_MAX } from './constants';
 import { ID_PATTERN } from './deepLink';
 
 export type Route =
@@ -27,6 +27,12 @@ export interface EdgHistoryState {
   readonly edg: 1;
   /** 0 for the entry the tab landed on; a push is the current idx + 1; a replace keeps it. */
   readonly idx: number;
+  /** P1-2: the open overlay's historyKey (≤ HISTORY_SHEET_NAME_MAX characters). */
+  readonly sheet?: string;
+  /** P1-2: which overlay owns this entry (a positive integer, never reused while the page lives). */
+  readonly layer?: number;
+  /** P1-2: scrollY when the user left this entry (finite, ≥ 0). */
+  readonly y?: number;
 }
 
 export const HOME_PATH = '/';
@@ -147,10 +153,29 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
 const isIndex = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-/** The router's mark on a history entry, or null for an entry it did not write. */
+const isLayerId = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+
+const isSheetName = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= HISTORY_SHEET_NAME_MAX;
+
+const isScrollY = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/**
+ * The router's mark on a history entry, or null for an entry it did not write.
+ * Only `edg === 1` decides that; a missing or broken idx reads as 0, and a
+ * broken sheet / layer / y (P1-2) is left out.
+ */
 export function readEdgState(raw: unknown): EdgHistoryState | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { edg, idx } = raw as { edg?: unknown; idx?: unknown };
+  const { edg, idx, sheet, layer, y } = raw as Record<string, unknown>;
   if (edg !== 1) return null;
-  return { edg: 1, idx: isIndex(idx) ? idx : 0 };
+  return {
+    edg: 1,
+    idx: isIndex(idx) ? idx : 0,
+    ...(isSheetName(sheet) ? { sheet } : {}),
+    ...(isLayerId(layer) ? { layer } : {}),
+    ...(isScrollY(y) ? { y } : {}),
+  };
 }

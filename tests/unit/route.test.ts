@@ -1,7 +1,7 @@
 // P1-1: the address table (spec §2.2) — src/lib/routes.ts is pure, so it is tested here.
 
 import { describe, expect, it } from 'vitest';
-import { DESKTOP_MEDIA_QUERY, USER_ID_MAX } from '../../src/lib/constants';
+import { DESKTOP_MEDIA_QUERY, HISTORY_SHEET_NAME_MAX, USER_ID_MAX } from '../../src/lib/constants';
 import { pinnedCaseEyebrow } from '../../src/lib/routeCopy';
 import {
   casePath,
@@ -176,5 +176,51 @@ describe('pinnedCaseEyebrow', () => {
 
   it('says only 处理中 when the API hid the case (B1-1)', () => {
     expect(pinnedCaseEyebrow({ ...base, type: null, status: 'judging', pending_hidden: true })).toBe('案件 #7 · 处理中');
+  });
+});
+
+// P1-2: the overlay marks and the scroll position on history.state (contract §4.3).
+describe('readEdgState — P1-2 fields', () => {
+  it('keeps a valid sheet, layer and y', () => {
+    expect(readEdgState({ edg: 1, idx: 2, sheet: 'reschedule', layer: 3, y: 640 })).toEqual({
+      edg: 1,
+      idx: 2,
+      sheet: 'reschedule',
+      layer: 3,
+      y: 640,
+    });
+  });
+
+  it('leaves out the fields an entry does not have', () => {
+    expect(readEdgState({ edg: 1, idx: 0 })).toEqual({ edg: 1, idx: 0 });
+    expect(readEdgState({ edg: 1 })).toEqual({ edg: 1, idx: 0 });
+  });
+
+  it('drops a broken sheet: not a string, empty, or longer than HISTORY_SHEET_NAME_MAX', () => {
+    expect(readEdgState({ edg: 1, idx: 1, sheet: 7 })).toEqual({ edg: 1, idx: 1 });
+    expect(readEdgState({ edg: 1, idx: 1, sheet: '' })).toEqual({ edg: 1, idx: 1 });
+    expect(readEdgState({ edg: 1, idx: 1, sheet: 'x'.repeat(HISTORY_SHEET_NAME_MAX + 1) })).toEqual({ edg: 1, idx: 1 });
+    expect(readEdgState({ edg: 1, idx: 1, sheet: 'x'.repeat(HISTORY_SHEET_NAME_MAX) })?.sheet).toHaveLength(
+      HISTORY_SHEET_NAME_MAX,
+    );
+  });
+
+  it('drops a layer that is not a positive integer', () => {
+    for (const layer of [0, -1, 1.5, '3', Number.NaN, null]) {
+      expect(readEdgState({ edg: 1, idx: 1, layer })).toEqual({ edg: 1, idx: 1 });
+    }
+  });
+
+  it('drops a y that is negative or not finite; 0 is kept', () => {
+    for (const y of [-1, Number.POSITIVE_INFINITY, Number.NaN, '640']) {
+      expect(readEdgState({ edg: 1, idx: 1, y })).toEqual({ edg: 1, idx: 1 });
+    }
+    expect(readEdgState({ edg: 1, idx: 1, y: 0 })).toEqual({ edg: 1, idx: 1, y: 0 });
+  });
+
+  it('still answers null for an entry the router did not write, whatever else it carries', () => {
+    expect(readEdgState({ sheet: 'reschedule', layer: 3 })).toBeNull();
+    expect(readEdgState({ edg: 2, idx: 1, sheet: 'reschedule' })).toBeNull();
+    expect(readEdgState(null)).toBeNull();
   });
 });
