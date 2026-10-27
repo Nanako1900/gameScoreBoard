@@ -159,3 +159,84 @@ describe('App — first load', () => {
     );
   });
 });
+
+const REPORT = {
+  week_start: '2026-10-19',
+  stats: {
+    weekStart: '2026-10-19',
+    weekEnd: '2026-10-25',
+    sessionsPlayed: 1,
+    sessionsCollapsed: 0,
+    casesFiled: 0,
+    totalPenalty: 0,
+    absentVerdicts: 0,
+    attendanceRate: null,
+    upcomingNextWeek: 0,
+    star: null,
+    pigeon: null,
+    bestTalker: null,
+    harshest: null,
+    topOrganizer: null,
+  },
+  narrative: '平平无奇的一周。',
+  source: 'fallback',
+  created_at: '2026-10-26 02:31:00',
+};
+const REGENERATE = 'POST /api/admin/report/2026-10-19/regenerate';
+
+/** Signed in as the admin, with last week's report on the page. */
+function adminRoutes(overrides: Record<string, Route> = {}): Record<string, Route> {
+  return routes({
+    'GET /api/me': () => json(200, { user: ADMIN, pending: { statements: 0, appeals: 0 } }),
+    'GET /api/me/invites': () => json(200, { sessions: [] }),
+    'GET /api/report/latest': () => json(200, { report: REPORT }),
+    ...overrides,
+  });
+}
+
+describe('App — after an admin write', () => {
+  it('设为裁判 invalidates the board, the feed and me — not config or the report', async () => {
+    const calls = mockFetch(
+      adminRoutes({
+        'GET /api/users/p': () => json(200, { user: PLAYER, records: [], history: [] }),
+        'POST /api/admin/users/p': () => json(200, { ok: true }),
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: ROW }));
+    await user.click(await screen.findByRole('button', { name: '设为裁判' }));
+    await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
+    await waitFor(() => expect(gets(calls, '/api/records?limit=50')).toBe(2));
+    await waitFor(() => expect(gets(calls, '/api/me')).toBe(2));
+    await settle();
+    expect(gets(calls, '/api/config')).toBe(1);
+    expect(gets(calls, '/api/report/latest')).toBe(1);
+  });
+});
+
+describe('App — the admin re-rolls the weekly report', () => {
+  it('换个说法 refetches the report only', async () => {
+    const calls = mockFetch(adminRoutes({ [REGENERATE]: () => json(200, { report: REPORT }) }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '换个说法' }));
+    await waitFor(() => expect(gets(calls, '/api/report/latest')).toBe(2));
+    // While it runs the button reads 重写中…; it is back once the report is in.
+    await waitFor(() => expect(screen.getByRole('button', { name: '换个说法' })).toBeEnabled());
+    expect(gets(calls, '/api/leaderboard')).toBe(1);
+    expect(gets(calls, '/api/config')).toBe(1);
+    expect(gets(calls, '/api/sessions?scope=upcoming')).toBe(1);
+  });
+
+  it('a failed re-roll says so in a toast — never an alert — and the button comes back', async () => {
+    mockFetch(adminRoutes({ [REGENERATE]: () => json(500, { error: 'AI 超时了' }) }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '换个说法' }));
+    const message = await screen.findByText('战报没换成新说法：AI 超时了');
+    expect(message.closest('[role="status"]')).not.toBeNull();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '换个说法' })).toBeEnabled());
+  });
+});
