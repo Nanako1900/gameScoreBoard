@@ -303,6 +303,7 @@ function AppMain(): JSX.Element {
               trends={trends}
               counts={counts}
               onSelect={setSelectedUserId}
+              meId={me?.id ?? null}
             />
             <RulesPanel config={config} />
           </div>

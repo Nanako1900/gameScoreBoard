@@ -17,7 +17,7 @@
 }
 
 .lb__count {
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -34,8 +34,11 @@
   flex-direction: column;
 }
 
+/* rank · player · trend · score · gauge. The gauge column only exists on
+   desktop; below it the plain score takes its place (H6). */
 .lb-row {
   width: 100%;
+  min-height: 56px;
   display: grid;
   grid-template-columns: 2.4rem 1fr auto auto;
   align-items: center;
@@ -63,32 +66,19 @@
   }
 }
 
+/* The viewer's own row: a lifted surface and a plain edge — not gold, which is
+   reserved for the primary action (spec §6.2) — and it is also the only row with
+   a TierBadge, so it is not marked by colour alone. */
+.lb-row--me {
+  background: var(--panel-2);
+  box-shadow: inset 3px 0 0 0 var(--text);
+}
+
 .lb-row__rank {
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--muted);
   text-align: center;
-}
-
-.lb-row__medal {
-  font-size: 1.35rem;
-}
-
-.lb-row--rank1 {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklab, var(--gold) 12%, transparent),
-    transparent 55%
-  );
-  box-shadow: inset 2px 0 0 0 var(--gold);
-}
-
-.lb-row--rank2 {
-  box-shadow: inset 2px 0 0 0 #9fb2c9;
-}
-
-.lb-row--rank3 {
-  box-shadow: inset 2px 0 0 0 #cd8b5a;
 }
 
 .lb-row__player {
@@ -108,7 +98,7 @@
 .lb-row__name {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 1.05rem;
+  font-size: var(--fs-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -127,7 +117,7 @@
   gap: 0.25rem;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
 }
 
 .lb-trend--up {
@@ -141,24 +131,40 @@
 }
 
 .lb-row__records {
-  font-size: var(--text-xs);
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
+/* Public score: one neutral colour for everybody (spec §6.2). */
+.lb-row__score {
+  min-width: 2.5ch;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  text-align: right;
+  color: var(--score-chip-fg);
+}
+
 .lb-row__gauge {
-  display: grid;
+  display: none;
   place-items: center;
 }
 
+@media (min-width: 1024px) {
+  .lb-row__score {
+    display: none;
+  }
+  .lb-row__gauge {
+    display: grid;
+  }
+}
+
+/* Phones: 名次 · 头像 · 名字 · 分数 (spec §6.4). */
 @media (max-width: 600px) {
   .lb-row {
     grid-template-columns: 1.9rem 1fr auto;
     gap: 0.5rem 0.6rem;
   }
-  .lb-row__gauge {
-    display: none;
-  }
-  .lb-row__badge {
+  .lb-row__trend {
     display: none;
   }
 }
