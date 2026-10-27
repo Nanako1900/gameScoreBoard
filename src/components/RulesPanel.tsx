@@ -5,21 +5,32 @@ import './rules-panel.css';
 
 interface RulesPanelProps {
   config: Config;
+  /** Controlled open state (the welcome card's 30 秒看懂 opens it). Omit both to keep the panel's own state. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** Collapsible rules reference: violations table, tier ladder, weekly heal note. */
-export function RulesPanel({ config }: RulesPanelProps): JSX.Element {
-  const [open, setOpen] = useState(false);
+export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelProps): JSX.Element {
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const toggle = (): void => {
+    const next = !open;
+    if (openProp === undefined) {
+      setOpenState(next);
+    }
+    onOpenChange?.(next);
+  };
 
   return (
-    <section className="rules panel">
+    <section className="rules panel" id="rules">
       <h2 className="rules__heading">
         <button
           type="button"
           className="rules__toggle"
           aria-expanded={open}
           aria-controls="rules-body"
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggle}
         >
           <span className="rules__toggle-label">
             <span aria-hidden="true">📖</span> 计分规则

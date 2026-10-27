@@ -3,9 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Leaderboard } from '../../src/components/Leaderboard';
 import { RecordsFeed } from '../../src/components/RecordsFeed';
+import { RulesPanel } from '../../src/components/RulesPanel';
 import { WeekHighlights } from '../../src/components/WeekHighlights';
 import { WeeklyReportCard } from '../../src/components/WeeklyReportCard';
-import type { CaseStatus, PublicUser, RecordItem, ViolationType, WeeklyReport } from '../../src/types';
+import type { CaseStatus, Config, PublicUser, RecordItem, ViolationType, WeeklyReport } from '../../src/types';
 
 // P0-4 (spec §9): the board without shaming — tied ranks, no medals, scores on
 // every width, 段位 only on the viewer's own row, 本周之星 instead of 红黑榜,
@@ -229,5 +230,40 @@ describe('WeeklyReportCard compact', () => {
     const { container } = render(<WeeklyReportCard report={report} />);
     expect(container.querySelectorAll('.wr-award')).toHaveLength(3);
     expect(screen.getByText(report.narrative)).toBeInTheDocument();
+  });
+});
+
+describe('RulesPanel', () => {
+  const config: Config = {
+    violations: [],
+    tiers: [],
+    weeklyHeal: 5,
+    weeklyBonusCap: 5,
+    statementWindowHours: 12,
+    aiEnabled: false,
+    maxBatchSubjects: 5,
+    nextResetAt: NEXT_RESET,
+  };
+
+  it('is the #rules anchor and still toggles on its own', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<RulesPanel config={config} />);
+    expect(container.querySelector('section#rules')).not.toBeNull();
+    const toggle = screen.getByRole('button', { name: /计分规则/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('follows a controlled open and reports toggles to the parent', async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<RulesPanel config={config} open={false} onOpenChange={onOpenChange} />);
+    const toggle = screen.getByRole('button', { name: /计分规则/ });
+    await user.click(toggle);
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false'); // the parent decides
+    rerender(<RulesPanel config={config} open onOpenChange={onOpenChange} />);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 });

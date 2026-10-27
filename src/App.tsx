@@ -55,6 +55,8 @@ function AppMain(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
+  // Controlled so the welcome card's 30 秒看懂 can open it.
+  const [rulesOpen, setRulesOpen] = useState(false);
   // ?linked=discord is where the API lands the browser after a successful bind.
   // Read once at mount; the effect below strips it so a reload doesn't repeat it.
   const [discordLinked, setDiscordLinked] = useState(
@@ -310,7 +312,7 @@ function AppMain(): JSX.Element {
                 />
               }
             />
-            <RulesPanel config={config} />
+            <RulesPanel config={config} open={rulesOpen} onOpenChange={setRulesOpen} />
           </div>
 
           <aside className="app__col app__col--side">
