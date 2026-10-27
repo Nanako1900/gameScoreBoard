@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { cancelSession, createSession, rollCall, setRsvp, settleSession, updateSession } from '../../worker/sessions';
+import { inviteToSession } from '../../worker/session-invites';
+import { INVITES_PER_ORGANIZER as SHARED_INVITES_PER_ORGANIZER } from '../../shared/attendance';
 import { adminUpdateUser } from '../../worker/db';
 import { noAiEnv } from '../worker/helpers';
 import { importD1 } from '../../server/src/import-d1';
@@ -348,12 +350,15 @@ describe('RSVP buttons and /yue', () => {
     expect(Date.parse(row!.starts_at) - Date.now()).toBeGreaterThan(24 * 3_600_000);
   });
 
-  it('/yue is for bound players only', async () => {
+  // P2-4 (spec §11 #7): the bot follows the web, where anyone signed in may organise.
+  it('/yue is for anyone bound — on the board or not', async () => {
     await seedUser({ id: 'viewer', participant: false });
     await bind('viewer', 5);
-    expect((await handleCommand({ commandName: 'yue', caller: dc(5), targetUser: null, when: 'dayafter20' }, ctx)).content).toContain(
-      '上榜选手',
-    );
+    const reply = await handleCommand({ commandName: 'yue', caller: dc(5), targetUser: null, when: 'dayafter20' }, ctx);
+    expect(reply.content).toContain('已发起约局');
+    expect(reply.content).not.toContain('上榜选手');
+    const rows = await pool.query<{ organizer_id: string }>('SELECT organizer_id FROM game_sessions');
+    expect(rows.rows.map((r) => r.organizer_id)).toEqual(['viewer']);
     expect((await handleCommand({ commandName: 'yue', caller: dc(8), targetUser: null, when: 'dayafter20' }, ctx)).content).toContain(
       '/link',
     );
@@ -564,6 +569,15 @@ describe('/yue, more', () => {
       { ...ctx, sessionCards: true },
     );
     expect(withCards.content).toContain('约局频道');
+  });
+
+  // P2-4: the bot says 待定 where it said 可能 — the web's word (RSVP_LABEL).
+  it('a 待定 button is answered with 待定', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const reply = await handleRsvpButton(session.id, 'maybe', session.starts_at, dc(2), ctx);
+    expect(reply.content).toContain('已登记：**待定**');
+    expect(reply.content).not.toContain('可能');
   });
 });
 
@@ -898,3 +912,84 @@ describe('coalescing that cannot be gamed', () => {
   });
 });
 
+describe('invites after creation', () => {
+  /** Invitation DMs that reached bound user `n` (see cast: org 1, a 2, b 3). */
+  const invitationsTo = (sent: ReturnType<typeof fakeDiscord>['sent'], n: number) =>
+    sent.filter((m) => m.channelId === `dm-${dc(n).id}` && text(m.message).includes('约你'));
+
+  it('someone invited after creation gets one invitation DM; asking again sends nothing', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    expect(await inviteToSession(env.DB, org, session.id, ['a', 'b'])).toMatchObject({ added: 2, skipped: 0 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(1);
+    expect(invitationsTo(discord.sent, 3)).toHaveLength(1);
+
+    expect(await inviteToSession(env.DB, org, session.id, ['a'])).toMatchObject({ added: 0, skipped: 1 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(1);
+    const queued = await pool.query("SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' ORDER BY entity_id");
+    expect(queued.rows.map((r) => r.entity_id)).toEqual(['a', 'b']);
+  });
+
+  it('someone who said no is not asked again', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'out');
+    expect(await inviteToSession(env.DB, org, session.id, ['a', 'b'])).toMatchObject({ added: 1, skipped: 1 });
+    const queued = await pool.query("SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' ORDER BY entity_id");
+    expect(queued.rows.map((r) => r.entity_id)).toEqual(['a', 'b']); // a's is the one from creation
+  });
+
+  it(`shares the organizer's ${INVITES_PER_ORGANIZER} invitations a day with invitations made at creation`, async () => {
+    expect(INVITES_PER_ORGANIZER).toBe(SHARED_INVITES_PER_ORGANIZER);
+    const { org } = await cast();
+    for (let i = 0; i < INVITES_PER_ORGANIZER; i += 1) {
+      await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    }
+    const later = await createSession(env.DB, org, { starts_at: IN_3H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    expect(await inviteToSession(env.DB, org, later.id, ['a'])).toMatchObject({ added: 1 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(INVITES_PER_ORGANIZER);
+    const held = await pool.query(
+      "SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' AND result = 'skipped' AND last_error LIKE 'enough invitations%'",
+    );
+    expect(held.rows.map((r) => r.entity_id)).toEqual(['a']);
+  });
+});
+
+// --- P2-3 ---
+describe('a cancel with a reason', () => {
+  async function cancelled(reason?: string): Promise<{ to: string[]; texts: string[] }> {
+    const { org, a, b } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await cancelSession(env.DB, org, session.id, reason);
+    const to = (await events()).filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id).sort();
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce();
+    const texts = discord.sent.filter((s) => text(s.message).includes('约局取消了')).map((s) => text(s.message));
+    return { to, texts };
+  }
+
+  it('reaches the same people, and the DM carries the reason', async () => {
+    const { to, texts } = await cancelled('  临时加班，改天  ');
+    expect(to).toEqual(['a', 'b']);
+    expect(texts).toHaveLength(2);
+    for (const t of texts) expect(t).toContain('理由：临时加班，改天');
+  });
+
+  it('without one, the same people and no reason line', async () => {
+    const { to, texts } = await cancelled();
+    expect(to).toEqual(['a', 'b']);
+    expect(texts).toHaveLength(2);
+    for (const t of texts) expect(t).not.toContain('理由');
+  });
+});

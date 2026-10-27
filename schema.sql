@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS game_sessions (
   status       TEXT NOT NULL DEFAULT 'open',       -- open | cancelled | settled
   settled_at   TEXT,
   settled_by   TEXT,
+  cancel_reason TEXT,                              -- 取消理由（可空，≤80 字）
+  cancelled_at  TEXT,                              -- 取消时间，datetime('now') 形状
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (organizer_id) REFERENCES users(id)
 );
@@ -136,6 +138,8 @@ CREATE TABLE IF NOT EXISTS session_players (
   late_minutes    INTEGER,
   attendance_note TEXT,
   record_id       INTEGER,                         -- case filed from this outcome
+  prev_rsvp       TEXT,                            -- 改期前的回答（going | maybe | out），重新回答时清空
+  prev_starts_at  TEXT,                            -- 改期前的开始时间（ISO），同上
   PRIMARY KEY (session_id, user_id),
   FOREIGN KEY (session_id) REFERENCES game_sessions(id),
   FOREIGN KEY (user_id) REFERENCES users(id)

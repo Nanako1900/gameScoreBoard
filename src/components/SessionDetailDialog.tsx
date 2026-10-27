@@ -7,12 +7,14 @@ import {
   isSelfRsvp,
 } from '@shared/attendance';
 import type { Rsvp, SelfRsvp } from '@shared/attendance';
-import type { RecordItem, SessionDetail, User } from '../types';
+import type { InviteResponse, RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { PAGE_BACK_LABEL, SESSION_NOT_FOUND } from '../lib/routeCopy';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
+import { inviteToast } from '../lib/invitePicker';
 import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
+import { useInvitable } from '../lib/useInvitable';
 import { useUndo } from '../lib/useUndo';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
@@ -22,6 +24,7 @@ import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
 import { RollCallDialog } from './RollCallDialog';
 import { RescheduleSheet } from './RescheduleSheet';
+import { InviteSheet } from './InviteSheet';
 import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
 import { VisitorRsvpPrompt } from './VisitorRsvpPrompt';
 import { useToast } from './Toast';
@@ -60,6 +63,7 @@ export function SessionDetailDialog({
   const [busy, setBusy] = useState(false);
   const [rollCallOpen, setRollCallOpen] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   // A 404 on the page / drawer forms: NotFound instead of the bare error line (spec §2.2).
   const [missing, setMissing] = useState(false);
@@ -167,12 +171,25 @@ export function SessionDetailDialog({
     onChanged();
   };
 
+  const handleInvited = (result: InviteResponse): void => {
+    setInviteOpen(false);
+    setSession(result.session);
+    setError(null);
+    toast.show({ message: inviteToast(result.added), tone: 'ok' });
+    onChanged();
+  };
+
   const started = session !== null && parseTimestamp(session.starts_at) <= Date.now();
   const isOrganizer = me !== null && session !== null && session.organizer.id === me.id;
   const canManage = isOrganizer || me?.is_admin === true;
   const canRsvp =
     me !== null && session?.status === 'open' && !started && !isOrganizer;
   const canRollCall = canManage && session?.status === 'open' && started;
+  // P2-1: 再叫几个人 — same gate as the server (requireOrganizer, open, not started).
+  const canInvite = canManage && session?.status === 'open' && !started;
+  const invitable = useInvitable(canInvite);
+  // 404 (an API without the list) hides the entry; a failed list keeps it — the sheet offers 重试.
+  const showInviteEntry = invitable.state.kind === 'ready' || invitable.state.kind === 'error';
 
   // P1-3: a visitor answers through the login page; back here, the click is asked about.
   const canVisitorRsvp = me === null && session?.status === 'open' && !started;
@@ -296,6 +313,7 @@ export function SessionDetailDialog({
                 started={started}
                 canRollCall={canRollCall}
                 busy={busy}
+                onInvite={showInviteEntry ? () => setInviteOpen(true) : undefined}
                 onReschedule={() => setRescheduleOpen(true)}
                 onRollCall={() => setRollCallOpen(true)}
                 onCancel={handleCancel}
@@ -329,6 +347,15 @@ export function SessionDetailDialog({
           session={session}
           onClose={() => setRescheduleOpen(false)}
           onRescheduled={handleRescheduled}
+        />
+      )}
+
+      {session && inviteOpen && (
+        <InviteSheet
+          session={session}
+          invitable={invitable}
+          onClose={() => setInviteOpen(false)}
+          onInvited={handleInvited}
         />
       )}
     </>
@@ -400,6 +427,8 @@ interface OrganizerActionsProps {
   started: boolean;
   canRollCall: boolean;
   busy: boolean;
+  /** P2-1: set only when the invitable list answered (ready or failed); absent → no 再叫几个人. */
+  onInvite?: () => void;
   onReschedule: () => void;
   onRollCall: () => void;
   onCancel: () => Promise<boolean>;
@@ -410,12 +439,18 @@ function OrganizerActions({
   started,
   canRollCall,
   busy,
+  onInvite,
   onReschedule,
   onRollCall,
   onCancel,
 }: OrganizerActionsProps): JSX.Element {
   return (
     <div className="sdt__actions">
+      {!started && onInvite && (
+        <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onInvite}>
+          <span aria-hidden="true">＋ </span>再叫几个人
+        </button>
+      )}
       {!started && (
         <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onReschedule}>
           改时间

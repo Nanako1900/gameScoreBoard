@@ -172,3 +172,28 @@ export const SESSION_GAME_MAX = 40;
 export const SESSION_NOTE_MAX = 300;
 /** Sanity bound on how far ahead a session may be scheduled (90 days). */
 export const SESSION_MAX_LEAD_MS = 90 * 24 * 60 * 60 * 1000;
+
+// --- P2-1 ---
+/** People one create (invite) or one POST …/invite may name. */
+export const MAX_INVITES = 20;
+/** A session's roster never grows past this by invitation: roll call takes at most this many entries. */
+export const MAX_SESSION_ROSTER = 50;
+/** Invitation DMs one organizer may send one person per 24 h (the dispatcher enforces it; the web says it). */
+export const INVITES_PER_ORGANIZER = 3;
+
+// --- P2-6 ---
+/** People shown on a session card before "+N". */
+export const GOING_PREVIEW_MAX = 5;
+
+// --- P2-3 ---
+/** A cancel reason, trimmed, is cut to this many characters. It goes into DMs and onto the session page. */
+export const SESSION_CANCEL_REASON_MAX = 80;
+/** Sessions per page of GET /api/sessions?scope=history. */
+export const SESSION_HISTORY_PAGE = 20;
+
+// --- P2-4 ---
+/** Per organizer: sessions open and still ahead at once, and created per rolling 24 h (cancelled ones count). */
+export const MAX_OPEN_SESSIONS = 5;
+export const MAX_SESSIONS_PER_DAY = 10;
+/** A session without a length is taken to last this long. MUST equal COALESCE(s.duration_min, 120) in server/migrations/0005_sessions.sql (source-hygiene). */
+export const DEFAULT_DURATION_MIN = 120;

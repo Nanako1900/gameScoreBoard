@@ -13,6 +13,7 @@
 // 30-second poll, which also picks up retries whose time has come.
 
 import type pg from 'pg';
+import { INVITES_PER_ORGANIZER } from '../../../shared/attendance';
 import { getRecordItemById } from '../../../worker/case-reads';
 import { dmStillRelevant, isDmKind, removedDm, renderDm, STATEMENT_DMS, type DmKind } from '../discord/dm';
 import {
@@ -76,8 +77,8 @@ export const DM_BUDGET = 20;
  * to a session the recipient said 来 to.
  */
 export const SESSION_DM_BUDGET = 10;
-/** Invitations from one organizer to one person per 24 h. */
-export const INVITES_PER_ORGANIZER = 3;
+/** Invitations from one organizer to one person per 24 h. Lives in shared/ since P2-1: the web's InviteSheet says it too. */
+export { INVITES_PER_ORGANIZER } from '../../../shared/attendance';
 /**
  * Escalation asks to a judge (P8) have their own allowance: a batch of filings
  * the AI all flagged must not use up the judge's own statement reminders.
