@@ -275,13 +275,21 @@ describe('who manages it', () => {
     expect(screen.getByRole('button', { name: '来' })).toBeInTheDocument();
   });
 
-  it('once it has started there is only 点名结算', async () => {
+  it('once it has started there is only 现在点名', async () => {
     mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ starts_at: at(28, 9) })) });
     renderDialog(ORGANIZER);
-    expect(await screen.findByRole('button', { name: '点名结算' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: '现在点名' })).toHaveAttribute('href', '/sessions/1/rollcall');
     expect(screen.queryByRole('button', { name: '改时间' })).toBeNull();
     expect(screen.queryByRole('button', { name: '取消这局' })).toBeNull();
   });
+  it('after the expected end there is a 去点名 link', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ starts_at: at(27, 21) })) });
+    renderDialog(ORGANIZER);
+    expect(await screen.findByRole('link', { name: '去点名' })).toHaveAttribute('href', '/sessions/1/rollcall');
+    expect(screen.queryByRole('button', { name: '改时间' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '取消这局' })).toBeNull();
+  });
+
 });
 
 describe('取消这局', () => {

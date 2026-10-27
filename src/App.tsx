@@ -361,6 +361,7 @@ function AppMain(): JSX.Element {
       </main>
 
       <RouteView
+        mySessions={lobby.mine}
         board={board}
         location={location}
         layout={layout}

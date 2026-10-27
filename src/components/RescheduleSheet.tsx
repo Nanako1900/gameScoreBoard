@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { quickSlots } from '@shared/quickTime';
+import { quickSlots, boardSlots, boardTzLabel } from '@shared/quickTime';
 import type { QuickSlot } from '@shared/quickTime';
 import type { SessionDetail } from '../types';
 import { ApiError, updateSession } from '../api';
 import { CUSTOM_TIME_LEAD_MS } from '../lib/constants';
-import { formatDateTime, formatWhen, toDateTimeLocalValue } from '../lib/time';
+import { formatDateTime, formatWhen, toDateTimeLocalValue, formatBoardDateTime, toBoardInputValue, parseBoardInputValue } from '../lib/time';
 import { parseCustomTime, rescheduleConsequences, rescheduleSlots } from '../lib/sessionActions';
 import { Modal } from './Modal';
 import './reschedule-sheet.css';
@@ -13,11 +13,18 @@ interface RescheduleSheetProps {
   session: SessionDetail;
   onClose: () => void;
   onRescheduled: (session: SessionDetail) => void;
+  boardTzOffsetHours?: number;
 }
 
 interface Target {
   iso: string;
   label: string;
+}
+
+function boardCustomTime(value: string, offset: number): ReturnType<typeof parseCustomTime> {
+  if (!value.trim()) return { ok: false, error: '选一个时间' };
+  const ms = parseBoardInputValue(value, offset);
+  return ms === null ? { ok: false, error: '时间格式不对' } : { ok: true, iso: new Date(ms).toISOString() };
 }
 
 /** The time the confirm button moves to; null when 其他时间 holds nothing usable. */
@@ -26,18 +33,19 @@ function currentTarget(
   chosen: string | null,
   customOpen: boolean,
   custom: string,
+  offset?: number,
 ): Target | null {
   if (customOpen) {
-    const parsed = parseCustomTime(custom);
-    return parsed.ok ? { iso: parsed.iso, label: formatWhen(parsed.iso) } : null;
+    const parsed = offset === undefined ? parseCustomTime(custom) : boardCustomTime(custom, offset);
+    return parsed.ok ? { iso: parsed.iso, label: formatWhen(parsed.iso, Date.now(), offset) } : null;
   }
   const slot = slots.find((s) => s.iso === chosen);
   return slot ? { iso: slot.iso, label: slot.label } : null;
 }
 
 /** Why there is nothing to move to: 其他时间 is empty or unreadable. */
-function missingTargetError(custom: string): string {
-  const parsed = parseCustomTime(custom);
+function missingTargetError(custom: string, offset?: number): string {
+  const parsed = offset === undefined ? parseCustomTime(custom) : boardCustomTime(custom, offset);
   return parsed.ok ? '选一个时间' : parsed.error;
 }
 
@@ -76,55 +84,36 @@ function useMoveSession(sessionId: number, onMoved: (session: SessionDetail) => 
  * Until P2 there is no board timezone, so the slots are the browser's
  * (quickSlots) and the sheet says 本地时间.
  */
-export function RescheduleSheet({ session, onClose, onRescheduled }: RescheduleSheetProps): JSX.Element {
-  // Computed once per open: the chips must not shift under the organizer's finger.
-  const [slots] = useState(() => rescheduleSlots(quickSlots(), session.starts_at));
+function useScheduleTarget(session: SessionDetail, offset?: number) {
+  // Once per open: chips must not move under the organizer's finger.
+  const [slots] = useState(() => rescheduleSlots(offset === undefined ? quickSlots() : boardSlots(Date.now(), offset), session.starts_at));
   const [chosen, setChosen] = useState<string | null>(() => slots[0]?.iso ?? null);
   const [customOpen, setCustomOpen] = useState(() => slots.length === 0);
-  const [custom, setCustom] = useState(() => toDateTimeLocalValue(Date.now() + CUSTOM_TIME_LEAD_MS));
+  const [custom, setCustom] = useState(() => offset === undefined ? toDateTimeLocalValue(Date.now() + CUSTOM_TIME_LEAD_MS)
+    : toBoardInputValue(Date.now() + CUSTOM_TIME_LEAD_MS, offset));
+  return { slots, chosen, customOpen, custom, onChoose: (iso: string) => { setChosen(iso); setCustomOpen(false); },
+    onToggleCustom: () => setCustomOpen((open) => !open), onCustomChange: setCustom,
+    target: currentTarget(slots, chosen, customOpen, custom, offset) };
+}
+export function RescheduleSheet({ session, onClose, onRescheduled, boardTzOffsetHours: offset }: RescheduleSheetProps): JSX.Element {
+  const picker = useScheduleTarget(session, offset);
   const { error, busy, move, fail } = useMoveSession(session.id, onRescheduled);
-
-  const target = currentTarget(slots, chosen, customOpen, custom);
   const submit = (): void => {
-    if (target) {
-      void move(target.iso);
-    } else {
-      fail(missingTargetError(custom));
-    }
+    if (picker.target) void move(picker.target.iso);
+    else fail(missingTargetError(picker.custom, offset));
   };
-
-  return (
-    <Modal open onClose={onClose} labelledBy="reschedule-title" variant="sheet" title="改到什么时候？" historyKey="reschedule">
-      <div className="rss">
-        <p className="rss__now">
-          现在：<span className="tabular">{formatDateTime(session.starts_at)}</span>（本地时间）
-        </p>
-        <SlotPicker
-          slots={slots}
-          chosen={chosen}
-          customOpen={customOpen}
-          custom={custom}
-          onChoose={(iso) => {
-            setChosen(iso);
-            setCustomOpen(false);
-          }}
-          onToggleCustom={() => setCustomOpen((open) => !open)}
-          onCustomChange={setCustom}
-        />
-        <Consequences session={session} target={target} />
-        <SheetActions
-          error={error}
-          busy={busy}
-          target={target}
-          onClose={onClose}
-          onSubmit={submit}
-        />
-      </div>
-    </Modal>
-  );
+  return <Modal open onClose={onClose} labelledBy="reschedule-title" variant="sheet" title="改到什么时候？" historyKey="reschedule">
+    <div className="rss"><p className="rss__now">现在：<span className="tabular">
+      {offset === undefined ? formatDateTime(session.starts_at) : formatBoardDateTime(session.starts_at, offset)}</span>
+      {offset === undefined && '（本地时间）'}</p>
+      <SlotPicker {...picker} zone={offset === undefined ? '本地时间' : boardTzLabel(offset)} />
+      <Consequences session={session} target={picker.target} />
+      <SheetActions error={error} busy={busy} target={picker.target} onClose={onClose} onSubmit={submit} />
+    </div></Modal>;
 }
 
 interface SlotPickerProps {
+  zone: string;
   slots: readonly QuickSlot[];
   chosen: string | null;
   customOpen: boolean;
@@ -136,6 +125,7 @@ interface SlotPickerProps {
 
 /** Quick slots as radios plus 其他时间 — the same chips as 约一局 (SessionFormDialog). */
 function SlotPicker({
+  zone,
   slots,
   chosen,
   customOpen,
@@ -146,7 +136,7 @@ function SlotPicker({
 }: SlotPickerProps): JSX.Element {
   return (
     <fieldset className="rss__field">
-      <legend className="visually-hidden">新的时间（本地时间）</legend>
+      <legend className="visually-hidden">新的时间（{zone}）</legend>
       <div className="rss__slots">
         {slots.map((s) => {
           const on = !customOpen && chosen === s.iso;

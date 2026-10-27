@@ -57,3 +57,9 @@ export const RETURN_PATH_MAX = 512;
 // --- P3-1 ---
 export const LOBBY_CANCELLED_KEEP_MS = 24 * 60 * 60 * 1000;
 export const RECENT_SESSIONS_SHOWN = 10;
+
+// --- P3-3 ---
+export const MINUTE_MS = 60_000;
+export const ICS_LINE_MAX_BYTES = 75;
+export const QUOTA_HINT_AT = 1;
+export const SESSION_QUOTA_WINDOW_MS = 24 * 60 * MINUTE_MS;

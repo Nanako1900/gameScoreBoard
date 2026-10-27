@@ -124,7 +124,7 @@ describe('roll call page', () => {
       if (path === '/api/sessions/1') return json(200, { session: s, records: [] });
       return json(200, { sessions: [] });
     });
-    render(<App />); await userEvent.setup().click(await screen.findByRole('button', { name: '点名结算' }));
+    render(<App />); await userEvent.setup().click(await screen.findByRole('link', { name: '去点名' }));
     expect(window.location.pathname).toBe('/sessions/1/rollcall');
     expect(await screen.findByRole('heading', { name: '点名 · 五排' })).toBeInTheDocument();
   });

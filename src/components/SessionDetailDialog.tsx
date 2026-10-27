@@ -5,31 +5,27 @@ import {
   isSelfRsvp,
 } from '@shared/attendance';
 import type { Rsvp, SelfRsvp } from '@shared/attendance';
-import type { InviteResponse, RecordItem, SessionDetail, User } from '../types';
+import type { RecordItem, SessionDetail, SessionItem, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { BACK_HOME, PAGE_BACK_LABEL, SEE_HISTORY, SESSION_NOT_FOUND } from '../lib/routeCopy';
-import { HOME_PATH, SESSION_HISTORY_PATH, rollcallPath } from '../lib/routes';
-import { navigate } from '../lib/router';
+import { HOME_PATH, SESSION_HISTORY_PATH, playerCasePath } from '../lib/routes';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
-import { inviteToast } from '../lib/invitePicker';
-import { formatBoardDateTime, formatDateTime, formatTimeLeft, formatViewerAside, formatWhen, parseTimestamp } from '../lib/time';
+import { formatBoardDateTime, formatDateTime, formatTimeLeft, formatViewerAside, parseTimestamp } from '../lib/time';
 import { COUNTDOWN_TICK_MS } from '../lib/constants';
 import { sessionPhase } from '../lib/lobbySessions';
 import { onSession } from '../lib/sessionEvents';
 import { useNow } from '../lib/useNow';
-import { useInlineConfirm } from '../lib/useInlineConfirm';
-import { useInvitable } from '../lib/useInvitable';
 import { useUndo } from '../lib/useUndo';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { RsvpControl } from './RsvpControl';
 import { RosterGroups } from './RosterGroups';
-import { ConfirmInline } from './ConfirmInline';
 import { NotFound } from './NotFound';
 import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
-import { RescheduleSheet } from './RescheduleSheet';
-import { InviteSheet } from './InviteSheet';
+import { OrganizerConsole } from './OrganizerConsole';
+import { ShareActions } from './ShareActions';
+import { Link } from './Link';
 import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
 import { VisitorRsvpPrompt } from './VisitorRsvpPrompt';
 import { useToast } from './Toast';
@@ -37,6 +33,7 @@ import './session-detail.css';
 
 interface SessionDetailDialogProps {
   sessionId: number;
+  mySessions?: readonly SessionItem[] | null;
   me: User | null;
   onClose: () => void;
   /** Called after any mutation so parent lists and the leaderboard refresh. */
@@ -55,6 +52,7 @@ const NOT_FOUND_STATUS = 404;
 
 export function SessionDetailDialog({
   sessionId,
+  mySessions,
   me,
   onClose,
   onChanged,
@@ -67,8 +65,6 @@ export function SessionDetailDialog({
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [rescheduleOpen, setRescheduleOpen] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
   // A 404 on the page / drawer forms: NotFound instead of the bare error line (spec §2.2).
   const [missing, setMissing] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -161,9 +157,9 @@ export function SessionDetailDialog({
     }
   };
 
-  const handleCancel = async (): Promise<boolean> => {
+  const handleCancel = async (reason?: string): Promise<boolean> => {
     if (!session) return false;
-    const ok = await mutate(() => cancelSession(session.id));
+    const ok = await mutate(() => cancelSession(session.id, reason));
     if (ok) {
       toast.show({ message: '这局已取消。', tone: 'ok' });
       // The confirm and the button that opened it leave with the open state.
@@ -172,34 +168,11 @@ export function SessionDetailDialog({
     return ok;
   };
 
-  const handleRescheduled = (updated: SessionDetail): void => {
-    setRescheduleOpen(false);
-    setSession(updated);
-    setError(null);
-    toast.show({ message: `已改到 ${formatWhen(updated.starts_at)}。`, tone: 'ok' });
-    onChanged();
-  };
-
-  const handleInvited = (result: InviteResponse): void => {
-    setInviteOpen(false);
-    setSession(result.session);
-    setError(null);
-    toast.show({ message: inviteToast(result.added), tone: 'ok' });
-    onChanged();
-  };
-
   const started = session !== null && parseTimestamp(session.starts_at) <= now;
   const isOrganizer = me !== null && session !== null && session.organizer.id === me.id;
   const canManage = isOrganizer || me?.is_admin === true;
   const canRsvp =
     me !== null && session?.status === 'open' && !started && !isOrganizer;
-  const canRollCall = canManage && session?.status === 'open' && started;
-  // P2-1: 再叫几个人 — same gate as the server (requireOrganizer, open, not started).
-  const canInvite = canManage && session?.status === 'open' && !started;
-  const invitable = useInvitable(canInvite);
-  // 404 (an API without the list) hides the entry; a failed list keeps it — the sheet offers 重试.
-  const showInviteEntry = invitable.state.kind === 'ready' || invitable.state.kind === 'error';
-
   // P1-3: a visitor answers through the login page; back here, the click is asked about.
   const canVisitorRsvp = me === null && session?.status === 'open' && !started;
   const resumeAsk: SelfRsvp | null =
@@ -279,51 +252,31 @@ export function SessionDetailDialog({
             {!canManage && ['live', 'due'].includes(sessionPhase(session, now)) && <p className="sdt__rsvp-note">开局后不能改报名</p>}
 
             <RosterGroups session={session} />
+            <ShareActions session={session} boardTzOffsetHours={boardTzOffsetHours} />
 
             {records.length > 0 && (
               <section className="sdt__section">
                 <h3 className="sdt__section-title">
-                  由这一局产生的记录 <span className="tabular">{records.length}</span>
+                  这局的记录 <span className="tabular">{records.length}</span>
                 </h3>
                 <div className="sdt__records">
                   {records.map((r) => (
-                    <VerdictCard key={r.id} record={r} />
+                    <div key={r.id}><VerdictCard record={r} />
+                      <Link to={playerCasePath(r.subject.id, r.id)} aria-label={`看案件 #${r.id}`}>看这一起 ›</Link></div>
                   ))}
                 </div>
               </section>
             )}
 
-            {canManage && session.status === 'open' && (
-              <OrganizerActions
-                started={started}
-                canRollCall={canRollCall}
-                busy={busy}
-                onInvite={showInviteEntry ? () => setInviteOpen(true) : undefined}
-                onReschedule={() => setRescheduleOpen(true)}
-                onRollCall={() => navigate(rollcallPath(session.id))}
-                onCancel={handleCancel}
-              />
+            {canManage && session.status !== 'cancelled' && (
+              <OrganizerConsole session={session} records={records} now={now} busy={busy} boardTzOffsetHours={boardTzOffsetHours}
+                mySessions={mySessions} meId={me?.id ?? ''} onSessionChanged={(updated) => { setSession(updated); setError(null); }}
+                onCancel={handleCancel} onChanged={onChanged} />
             )}
           </div>
         )}
       </Modal>
 
-      {session && rescheduleOpen && (
-        <RescheduleSheet
-          session={session}
-          onClose={() => setRescheduleOpen(false)}
-          onRescheduled={handleRescheduled}
-        />
-      )}
-
-      {session && inviteOpen && (
-        <InviteSheet
-          session={session}
-          invitable={invitable}
-          onClose={() => setInviteOpen(false)}
-          onInvited={handleInvited}
-        />
-      )}
     </>
   );
 }
@@ -348,91 +301,4 @@ function DetailRsvp({ session, busy, suggested, onAnswer }: DetailRsvpProps): JS
     <p className="sdt__rsvp-note">开局前说不来，点名结算不会记你。</p>
     {notice && <p id="session-detail-full" className="sdt__rsvp-full">{notice}</p>}
   </div>;
-}
-
-interface OrganizerActionsProps {
-  started: boolean;
-  canRollCall: boolean;
-  busy: boolean;
-  /** P2-1: set only when the invitable list answered (ready or failed); absent → no 再叫几个人. */
-  onInvite?: () => void;
-  onReschedule: () => void;
-  onRollCall: () => void;
-  onCancel: () => Promise<boolean>;
-}
-
-/** The organizer's (or an admin's) controls on an open session; 取消这局 comes last. */
-function OrganizerActions({
-  started,
-  canRollCall,
-  busy,
-  onInvite,
-  onReschedule,
-  onRollCall,
-  onCancel,
-}: OrganizerActionsProps): JSX.Element {
-  return (
-    <div className="sdt__actions">
-      {!started && onInvite && (
-        <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onInvite}>
-          <span aria-hidden="true">＋ </span>再叫几个人
-        </button>
-      )}
-      {!started && (
-        <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onReschedule}>
-          改时间
-        </button>
-      )}
-      {canRollCall && (
-        <button type="button" className="btn btn--gold" onClick={onRollCall}>
-          点名结算
-        </button>
-      )}
-      {!started && <p className="sdt__hint">约局开始后可以点名，点名不等于扣分。</p>}
-      {!started && <CancelSessionControl busy={busy} onConfirm={onCancel} />}
-    </div>
-  );
-}
-
-interface CancelSessionControlProps {
-  busy: boolean;
-  onConfirm: () => Promise<boolean>;
-}
-
-/**
- * 取消这局 → an in-place confirm with focus on 不取消了 (DiscordLinkCard's way).
- * Confirming submits at once: nothing reopens a cancelled session, so a delayed
- * submit lost to a closed tab would look done and not be (spec §3.5).
- */
-function CancelSessionControl({ busy, onConfirm }: CancelSessionControlProps): JSX.Element {
-  const { confirming, ask, dismiss, close, triggerRef } = useInlineConfirm();
-  const confirm = async (): Promise<void> => {
-    if (await onConfirm()) close();
-  };
-  if (!confirming) {
-    return (
-      <button ref={triggerRef} type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={ask}>
-        取消这局
-      </button>
-    );
-  }
-  return (
-    <div className="sdt__cancel-confirm">
-      <ConfirmInline
-        question="取消这局？"
-        confirmLabel="确认取消"
-        cancelLabel="不取消了"
-        tone="danger"
-        focus="cancel"
-        busy={busy}
-        busyLabel="取消中…"
-        onCancel={dismiss}
-        onConfirm={() => void confirm()}
-      >
-        <p className="sdt__cancel-detail">
-          会私信通知说了来、待定的人，以及收到过邀请还没回的人；说了不来的人不会收到。
-        </p>
-      </ConfirmInline>
-    </div>
-  );
 }

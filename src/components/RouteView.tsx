@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { Config, RecordItem, User } from '../types';
+import type { Config, RecordItem, SessionItem, User } from '../types';
 import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
 import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE } from '../lib/routeCopy';
@@ -31,6 +31,7 @@ interface RouteViewProps {
   resume?: LoginIntent | null;
   onResumeDone?: () => void;
   board?: BoardData;
+  mySessions?: readonly SessionItem[] | null;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -143,6 +144,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
             key={route.sessionId}
             variant={layout}
             sessionId={route.sessionId}
+            mySessions={props.mySessions}
             me={props.me}
             onClose={close}
             onChanged={props.onChanged}
