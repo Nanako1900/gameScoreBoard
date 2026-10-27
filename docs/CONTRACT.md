@@ -141,9 +141,9 @@ interface RecordItem {
   id: number;
   subject: { id: string; username: string; avatar_url: string | null };
   reporter: { id: string; username: string; avatar_url: string | null };
-  type: ViolationType;           // v3: usually chosen by the AI, always validated
+  type: ViolationType | null;    // v3: usually chosen by the AI, always validated; null only when pending_hidden
   delta: number;                 // signed, actually applied; 0 before a verdict
-  note: string | null;           // judge's short note — PUBLIC, like every field not marked PRIVATE
+  note: string | null;           // judge's short note — PUBLIC, like every field not marked PRIVATE (except while pending_hidden)
   claim: string | null;          // judge's account of the facts (required for penalties)
   claim_summary: string | null;  // AI's one-line condensation; the feed headline
   classified_by: 'ai' | 'fallback' | 'human' | 'derived';
@@ -159,7 +159,7 @@ interface RecordItem {
     headline: string; reasoning: string;                         // PRIVATE
     factors: { kind: 'mitigating' | 'aggravating'; text: string }[]; // PRIVATE
   } | null;
-  range: { min: number; max: number; base: number };
+  range: { min: number; max: number; base: number } | null;  // null only when pending_hidden
   created_at: string;
   // PRIVATE fields are for the case's subject, its reporter, judges and admins.
   // For anyone else (logged out included) every response blanks them —
@@ -169,6 +169,14 @@ interface RecordItem {
   // writes them after reading the statement and often quotes it — except a
   // bonus's 'manual' verdict, which is only its label and stays.
   redacted: boolean;
+  // Before a verdict (`awaiting_statement`, `judging`) anyone else sees even
+  // less, so a case is not presented as proven: type, range, claim,
+  // claim_summary and note are null, escalation_suggested is false, and
+  // `pending_hidden: true` is set (on top of `redacted: true`). id, subject,
+  // reporter, delta (still 0), classified_by, session_id, statement_at,
+  // deadline_at, status, verdict (still null) and created_at stay. In every other
+  // case the key is absent.
+  pending_hidden?: true;
 }
 
 interface SessionItem {
@@ -400,20 +408,82 @@ reaches `decided` rather than stranding a player's score.
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
   `/api/records?mine=pending` when `pending.statements > 0`.
 - Import display constants from `@shared/scoring` and `@shared/attendance`.
-- A pre-verdict case must never render its `delta` as `0` — show the pending range.
+- A pre-verdict case must never render its `delta` as `0` — show the pending
+  range, or 判决后公开 when the API hid it (`pending_hidden`). Such a case says
+  only that it exists — for a subject named 老王, 「老王有一起记录在处理中，判决后公开。」
+  — and its feed row shows only the name and 「处理中」.
 - Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
   label when it is null (pre-v3 rows).
 - An invitation is an action the user owes, so the invite banner outranks the
   weekly report on the page.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
-- Links into the app (the bot's DMs and replies use them): `/?case=<id>` opens
-  that case in its subject's page, scrolled to and focused (if it is among the
-  200 most recent cases the page shows; else the page opens unscrolled);
-  `/?session=<id>`
-  opens the session. Only a positive integer id is read (anything else is
-  ignored), the parameter is stripped at once, and the link only picks which
-  ordinary view opens — what it shows and which controls come from the API and
-  `/api/me` as always. A link never writes. A case that is gone gets a notice.
+- Links into the app (the bot's DMs and replies use them) stay valid for ever:
+  `/?session=<id>` and `/?case=<id>`. Only a positive integer id is read
+  (anything else is ignored and simply stripped), and the parameter is
+  translated into that view's own address: `/?session=<id>` becomes
+  `/sessions/<id>`; `/?case=<id>` looks the case up once
+  (`GET /api/records/<id>`) and becomes
+  `/players/<subject>/cases/<id>`, where that case is moved (not copied) to the
+  top of its subject's page, scrolled to the centre and focused. Other query
+  parameters (`utm`, …) are kept. The link only picks which ordinary view
+  opens — what it shows and which controls come from the API and `/api/me` as
+  always. A link never writes. A case that is gone leaves you on `/` with
+  「链接里的案件不存在了。」 (any other failure: 「打不开链接里的案件，稍后再试。」).
+  These parameters are read on `/` only. `?linked=discord` is stripped and shows
+  the Discord-linked notice; `?onboarding=1` (on any path) opens the first-login
+  dialog first, and the link's target opens once it is closed.
+- Routes (`src/lib/routes.ts` parses, `src/lib/router.ts` owns `history`; no
+  router library). Only these exist; every other path renders the front-end
+  page 「这页不存在」 with a 「回大厅」 link:
+
+  | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
+  |---|---|---|
+  | `/` | the hall | the hall |
+  | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/players/<userId>/cases/<id>` | that player's page, the case moved to the top and focused | the same, in the drawer |
+  | `/cases/<id>` | alias: looks the case up once, then replaces itself with the row above | the same |
+
+  Numeric ids match `^[1-9]\d{0,14}$` (so `/sessions/07` is not a session). A
+  user id is the OAuth subject: non-empty, at most 128 characters, no NUL,
+  always `encodeURIComponent`-ed in the path. When a case's `subject.id` is not
+  the `<userId>` in the address, the address is replaced with the subject's —
+  never an error. Not found: `/sessions/<id>` → 「找不到这局，链接可能写错了。」;
+  `/players/<userId>` → 「找不到这位选手。」; a case → 「链接里的案件不存在了。」, any
+  other failure → 「打不开链接里的案件，稍后再试。」. A cancelled session is not a
+  404; it shows as cancelled.
+- No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
+  routing never uses the hash: a `popstate` that only changed the hash is
+  ignored. Every host must serve `index.html` for any other path (SPA
+  fallback), so the build output must never contain a `404.html`
+  (`npm run build:pages` fails if it does).
+- History. Every entry the router writes carries `history.state.edg === 1`
+  (plus `idx`; an overlay's entry also `sheet` and `layer`; `y` is the scroll
+  position to restore). Opening a deep address without that mark (a new tab, a
+  bookmark, a link from Discord) puts one `/` entry under it, once — reloading
+  never adds another, so one back from such an address reaches the hall. An
+  overlay (a sheet or a dialog; the routed drawers are addresses of their own)
+  adds one entry at the same address: the back key closes only the topmost
+  overlay (one that holds a draft asks first, and keeps its entry if the user
+  stays), and closing it from the UI goes back over its entry silently, so the
+  next back behaves as if it had never opened. A reload never reopens an
+  overlay. `history.scrollRestoration` is `manual`: going back
+  restores the scroll position the entry was left at.
+- Login return. Right before the top-level jump to the API's `/auth/login`, the
+  current address (path and query, no hash) is saved as JSON in
+  `sessionStorage['edg.return']` (a page not worth coming back to — `/` or an
+  unknown path — saves nothing and drops any old value; a lobby row's
+  「登录后报名」 saves that session's address instead), e.g.
+  `{"v":1,"path":"/sessions/5","savedAt":1761500000000,"intent":{"kind":"rsvp","sessionId":5,"rsvp":"going"}}`
+  (`intent` only when a visitor pressed 来 / 待定 / 不来). On the first signed-in
+  load (the OAuth callback lands on `/`; after the first-login dialog, if one
+  opens) it is read once and always deleted; a valid one saved less than 30
+  minutes ago opens that address. It is only ever an in-app path — at most 512
+  characters, starts with `/` but not `//`, no `\` or `#`, an app route other
+  than `/` — so it can never become an open redirect. The intent only becomes
+  a hint, 「你登录前点的是「来」，确认一下？」: nothing is sent until the user
+  presses the button again. A legacy `?case=` / `?session=` link wins over it;
+  logging out clears it.
 - A case with `redacted: true` says a statement exists (when `statement_at` is
   set) rather than calling it a verdict in absence, and shows no verdict words.
