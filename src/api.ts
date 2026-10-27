@@ -7,6 +7,8 @@ import type {
   CaseStatus,
   Config,
   FileCasesResponse,
+  InvitableResponse,
+  InvitableUser,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
@@ -268,6 +270,21 @@ export function settleSession(
 /** Sessions the caller was invited to and has not answered. Drives the banner. */
 export function getMyInvites(): Promise<SessionsResponse> {
   return request<SessionsResponse>('/api/me/invites');
+}
+
+/**
+ * Everyone the caller could invite (P2-2). Resolves `undefined` when the API
+ * has no such endpoint — an older backend answers 404 — so the invite entry
+ * can hide itself, like getDiscordLink. Any other failure throws ApiError.
+ */
+export async function getInvitable(): Promise<InvitableUser[] | undefined> {
+  try {
+    const { users } = await request<InvitableResponse>('/api/me/invitable');
+    return users;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
+  }
 }
 
 // --- Weekly report ---------------------------------------------------------

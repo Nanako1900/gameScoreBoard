@@ -107,6 +107,22 @@ export interface HistoryPoint {
   score: number;
 }
 
+// --- Invitable people (P2-2) -------------------------------------------------
+
+/** One row of GET /api/me/invitable: names and avatars only — never a score, never Discord. */
+export interface InvitableUser {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  is_participant: boolean;
+  /** When the caller last really played with them (ISO starts_at); null if never. */
+  last_played_with_me_at: string | null;
+}
+
+export interface InvitableResponse {
+  users: InvitableUser[];
+}
+
 // --- Sessions ---------------------------------------------------------------
 
 export interface SessionPlayer {
