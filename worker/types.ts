@@ -144,6 +144,8 @@ export interface SessionRow {
   settled_at: string | null;
   settled_by: string | null;
   created_at: string;
+  cancel_reason: string | null;
+  cancelled_at: string | null;
 }
 
 export interface SessionPlayerJoinRow {
@@ -304,6 +306,10 @@ export interface SessionItem {
   my_rsvp: Rsvp | null;
   /** P2-6: up to GOING_PREVIEW_MAX people whose answer is 来, earliest answer first. Names and avatars only. */
   going_preview: RecordActor[];
+  /** P2-3: the organizer's reason, trimmed and cut to SESSION_CANCEL_REASON_MAX; null when none (or not cancelled). */
+  cancel_reason: string | null;
+  /** P2-3: when it was cancelled, datetime('now') shape; null when not cancelled, or cancelled before P2-3. */
+  cancelled_at: string | null;
 }
 
 export interface SessionDetail extends SessionItem {

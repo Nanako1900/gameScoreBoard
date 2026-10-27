@@ -184,3 +184,9 @@ export const INVITES_PER_ORGANIZER = 3;
 // --- P2-6 ---
 /** People shown on a session card before "+N". */
 export const GOING_PREVIEW_MAX = 5;
+
+// --- P2-3 ---
+/** A cancel reason, trimmed, is cut to this many characters. It goes into DMs and onto the session page. */
+export const SESSION_CANCEL_REASON_MAX = 80;
+/** Sessions per page of GET /api/sessions?scope=history. */
+export const SESSION_HISTORY_PAGE = 20;

@@ -11,6 +11,9 @@ import worker from '../../worker/index';
 import { SESSION_COOKIE, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
 import { noAiEnv, seedUser } from './helpers';
+import { createSession, setRsvp, updateSession } from '../../worker/sessions';
+import type { SessionItem } from '../../worker/types';
+import { OFFSET_HOURS } from './helpers';
 
 const BASE = 'https://score.example.com';
 const SECRET = 'test-session-secret-0123456789abcdef';
@@ -238,5 +241,34 @@ describe('going_preview over HTTP (P2-6)', () => {
     expect((JSON.parse(inbox) as { sessions: { going_preview?: unknown }[] }).sessions[0].going_preview).toEqual(
       expected,
     );
+  });
+});
+
+// --- P2-3 ---
+describe('P2-3 over HTTP: cancel reasons, invite context, history', () => {
+  const HOUR_MS = 3_600_000;
+  const inHours = (hours: number): string => new Date(Date.now() + hours * HOUR_MS).toISOString();
+  const SQLITE_NOW = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+  it('POST …/cancel without a body still cancels (the web today), with no reason', async () => {
+    const org = await seedUser({ id: 'org' });
+    const session = await createSession(env.DB, org, { starts_at: inHours(3) }, OFFSET_HOURS);
+    const res = await call(`/api/sessions/${session.id}/cancel`, { method: 'POST', headers: await asUser('org') });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { session: SessionItem };
+    expect(body.session).toMatchObject({ status: 'cancelled', cancel_reason: null });
+    expect(body.session.cancelled_at).toMatch(SQLITE_NOW);
+  });
+
+  it('POST …/cancel {reason} keeps it and answers with it', async () => {
+    const org = await seedUser({ id: 'org' });
+    const session = await createSession(env.DB, org, { starts_at: inHours(3) }, OFFSET_HOURS);
+    const res = await call(`/api/sessions/${session.id}/cancel`, {
+      method: 'POST',
+      headers: await asUser('org', { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason: '  临时加班，改天  ' }),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { session: SessionItem }).session.cancel_reason).toBe('临时加班，改天');
   });
 });

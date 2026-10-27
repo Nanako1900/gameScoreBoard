@@ -512,7 +512,9 @@ export function registerRoutes(app: Hono<AppEnv>): void {
 
   app.post('/api/sessions/:id/cancel', async (c) => {
     const caller = requireUser(c.get('user'));
-    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'));
+    // No body (the web today) reads as {}: no reason.
+    const body = await readJsonBody(c.req.raw);
+    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.reason);
     return c.json({ session });
   });
 

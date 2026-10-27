@@ -9,6 +9,7 @@ import {
   MAX_INVITES,
   MAX_SESSION_ROSTER,
   ORGANIZER_BONUS_MIN_ATTENDEES,
+  SESSION_CANCEL_REASON_MAX,
   SESSION_GAME_MAX,
   SESSION_MAX_LEAD_MS,
   SESSION_NOTE_MAX,
@@ -89,6 +90,9 @@ function toSessionItem(
     note: row.note,
     status: row.status as SessionStatus,
     settled_at: row.settled_at,
+    // `?? null`: a database not yet migrated (004 / 0007) has no such columns.
+    cancel_reason: row.cancel_reason ?? null,
+    cancelled_at: row.cancelled_at ?? null,
     created_at: row.created_at,
     counts: {
       invited: row.c_invited,
@@ -489,15 +493,20 @@ export async function cancelSession(
   db: D1Database,
   caller: User,
   id: number,
+  rawReason?: unknown,
 ): Promise<SessionDetail> {
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status === 'settled') throw new ApiError(400, '已结算的约局不能取消');
   // Cancelling twice is not a conflict: it is already what was asked for.
   if (row.status === 'cancelled') return getSessionDetail(db, id, caller.id);
+  const reason = normalizeOptionalText(rawReason, SESSION_CANCEL_REASON_MAX);
   const res = await db
-    .prepare("UPDATE game_sessions SET status = 'cancelled' WHERE id = ? AND status = 'open'")
-    .bind(id)
+    .prepare(
+      `UPDATE game_sessions SET status = 'cancelled', cancel_reason = ?, cancelled_at = datetime('now')
+        WHERE id = ? AND status = 'open'`,
+    )
+    .bind(reason, id)
     .run();
   if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '约局状态已变化，请刷新后重试');
   return getSessionDetail(db, id, caller.id);
