@@ -57,39 +57,71 @@ export async function deliverBoard(row: OutboxRow, deps: BoardDeliveryDeps): Pro
     try { data = await loadBoardData(asD1(new PgD1Database(reads))); }
     finally { await readTail; }
     const post = boardMessage(data, config.frontendUrl);
+    const findBoards = api.findBoards?.bind(api);
+    if (!findBoards) throw new Error('board history recovery is unavailable');
     const posted = (await client.query<{ channel_id: string; message_id: string }>(
       "SELECT channel_id, message_id FROM discord_messages WHERE entity = 'board' AND entity_id = 'main' AND purpose = 'board'",
     )).rows[0];
-    if (posted && posted.channel_id === channelId) {
-      try {
-        await api.edit(channelId, posted.message_id, post);
-        await client.query("UPDATE discord_messages SET updated_at = now() WHERE entity = 'board' AND entity_id = 'main' AND purpose = 'board'");
-        await client.query('COMMIT');
-        return { result: 'sent', note: null };
-      } catch (error) {
+    const removeDuplicate = async (id: string): Promise<void> => {
+      try { await api.remove(channelId, id); }
+      catch (error) {
         const code = errorCode(error);
         if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
       }
-    } else if (posted) {
+    };
+    const remember = (id: string) => client.query(
+      `INSERT INTO discord_messages(entity, entity_id, purpose, channel_id, message_id)
+       VALUES ('board', 'main', 'board', $1, $2)
+       ON CONFLICT (entity, entity_id, purpose) DO UPDATE
+       SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`, [channelId, id]);
+    if (posted && posted.channel_id === channelId) {
+      let exists = true;
+      try { await api.edit(channelId, posted.message_id, post); }
+      catch (error) {
+        const code = errorCode(error);
+        if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL) throw error;
+        exists = false;
+      }
+      if (exists) {
+        // The saved message is canonical. Scan only newer history to remove
+        // sends whose acknowledgement was lost, without rescanning old years.
+        for (const id of new Set(await findBoards(channelId, posted.message_id))) {
+          if (id !== posted.message_id) await removeDuplicate(id);
+        }
+        await remember(posted.message_id);
+        await client.query('COMMIT');
+        return { result: 'sent', note: null };
+      }
+    }
+    // Complete recovery before deciding the channel is empty. A nonce alone
+    // cannot find a successful send after a crash lasting several hours.
+    const candidates = [...new Set(await findBoards(channelId))];
+    candidates.sort((a, b) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+    if (posted && posted.channel_id !== channelId) {
       try { await api.remove(posted.channel_id, posted.message_id); }
       catch (error) {
         const code = errorCode(error);
         if (code !== UNKNOWN_MESSAGE && code !== UNKNOWN_CHANNEL && errorStatus(error) !== 403) throw error;
       }
     }
-    if (posted) {
-      await client.query("DELETE FROM discord_messages WHERE entity = 'board' AND entity_id = 'main' AND purpose = 'board'");
+    if (posted) await client.query("DELETE FROM discord_messages WHERE entity = 'board' AND entity_id = 'main' AND purpose = 'board'");
+    const canonical = candidates[0];
+    if (canonical) {
+      for (const id of candidates.slice(1)) await removeDuplicate(id);
+      await remember(canonical);
+      try { await api.edit(channelId, canonical, post); }
+      catch (error) {
+        const code = errorCode(error);
+        if (code === UNKNOWN_MESSAGE || code === UNKNOWN_CHANNEL) throw new Error('board disappeared during recovery; retrying');
+        throw error;
+      }
+    } else {
+      const sent = await api.send(channelId, { ...post, nonce: nonceFor(row), enforce_nonce: true });
+      // A newer claim may now be waiting for our delivery lock. Preserve the
+      // successful physical send as fact so it can edit this message; only the
+      // dispatcher's guarded finish may acknowledge its own claim.
+      await remember(sent.id);
     }
-    const sent = await api.send(channelId, { ...post, nonce: nonceFor(row), enforce_nonce: true });
-    // A newer claim may now be waiting for our delivery lock. Preserve the
-    // successful physical send as fact so it can edit this message; only the
-    // dispatcher's guarded finish may acknowledge its own claim.
-    await client.query(
-      `INSERT INTO discord_messages(entity, entity_id, purpose, channel_id, message_id)
-       VALUES ('board', 'main', 'board', $1, $2)
-       ON CONFLICT (entity, entity_id, purpose) DO UPDATE
-       SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = now()`,
-      [channelId, sent.id]);
     await client.query('COMMIT');
     return { result: 'sent', note: null };
   } catch (error) {

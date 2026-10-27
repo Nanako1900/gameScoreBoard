@@ -6,6 +6,7 @@ import { WRONG_GUILD_TEXT } from '../src/discord/client';
 
 const fake = vi.hoisted(() => ({
   on: vi.fn(), once: vi.fn(), query: vi.fn(async () => ({ rows: [] })),
+  dispatch: vi.fn(), dispatcherStart: vi.fn(),
   board: vi.fn(async () => ({ content: 'board private response', ephemeral: true })),
   caseAction: vi.fn(async () => ({ kind: 'reply', reply: { content: 'existing case response', ephemeral: true } })),
   verdict: vi.fn(async () => ({ content: 'existing verdict response', ephemeral: true })),
@@ -23,6 +24,9 @@ vi.mock('../src/discord/client', async (original) => ({ ...await original<typeof
     appUrl: 'https://api.example', frontendUrl: 'https://score.example', verdictChannelId: null, boardChannelId: 'board-channel' }),
   fetchSessionBudget: () => new Promise(() => {}),
 }));
+vi.mock('../src/outbox/dispatcher', () => ({ createDispatcher: (deps: unknown) => {
+  fake.dispatch(deps); return { start: fake.dispatcherStart, stop: vi.fn(async () => {}) };
+} }));
 vi.mock('../src/discord/commands', async (original) => ({ ...await original<typeof import('../src/discord/commands')>(), handleBoardButton: fake.board }));
 vi.mock('../src/discord/case-actions', async (original) => ({ ...await original<typeof import('../src/discord/case-actions')>(), openCaseAction: fake.caseAction }));
 vi.mock('../src/discord/verdict', async (original) => ({ ...await original<typeof import('../src/discord/verdict')>(), handleVerdictButton: fake.verdict }));
@@ -43,6 +47,21 @@ beforeEach(() => { fake.board.mockClear(); fake.caseAction.mockClear(); fake.ver
 afterAll(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('information board interaction routing', () => {
+  it('wires strict board recovery into the production dispatcher after readiness', async () => {
+    const ready = { user: { id: '100000000000000009', tag: 'local-board-bot' }, application: { id: 'app' },
+      rest: { put: vi.fn(async () => {}) } };
+    const onReady = fake.once.mock.calls.find(([event]) => event === Events.ClientReady)![1];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      onReady(ready);
+      expect(fake.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+        config: expect.objectContaining({ boardChannelId: 'board-channel' }),
+        api: expect.objectContaining({ findBoards: expect.any(Function) }),
+      }));
+      expect(fake.dispatcherStart).toHaveBeenCalledOnce();
+      await Promise.resolve();
+    } finally { log.mockRestore(); }
+  });
   it('recognizes only the two exact board custom IDs', () => {
     expect(parseBoardButton('v1:board:me')).toBe('me'); expect(parseBoardButton('v1:board:voice')).toBe('voice');
     for (const id of ['v1:board:me:other', 'v1:board:voice:14', 'v1:board:top', 'v2:board:me', 'v1:rsvp:7:going', 'v1:stmt:7']) expect(parseBoardButton(id)).toBeNull();

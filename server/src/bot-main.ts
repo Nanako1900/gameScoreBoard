@@ -20,6 +20,7 @@ import {
 import { COMMANDS, handleBoardButton, handleCommand, parseBoardButton } from './discord/commands';
 import { createClient, readVoicePresence, wireBoardRefresh, wireVoice } from './discord/gateway';
 import { createHealthServer, type GatewayState } from './discord/health';
+import { createBoardFinder } from './discord/board-recovery';
 import { createVoiceRecorder } from './voice/recorder';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
@@ -129,7 +130,7 @@ function main(): void {
     (error) => console.error('could not schedule information board refresh', describeError(error)));
   const health = createHealthServer(() => gateway, () => recorder.status());
   health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
-  // Verdict posts (P5). Started once the client is logged in, since it sends
+  // Verdict, report and board posts. Started once the client is logged in, since it sends
   // through the client's REST; events committed meanwhile wait in the outbox.
   let dispatcher: Dispatcher | null = null;
   client.once(Events.ClientReady, (ready) => {
@@ -140,7 +141,7 @@ function main(): void {
     dispatcher = createDispatcher({
       pool,
       db: ctx.db,
-      api: restChannelApi(ready.rest),
+      api: { ...restChannelApi(ready.rest), findBoards: createBoardFinder(ready, config.guildId) },
       config: {
         verdictChannelId: config.verdictChannelId,
         boardChannelId: config.boardChannelId,

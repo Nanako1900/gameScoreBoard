@@ -21,10 +21,16 @@ const deferred = () => {
 function fakeDiscord() {
   const calls: Array<{ kind: 'send' | 'edit' | 'remove'; channel: string; id?: string; message?: ChannelMessage & { nonce?: string } }> = [];
   const visible = new Map<string, { id: string; channel: string }>();
-  const failures: { send: unknown[]; edit: unknown[]; remove: unknown[] } = { send: [], edit: [], remove: [] };
+  const failures: { send: unknown[]; edit: unknown[]; remove: unknown[]; find: unknown[] } = { send: [], edit: [], remove: [], find: [] };
+  const scans: Array<{ channel: string; afterId?: string }> = [];
   let onSend: (() => Promise<void>) | null = null;
   let next = 0;
   const api: ChannelApi = {
+    async findBoards(channel, afterId) {
+      scans.push({ channel, afterId });
+      if (failures.find.length) throw failures.find.shift();
+      return [...visible.values()].filter((value) => value.channel === channel && (!afterId || BigInt(value.id) > BigInt(afterId))).map((value) => value.id);
+    },
     async send(channel, message) {
       calls.push({ kind: 'send', channel, message });
       if (failures.send.length) throw failures.send.shift();
@@ -45,7 +51,7 @@ function fakeDiscord() {
     },
     async openDm() { throw new Error('board must not open DMs'); },
   };
-  return { api, calls, visible, fail: (kind: keyof typeof failures, problem: unknown) => failures[kind].push(problem), holdSend: (fn: () => Promise<void>) => { onSend = fn; } };
+  return { api, calls, visible, scans, orphan: (id: string, channel = CHANNEL) => visible.set(`orphan:${channel}:${id}`, { id, channel }), fail: (kind: keyof typeof failures, problem: unknown) => failures[kind].push(problem), holdSend: (fn: () => Promise<void>) => { onSend = fn; } };
 }
 function dispatcher(api: ChannelApi, options: { boardChannelId?: string | null; connection?: pg.Pool } = {}) {
   return createDispatcher({ pool: options.connection ?? pool, db: env.DB, api,
@@ -148,9 +154,55 @@ describe('board refresh delivery', () => {
     const discord = fakeDiscord(); const d = dispatcher(discord.api);
     try { await d.runOnce(); expect(await stored()).toEqual([]); expect((await events())[0]).toMatchObject({ result: null, attempts: 1 }); }
     finally { await pool.query('DROP TRIGGER test_board_mapping_fail ON discord_messages'); await pool.query('DROP FUNCTION test_board_mapping_fail()'); }
+    await pool.query("UPDATE outbox SET created_at = now() - interval '6 hours' WHERE entity = 'board'");
     await due(); await d.runOnce();
-    expect(discord.calls.map((call) => call.kind)).toEqual(['send', 'send']);
-    expect(discord.calls[0].message?.nonce).toBe(discord.calls[1].message?.nonce); expect(discord.visible.size).toBe(1); expect(await stored()).toHaveLength(1);
+    expect(discord.calls.map((call) => call.kind)).toEqual(['send', 'edit']);
+    expect(discord.visible.size).toBe(1); expect(await stored()).toHaveLength(1);
+  });
+  it('recovers a send whose mapping rolled back hours ago without another send after nonce expiry', async () => {
+    await schedule(); const discord = fakeDiscord(); discord.orphan('930000000000000041');
+    await pool.query("UPDATE outbox SET created_at = now() - interval '6 hours' WHERE entity = 'board'");
+    await dispatcher(discord.api).runOnce();
+    expect(discord.calls.map((call) => call.kind)).toEqual(['edit']); expect(discord.calls[0].id).toBe('930000000000000041');
+    expect(await stored()).toEqual([{ channel_id: CHANNEL, message_id: '930000000000000041' }]);
+  });
+  it('keeps the oldest recovered board and deletes every newer orphan before editing', async () => {
+    await schedule(); const discord = fakeDiscord();
+    for (const n of ['43', '41', '42']) discord.orphan(`9300000000000000${n}`);
+    await dispatcher(discord.api).runOnce();
+    expect(discord.calls.filter((call) => call.kind === 'send')).toEqual([]);
+    expect(discord.calls.filter((call) => call.kind === 'remove').map((call) => call.id).sort()).toEqual(['930000000000000042', '930000000000000043']);
+    expect(discord.calls.at(-1)).toMatchObject({ kind: 'edit', id: '930000000000000041' }); expect(discord.visible.size).toBe(1);
+  });
+  it('keeps a valid mapped board canonical while clearing newer orphans with a bounded scan', async () => {
+    await remember(); await schedule(); const discord = fakeDiscord(); discord.orphan('930000000000010000');
+    await dispatcher(discord.api).runOnce();
+    expect(discord.scans).toEqual([{ channel: CHANNEL, afterId: '930000000000009999' }]);
+    expect(discord.calls.map((call) => call.kind)).toEqual(['edit', 'remove']); expect((await stored())[0].message_id).toBe('930000000000009999');
+  });
+  it('falls back to a full recovery scan when the mapped message was deleted', async () => {
+    await remember(); await schedule(); const discord = fakeDiscord(); discord.orphan('930000000000000041'); discord.fail('edit', error(404, 10008));
+    await dispatcher(discord.api).runOnce();
+    expect(discord.scans).toEqual([{ channel: CHANNEL, afterId: undefined }]);
+    expect(discord.calls.map((call) => call.kind)).toEqual(['edit', 'edit']); expect((await stored())[0].message_id).toBe('930000000000000041');
+  });
+  it.each([error(403, 50013), error(503)])('does not send or forget a mapping after a history scan failure', async (failure) => {
+    await remember(OLD_CHANNEL); await schedule(); const discord = fakeDiscord(); discord.fail('find', failure); await dispatcher(discord.api).runOnce();
+    expect(discord.calls.filter((call) => call.kind === 'send')).toEqual([]); expect((await stored())[0].channel_id).toBe(OLD_CHANNEL);
+    expect((await events())[0].result).toBeNull();
+  });
+  it('retries rather than sending when a recovered candidate disappears before its edit', async () => {
+    await schedule(); const discord = fakeDiscord(); discord.orphan('930000000000000041'); discord.fail('edit', error(404, 10008));
+    await dispatcher(discord.api).runOnce();
+    expect(discord.calls.map((call) => call.kind)).toEqual(['edit']); expect((await events())[0]).toMatchObject({ result: null, attempts: 1 }); expect(await stored()).toEqual([]);
+  });
+  it('does not send when no history recovery capability was supplied', async () => {
+    await schedule(); const discord = fakeDiscord(); delete discord.api.findBoards; await dispatcher(discord.api).runOnce();
+    expect(discord.calls).toEqual([]); expect((await events())[0].result).toBeNull(); expect(await stored()).toEqual([]);
+  });
+  it('does not send when cleanup of a duplicate is refused in the target channel', async () => {
+    await schedule(); const discord = fakeDiscord(); discord.orphan('930000000000000041'); discord.orphan('930000000000000042'); discord.fail('remove', error(403, 50013));
+    await dispatcher(discord.api).runOnce(); expect(discord.calls.map((call) => call.kind)).toEqual(['remove']); expect((await events())[0].result).toBeNull();
   });
   it('does not send or change mappings after its claim was replaced while waiting for the delivery lock', async () => {
     await remember(); await schedule(); const row = await claimedRow(); const holder = await pool.connect(); const discord = fakeDiscord();

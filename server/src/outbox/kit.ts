@@ -18,6 +18,8 @@ export interface ChannelApi {
   remove(channelId: string, messageId: string): Promise<void>;
   /** The DM channel with this Discord user (opened if need be). */
   openDm(discordUserId: string): Promise<string>;
+  /** Internal recovery: all own board marker messages, optionally newer than a canonical id. */
+  findBoards?(channelId: string, afterId?: string): Promise<string[]>;
 }
 
 export interface DispatcherConfig {
