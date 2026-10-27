@@ -399,8 +399,9 @@ describe('/players/:id/cases/:caseId', () => {
   it('when the two ids disagree, the case’s subject wins — in place, no error', async () => {
     const calls = mockFetch(routes());
     window.history.replaceState(null, '', '/players/wrong/cases/7?utm=dc');
-    const before = window.history.length;
     render(<App />);
+    // P1-2: after bootRouter (which pads `/` under a fresh deep entry); the correction itself must not add one.
+    const before = window.history.length;
     await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
     expect(window.location.search).toBe('?utm=dc');
     expect(window.history.length).toBe(before);
@@ -412,8 +413,9 @@ describe('/players/:id/cases/:caseId', () => {
   it('/cases/:id is an alias: looked up once, then replaced with the player address', async () => {
     const calls = mockFetch(routes());
     window.history.replaceState(null, '', '/cases/7');
-    const before = window.history.length;
     render(<App />);
+    // P1-2: after bootRouter (which pads `/` under a fresh deep entry); the correction itself must not add one.
+    const before = window.history.length;
     await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
     expect(window.history.length).toBe(before);
     expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();

@@ -113,7 +113,7 @@ export function SessionFormDialog({
   };
 
   return (
-    <Modal open={open} onClose={guard.requestClose} labelledBy="session-form-title" size="md" dismissible={!draft.dirty}>
+    <Modal open={open} onClose={guard.requestClose} labelledBy="session-form-title" size="md" dismissible={!draft.dirty} historyKey="session-form">
       <h2 id="session-form-title" className="sf__title">
         约一局
       </h2>

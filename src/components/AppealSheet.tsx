@@ -89,7 +89,7 @@ export function AppealSheet({ record, onClose, onAppealed }: AppealSheetProps): 
   };
 
   return (
-    <Modal open onClose={requestClose} labelledBy={TITLE_ID} title="申诉这一起" variant="sheet" size="md" dismissible={!draft.dirty}>
+    <Modal open onClose={requestClose} labelledBy={TITLE_ID} title="申诉这一起" variant="sheet" size="md" dismissible={!draft.dirty} historyKey="appeal">
       <div className="aps">
         <p className="aps__case">{caseLine(record)}</p>
         <AppealReason draft={draft} disabled={submission.submitting} />

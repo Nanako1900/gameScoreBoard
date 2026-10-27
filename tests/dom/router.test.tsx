@@ -90,11 +90,12 @@ describe('navigate', () => {
 
 describe('bootRouter', () => {
   it('marks the entry the tab landed on, once', () => {
-    window.history.replaceState(null, '', '/sessions/5?x=1');
+    // P1-2: `/` is only stamped; a deep address also gets `/` padded under it (back-closes-layer.test.tsx).
+    window.history.replaceState(null, '', '/?x=1');
     const before = window.history.length;
     bootRouter();
     expect(window.history.state).toEqual({ edg: 1, idx: 0 });
-    expect(window.location.pathname + window.location.search).toBe('/sessions/5?x=1');
+    expect(window.location.pathname + window.location.search).toBe('/?x=1');
     window.history.replaceState({ edg: 1, idx: 4 }, '');
     bootRouter();
     expect(window.history.state).toEqual({ edg: 1, idx: 4 });
@@ -138,8 +139,8 @@ describe('goBack', () => {
   });
 
   it('from the entry the tab landed on, replaces with the fallback instead of leaving the site', () => {
-    window.history.replaceState(null, '', '/sessions/5');
-    bootRouter();
+    // P1-2: bootRouter pads `/` under a fresh deep entry, so idx 0 on a deep address is set by hand here.
+    window.history.replaceState({ edg: 1, idx: 0 }, '', '/sessions/5');
     const before = window.history.length;
     render(<RouteName />);
     act(() => goBack());

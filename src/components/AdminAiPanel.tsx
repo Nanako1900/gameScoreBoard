@@ -115,7 +115,7 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
   };
 
   return (
-    <Modal open={open} onClose={onClose} labelledBy="admin-ai-title" size="lg">
+    <Modal open={open} onClose={onClose} labelledBy="admin-ai-title" size="lg" historyKey="admin-ai">
       <h2 id="admin-ai-title" className="aai__title">
         AI 裁判配置
       </h2>

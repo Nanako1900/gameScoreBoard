@@ -160,7 +160,7 @@ export function RollCallDialog({
   );
 
   return (
-    <Modal open={open} onClose={requestClose} labelledBy="rollcall-title" size="lg" dismissible={!draft.dirty}>
+    <Modal open={open} onClose={requestClose} labelledBy="rollcall-title" size="lg" dismissible={!draft.dirty} historyKey="rollcall">
       <h2 id="rollcall-title" className="rc__title">
         {drafts ? '结算' : '点名'}
       </h2>
