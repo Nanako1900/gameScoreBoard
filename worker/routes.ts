@@ -76,6 +76,7 @@ import {
   writeSetting,
 } from './ai/config';
 import { judgeCase } from './ai/provider';
+import { listInvitable } from './invitable';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
@@ -560,6 +561,16 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const caller = requireUser(c.get('user'));
     const sessions = await listMyInvites(c.env.DB, caller.id);
     return c.json({ sessions });
+  });
+
+  // P2-2: who the caller could invite. Under /api/me/ because GET
+  // /api/users/:id would read /api/users/invitable as a user id. Private:
+  // last_played_with_me_at is the caller's own history.
+  app.get('/api/me/invitable', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const users = await listInvitable(c.env.DB, caller.id);
+    privateToViewer(c);
+    return c.json({ users });
   });
 
   // --- Weekly report -------------------------------------------------------
