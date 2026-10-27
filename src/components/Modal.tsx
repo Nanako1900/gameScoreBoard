@@ -10,6 +10,7 @@ import {
   releaseRootInert,
   unlockBodyScroll,
 } from '../lib/modalStack';
+import { useHistoryLayer } from '../lib/useHistoryLayer';
 import './modal.css';
 
 export type ModalVariant = 'center' | 'sheet' | 'drawer' | 'page';
@@ -26,6 +27,8 @@ interface ModalProps {
   dismissible?: boolean;
   /** Optional: rendered as <h2 id={labelledBy} className="modal__title"> inside .modal__bar. A caller that passes it must not render its own element with that id. */
   title?: React.ReactNode;
+  /** P1-2: set → while open, the layer owns a history entry and the back button calls onClose. Ignored by variant="page". */
+  historyKey?: string;
 }
 
 type LayerVariant = Exclude<ModalVariant, 'page'>;
@@ -291,6 +294,7 @@ export function Modal({
   variant = 'center',
   dismissible = true,
   title,
+  historyKey,
 }: ModalProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLElement>(null);
@@ -302,6 +306,7 @@ export function Modal({
   const isPage = variant === 'page';
   useLayer(open && !isPage, panelRef, onCloseRef);
   usePageFocus(open && isPage, labelledBy, pageRef);
+  useHistoryLayer(open && !isPage, historyKey, onCloseRef);
 
   if (!open) {
     return null;
