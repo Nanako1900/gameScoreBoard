@@ -1,9 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { App } from '../../src/App';
 import { ForgivenessNote } from '../../src/components/ForgivenessNote';
 import { MyScoreLine } from '../../src/components/MyScoreLine';
-import type { Config, User } from '../../src/types';
+import type { Config, PublicUser, User } from '../../src/types';
 
 // 宽恕看得见（spec §5 #3, M7）. weeklyHeal is 5 in every config here, as in the
 // app tests' stub: a literal 15 anywhere would show up as a failure.
@@ -88,5 +89,74 @@ describe('ForgivenessNote', () => {
   it('says nothing for points gained or none', () => {
     const { container } = render(<ForgivenessNote delta={2} scoreAfter={100} weeklyHeal={5} />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+function json(status: number, body: unknown): Response {
+  return { ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(body)) } as Response;
+}
+
+/** Route fetch by "METHOD /path?query"; anything unrouted answers 500 so it shows up. */
+function mockFetch(routes: Record<string, () => Response>): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const path = url.replace(/^https?:\/\/[^/]+/, '');
+      const route = routes[`${init?.method ?? 'GET'} ${path}`];
+      return Promise.resolve(route ? route() : json(500, { error: `unrouted ${path}` }));
+    }),
+  );
+}
+
+/** Let the last fetches of the page land inside act() (p8-app.test.tsx:38-41). */
+const settle = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.history.replaceState(null, '', '/');
+});
+
+describe('MyScoreLine in the app', () => {
+  it('sits after the to-dos and before 约局, with the numbers from config', async () => {
+    const board: PublicUser[] = [
+      { id: 'x', username: '阿杰', avatar_url: null, is_participant: true, is_judge: false, score: 90, created_at: 'x' },
+      { id: 'me', username: '我', avatar_url: null, is_participant: true, is_judge: false, score: 82, created_at: 'x' },
+    ];
+    mockFetch({
+      'GET /api/config': () => json(200, CONFIG),
+      'GET /api/leaderboard': () => json(200, { participants: board }),
+      'GET /api/records?limit=50': () => json(200, { records: [] }),
+      'GET /api/me': () => json(200, { user: ME, pending: { statements: 0, appeals: 0 } }),
+      'GET /api/me/invites': () => json(200, { sessions: [] }),
+      'GET /api/report/latest': () => json(200, { report: null }),
+      'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
+    });
+    render(<App />);
+
+    const standing = await screen.findByRole('button', { name: '82 分 · 第 2 名' });
+    expect(screen.getByText('周一 0 点回血 +5 → 预计 87 · 还有 2 天')).toBeInTheDocument();
+    const sessions = await screen.findByRole('heading', { name: /约局/ });
+    // DOM order = visual order (spec §2.4): MyScoreLine, then SessionsPanel.
+    expect(standing.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await settle();
+  });
+
+  it('is not on the page for a visitor', async () => {
+    mockFetch({
+      'GET /api/config': () => json(200, CONFIG),
+      'GET /api/leaderboard': () => json(200, { participants: [] }),
+      'GET /api/records?limit=50': () => json(200, { records: [] }),
+      'GET /api/me': () => json(200, { user: null, pending: { statements: 0, appeals: 0 } }),
+      'GET /api/report/latest': () => json(200, { report: null }),
+      'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: /约局/ });
+    await settle();
+    expect(screen.queryByText(/周一 0 点回血/)).not.toBeInTheDocument();
   });
 });
