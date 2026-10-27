@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Leaderboard } from '../../src/components/Leaderboard';
 import { RecordsFeed } from '../../src/components/RecordsFeed';
 import { WeekHighlights } from '../../src/components/WeekHighlights';
-import type { CaseStatus, PublicUser, RecordItem, ViolationType } from '../../src/types';
+import { WeeklyReportCard } from '../../src/components/WeeklyReportCard';
+import type { CaseStatus, PublicUser, RecordItem, ViolationType, WeeklyReport } from '../../src/types';
 
 // P0-4 (spec §9): the board without shaming — tied ranks, no medals, scores on
 // every width, 段位 only on the viewer's own row, 本周之星 instead of 红黑榜,
@@ -181,5 +182,52 @@ describe('RecordsFeed previewCount', () => {
     const open = { ...rec(9, 'a', 'no_show', 0, 'awaiting_statement'), escalation_suggested: true };
     const { container } = render(<RecordsFeed records={[open]} previewCount={10} />);
     expect(container.querySelector('.feed-row__status--escalate')).not.toBeNull();
+  });
+});
+
+describe('WeeklyReportCard compact', () => {
+  const report: WeeklyReport = {
+    week_start: '2026-10-19',
+    stats: {
+      weekStart: '2026-10-19',
+      weekEnd: '2026-10-25',
+      sessionsPlayed: 3,
+      sessionsCollapsed: 0,
+      casesFiled: 1,
+      totalPenalty: -12,
+      absentVerdicts: 0,
+      attendanceRate: 0.8,
+      upcomingNextWeek: 2,
+      star: { name: '阿杰', delta: 6 },
+      pigeon: { name: '老王', delta: -12 },
+      bestTalker: null,
+      harshest: null,
+      topOrganizer: { name: '小红', count: 2 },
+    },
+    narrative: '平平无奇的一周。老王又鸽了一次。',
+    source: 'ai',
+    created_at: '2026-10-26 02:31:00',
+  };
+
+  it('shows the title, a few numbers and only the first sentence — and no award at all', () => {
+    const { container } = render(<WeeklyReportCard report={report} compact />);
+    expect(screen.getByRole('heading', { name: /上周战报/ })).toBeInTheDocument();
+    expect(screen.getByText('平平无奇的一周。')).toBeInTheDocument();
+    expect(container.querySelector('.wr-award')).toBeNull();
+    expect(container.textContent).not.toContain('鸽王');
+    expect(container.textContent).not.toContain('老王又鸽了一次');
+    expect(container.querySelector('.wr__compact-stats')?.textContent).toBe('开局 3·立案 1·出勤率 80%');
+  });
+
+  it('keeps the stale heading and note', () => {
+    render(<WeeklyReportCard report={report} compact stale />);
+    expect(screen.getByRole('heading', { name: /往期战报/ })).toBeInTheDocument();
+    expect(screen.getByText(/周一 10:30 之后发布/)).toBeInTheDocument();
+  });
+
+  it('is opt-in: the default card is unchanged', () => {
+    const { container } = render(<WeeklyReportCard report={report} />);
+    expect(container.querySelectorAll('.wr-award')).toHaveLength(3);
+    expect(screen.getByText(report.narrative)).toBeInTheDocument();
   });
 });

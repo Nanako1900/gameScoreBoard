@@ -190,3 +190,24 @@
     line-height: 1.75;
   }
 }
+
+/* --- compact (home page): no awards, first sentence only --- */
+.wr--compact {
+  gap: 0.5rem;
+}
+
+.wr__narrative--compact {
+  text-indent: 0;
+}
+
+.wr__compact-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.wr__compact-stats strong {
+  color: var(--text);
+}

@@ -280,6 +280,7 @@ function AppMain(): JSX.Element {
         {report && (
           <WeeklyReportCard
             report={report}
+            compact
             stale={(() => {
               const lastWeek = lastWeekStartOf(config.nextResetAt);
               return lastWeek !== null && report.week_start < lastWeek;
