@@ -7,9 +7,11 @@ import type {
   CaseStatus,
   Config,
   FileCasesResponse,
+  HistorySessionItem,
   InvitableResponse,
   InvitableUser,
   InviteResponse,
+  InvitesResponse,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
@@ -21,6 +23,7 @@ import type {
   RollCallResponse,
   SessionDetail,
   SessionDetailResponse,
+  SessionItem,
   SessionsResponse,
   SettleEntry,
   SettleResponse,
@@ -241,8 +244,12 @@ export function updateSession(
   });
 }
 
-export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>(`/api/sessions/${id}/cancel`);
+/** `reason` omitted: no body at all, exactly as before P2-3. */
+export function cancelSession(id: number, reason?: string): Promise<{ session: SessionDetail }> {
+  const path = `/api/sessions/${id}/cancel`;
+  return reason === undefined
+    ? post<{ session: SessionDetail }>(path)
+    : post<{ session: SessionDetail }>(path, { reason });
 }
 
 /** `startsAt`: the start time the player is looking at — a move since is a 409. */
@@ -269,8 +276,26 @@ export function settleSession(
 }
 
 /** Sessions the caller was invited to and has not answered. Drives the banner. */
-export function getMyInvites(): Promise<SessionsResponse> {
-  return request<SessionsResponse>('/api/me/invites');
+export function getMyInvites(): Promise<InvitesResponse> {
+  return request<InvitesResponse>('/api/me/invites');
+}
+
+type MaybeHistoryItem = SessionItem & { attendance_summary?: HistorySessionItem['attendance_summary'] };
+
+function isHistoryItem(item: MaybeHistoryItem): item is HistorySessionItem {
+  return typeof item.attendance_summary === 'object' && item.attendance_summary !== null;
+}
+
+/**
+ * P2-3: sessions that started, cancelled ones too, newest first; `before` = the
+ * last id of the previous page (fewer than a full page = no more). undefined
+ * from an API without scope=history: it reads an unknown scope as 'upcoming'
+ * and answers 200, so the sign is items without attendance_summary.
+ */
+export async function getSessionHistory(before?: number): Promise<HistorySessionItem[] | undefined> {
+  const cursor = before === undefined ? '' : `&before=${before}`;
+  const { sessions } = await request<{ sessions: MaybeHistoryItem[] }>(`/api/sessions?scope=history${cursor}`);
+  return sessions.every(isHistoryItem) ? sessions : undefined;
 }
 
 /**
