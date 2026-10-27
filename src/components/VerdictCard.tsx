@@ -1,5 +1,11 @@
 import type { RecordItem, VerdictSource } from '../types';
-import { violationDef } from '../lib/recordView';
+import {
+  PENDING_HIDDEN_DELTA,
+  PENDING_HIDDEN_LABEL,
+  isPendingHidden,
+  pendingHiddenSentence,
+  violationDef,
+} from '../lib/recordView';
 import { formatRemaining, isUrgent, relativeTime } from '../lib/time';
 import { SentencingScale } from './SentencingScale';
 import './verdict-card.css';
@@ -27,6 +33,61 @@ export function verdictSourceLabel(source: VerdictSource): string {
 }
 
 const PRIVATE_TO = '只有当事人、立案人、裁判和管理员能看';
+/** The emoji of a case whose type the API hid, or this bundle does not know. */
+const FALLBACK_EMOJI = '📝';
+
+/** 「X 写了说明 · 只有…能看」: the statement exists, its words are not for this viewer. */
+function StatementWritten({ username }: { username: string }): JSX.Element {
+  return (
+    <p className="vc__hidden">
+      <span aria-hidden="true">🔒</span> {username} 写了说明 · {PRIVATE_TO}
+    </p>
+  );
+}
+
+/** Before the verdict: who is being waited on, or that the AI is judging. */
+function TrialProgress({ record }: { record: RecordItem }): JSX.Element | null {
+  if (record.status === 'judging') return <p className="vc__pending">⚖️ AI 正在裁决…</p>;
+  if (record.status !== 'awaiting_statement' || !record.deadline_at) return null;
+  return (
+    <p className={`vc__pending${isUrgent(record.deadline_at) ? ' vc__pending--urgent' : ''}`}>
+      <span aria-hidden="true">⏳</span> 等待 {record.subject.username} 说明情况 ·{' '}
+      {formatRemaining(record.deadline_at)}
+    </p>
+  );
+}
+
+type PendingHiddenCardProps = Pick<VerdictCardProps, 'record' | 'actions' | 'focused'>;
+
+/**
+ * B1-1 (spec §11 #3 tier b): a case the API hid before its verdict. Only that it
+ * exists, who filed it and when; no type, claim, range or escalation — and never
+ * a 0 where the delta would be. A written statement is still said to exist.
+ */
+function PendingHiddenCard({ record, actions, focused = false }: PendingHiddenCardProps): JSX.Element {
+  return (
+    <article id={`case-${record.id}`} tabIndex={-1} className={`vc vc--${record.status}${focused ? ' vc--focus' : ''}`}>
+      <header className="vc__head">
+        <span className="vc__emoji" aria-hidden="true">
+          {FALLBACK_EMOJI}
+        </span>
+        <div className="vc__head-text">
+          <h4 className="vc__type">{PENDING_HIDDEN_LABEL}</h4>
+          <p className="vc__meta">
+            裁判 {record.reporter.username}
+            <span aria-hidden="true"> · </span>
+            <time dateTime={record.created_at}>{relativeTime(record.created_at)}</time>
+          </p>
+        </div>
+      </header>
+      <p className="vc__hidden">{pendingHiddenSentence(record.subject.username)}</p>
+      <p className="vc__delta-hidden">{PENDING_HIDDEN_DELTA}</p>
+      {record.statement_at && <StatementWritten username={record.subject.username} />}
+      <TrialProgress record={record} />
+      {actions && <div className="vc__actions">{actions}</div>}
+    </article>
+  );
+}
 
 /**
  * A case, told as a story: 案由 → 双方陈述 → 判词 → 量刑尺.
@@ -40,6 +101,7 @@ export function VerdictCard({
   escalation,
   focused = false,
 }: VerdictCardProps): JSX.Element {
+  if (isPendingHidden(record)) return <PendingHiddenCard record={record} actions={actions} focused={focused} />;
   const def = violationDef(record.type);
   const { verdict, status } = record;
   const pending = status === 'awaiting_statement';
@@ -55,7 +117,7 @@ export function VerdictCard({
     <article id={`case-${record.id}`} tabIndex={-1} className={`vc vc--${status}${focused ? ' vc--focus' : ''}`}>
       <header className="vc__head">
         <span className="vc__emoji" aria-hidden="true">
-          {def?.emoji ?? '📝'}
+          {def?.emoji ?? FALLBACK_EMOJI}
         </span>
         <div className="vc__head-text">
           <h4 className="vc__type">
@@ -99,9 +161,7 @@ export function VerdictCard({
           <p>{record.statement}</p>
         </blockquote>
       ) : hidden && trial && record.statement_at ? (
-        <p className="vc__hidden">
-          <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
-        </p>
+        <StatementWritten username={record.subject.username} />
       ) : (
         // A withdrawn case was never judged at all (M17): no "absent" either.
         !pending && status !== 'withdrawn' && trial && (
@@ -109,14 +169,7 @@ export function VerdictCard({
         )
       )}
 
-      {pending && record.deadline_at && (
-        <p className={`vc__pending${isUrgent(record.deadline_at) ? ' vc__pending--urgent' : ''}`}>
-          <span aria-hidden="true">⏳</span> 等待 {record.subject.username} 说明情况 ·{' '}
-          {formatRemaining(record.deadline_at)}
-        </p>
-      )}
-
-      {judging && <p className="vc__pending">⚖️ AI 正在裁决…</p>}
+      <TrialProgress record={record} />
 
       {verdict && (
         <div className="vc__verdict">

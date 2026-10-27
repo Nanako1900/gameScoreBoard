@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { CASE_STATUS_LABEL } from '@shared/scoring';
 import type { RecordItem } from '../types';
-import { violationDef, violationLabel } from '../lib/recordView';
+import { isPendingHidden, violationDef, violationLabel } from '../lib/recordView';
 import { relativeTime } from '../lib/time';
 import { Avatar } from './Avatar';
 import './records-feed.css';
@@ -122,8 +122,10 @@ function RecordRow({ record, onSelectUser, rowRef }: RecordRowProps): JSX.Elemen
 }
 
 function RecordLine({ record, onSelectUser }: Omit<RecordRowProps, 'rowRef'>): JSX.Element {
+  // B1-1: a case the API hid before its verdict is only a name and 「处理中」 — no status chip, no escalation chip.
+  const hidden = isPendingHidden(record);
   const label = violationLabel(record.type);
-  const statusLabel = CASE_STATUS_LABEL[record.status];
+  const statusLabel = hidden ? '' : CASE_STATUS_LABEL[record.status];
   return (
     <p className="feed-row__line">
       <NameLink
@@ -138,7 +140,7 @@ function RecordLine({ record, onSelectUser }: Omit<RecordRowProps, 'rowRef'>): J
           {statusLabel}
         </span>
       )}
-      {record.escalation_suggested && record.status === 'awaiting_statement' && (
+      {!hidden && record.escalation_suggested && record.status === 'awaiting_statement' && (
         <span
           className="feed-row__status feed-row__status--escalate"
           title="AI 认为够得上团灭级，等裁判确认"
@@ -163,6 +165,7 @@ function RecordMeta({ record }: { record: RecordItem }): JSX.Element {
       {record.verdict?.headline ? (
         <span className="feed-row__note">“{record.verdict.headline}”</span>
       ) : (
+        !isPendingHidden(record) &&
         record.claim_summary && (
           <span className="feed-row__note">“{record.claim_summary}”</span>
         )
