@@ -1,0 +1,94 @@
+/* 改时间 — RescheduleSheet, nested over 约局详情 (P0-6) */
+
+.rss {
+  display: grid;
+  gap: 1rem;
+}
+
+.rss__now {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.rss__field {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rss__slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rss__slot {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  padding: 0 0.9rem;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-pill);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+/* Selected is more than a colour: the weight changes too. */
+.rss__slot--on {
+  border-color: var(--action);
+  color: var(--action);
+  font-weight: 700;
+}
+
+.rss__slot:has(:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.rss__input {
+  min-height: var(--tap-min);
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.rss__impact {
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+}
+
+.rss__impact-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.rss__impact-list {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.rss__error {
+  font-size: var(--fs-sm);
+  color: var(--danger-text);
+}
+
+.rss__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
