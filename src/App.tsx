@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
-import { ApiError, getRecord, logout as apiLogout, regenerateReport } from './api';
+import { ApiError, AUTH_LOGIN_URL, getRecord, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
 import { computeCounts, computeTrends } from './lib/feedStats';
 import { FEED_PREVIEW_COUNT } from './lib/constants';
+import { DISCORD_INVITE_URL } from './lib/env';
+import { revealSection } from './lib/revealSection';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -17,6 +19,7 @@ import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
 import { Leaderboard } from './components/Leaderboard';
 import { WeekHighlights } from './components/WeekHighlights';
+import { WelcomeCard } from './components/WelcomeCard';
 import { RecordsFeed } from './components/RecordsFeed';
 import { RulesPanel } from './components/RulesPanel';
 import { CaseDialog } from './components/CaseDialog';
@@ -232,6 +235,10 @@ function AppMain(): JSX.Element {
 
   const { config, participants, records, me, myPending, invites, report } = state.data;
   const canRecord = me?.is_judge === true;
+  const showRules = (): void => {
+    setRulesOpen(true);
+    revealSection('rules');
+  };
 
   return (
     <div className="app">
@@ -264,6 +271,15 @@ function AppMain(): JSX.Element {
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
 
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
+
+        {!me && (
+          <WelcomeCard
+            loginUrl={AUTH_LOGIN_URL}
+            discordInviteUrl={DISCORD_INVITE_URL}
+            onShowRules={showRules}
+            weeklyHeal={config.weeklyHeal}
+          />
+        )}
 
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 

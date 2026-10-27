@@ -1,0 +1,67 @@
+/* 欢迎卡 — signed-out visitors only (spec §3.1). */
+.welcome {
+  display: grid;
+  gap: 0.4rem;
+  padding: clamp(1rem, 0.75rem + 1vw, 1.5rem);
+}
+
+.welcome__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.welcome__title {
+  font-size: var(--fs-xl);
+  letter-spacing: 0.02em;
+}
+
+.welcome__close {
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  margin: -0.6rem -0.6rem 0 0;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+}
+
+.welcome__line {
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.welcome__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.6rem;
+}
+
+.welcome__rules {
+  min-height: var(--tap-min);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--info);
+}
+
+.welcome__discord {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.welcome__discord a {
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .welcome__close:hover {
+    color: var(--text);
+  }
+  .welcome__rules:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}

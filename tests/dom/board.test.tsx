@@ -1,12 +1,22 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { App } from '../../src/App';
 import { Leaderboard } from '../../src/components/Leaderboard';
 import { RecordsFeed } from '../../src/components/RecordsFeed';
 import { RulesPanel } from '../../src/components/RulesPanel';
 import { WeekHighlights } from '../../src/components/WeekHighlights';
 import { WeeklyReportCard } from '../../src/components/WeeklyReportCard';
-import type { CaseStatus, Config, PublicUser, RecordItem, ViolationType, WeeklyReport } from '../../src/types';
+import { WelcomeCard } from '../../src/components/WelcomeCard';
+import type {
+  CaseStatus,
+  Config,
+  PublicUser,
+  RecordItem,
+  User,
+  ViolationType,
+  WeeklyReport,
+} from '../../src/types';
 
 // P0-4 (spec §9): the board without shaming — tied ranks, no medals, scores on
 // every width, 段位 only on the viewer's own row, 本周之星 instead of 红黑榜,
@@ -265,5 +275,164 @@ describe('RulesPanel', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false'); // the parent decides
     rerender(<RulesPanel config={config} open onOpenChange={onOpenChange} />);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+describe('WelcomeCard', () => {
+  const renderCard = (discordInviteUrl: string | null = null, onShowRules = vi.fn()) =>
+    render(
+      <WelcomeCard loginUrl="/auth/login" discordInviteUrl={discordInviteUrl} onShowRules={onShowRules} weeklyHeal={5} />,
+    );
+
+  it('says what the board is, with the heal from config', () => {
+    renderCard();
+    expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
+    expect(screen.getByText('说了来就来；来不了，开局前说一声。')).toBeInTheDocument();
+    expect(screen.getByText(/放鸽子会被记一笔，每周一 0 点自动回血/)).toHaveTextContent('+5');
+    expect(screen.getByRole('link', { name: '用 Nanako 账号登录' })).toHaveAttribute('href', '/auth/login');
+    expect(screen.queryByRole('heading', { name: /约局/ })).not.toBeInTheDocument();
+  });
+
+  it('30 秒看懂 asks the page to show the rules', async () => {
+    const onShowRules = vi.fn();
+    const user = userEvent.setup();
+    renderCard(null, onShowRules);
+    await user.click(screen.getByRole('button', { name: '30 秒看懂' }));
+    expect(onShowRules).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the Discord row unless an invite page is configured', () => {
+    const { unmount } = renderCard(null);
+    expect(screen.queryByText(/还没进 Discord 群/)).not.toBeInTheDocument();
+    unmount();
+    renderCard('https://discord.nanako.org/');
+    const link = screen.getByRole('link', { name: '加入服务器' });
+    expect(link).toHaveAttribute('href', 'https://discord.nanako.org/');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('can be dismissed for good', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderCard();
+    await user.click(screen.getByRole('button', { name: '不再显示欢迎卡' }));
+    expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('edg.welcome.dismissed')).toBe('1');
+    unmount();
+    renderCard();
+    expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
+  });
+
+  it('still shows when storage is unavailable', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    renderCard();
+    expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
+  });
+});
+
+interface Call {
+  method: string;
+  path: string;
+}
+
+function json(status: number, body: unknown): Response {
+  return { ok: status >= 200 && status < 300, status, text: () => Promise.resolve(JSON.stringify(body)) } as Response;
+}
+
+function mockFetch(routes: Record<string, () => Response>): Call[] {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const path = url.replace(/^https?:\/\/[^/]+/, '');
+      const method = init?.method ?? 'GET';
+      calls.push({ method, path });
+      const route = routes[`${method} ${path}`];
+      return Promise.resolve(route ? route() : json(500, { error: `unrouted ${method} ${path}` }));
+    }),
+  );
+  return calls;
+}
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+describe('App — the board on the home page', () => {
+  const ME: User = { ...TIED[2], oauth_username: 'c', is_admin: false };
+  const REPORT = {
+    week_start: '2026-10-19',
+    stats: {
+      weekStart: '2026-10-19', weekEnd: '2026-10-25', sessionsPlayed: 3, sessionsCollapsed: 0, casesFiled: 1,
+      totalPenalty: -12, absentVerdicts: 0, attendanceRate: null, upcomingNextWeek: 0,
+      star: null, pigeon: { name: '老王', delta: -12 }, bestTalker: null, harshest: null, topOrganizer: null,
+    },
+    narrative: '平平无奇的一周。',
+    source: 'ai',
+    created_at: '2026-10-26 02:31:00',
+  };
+  const routes = (me: User | null) => ({
+    'GET /api/config': () =>
+      json(200, {
+        violations: [],
+        tiers: [],
+        weeklyHeal: 5,
+        weeklyBonusCap: 5,
+        statementWindowHours: 12,
+        aiEnabled: false,
+        maxBatchSubjects: 5,
+        nextResetAt: NEXT_RESET,
+      }),
+    'GET /api/leaderboard': () => json(200, { participants: TIED }),
+    'GET /api/records?limit=50': () => json(200, { records: STAR_FEED }),
+    'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
+    'GET /api/me/invites': () => json(200, { sessions: [] }),
+    'GET /api/report/latest': () => json(200, { report: REPORT }),
+    'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
+  });
+
+  it('signed out: welcome card first, one /约局/ heading, stars in the board, no 鸽王 anywhere', async () => {
+    mockFetch(routes(null));
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
+    expect(screen.getByText('⭐', { exact: false }).closest('.lb')).not.toBeNull();
+    expect(document.body.textContent).not.toContain('鸽王');
+    expect(document.querySelector('.wr-award')).toBeNull();
+    expect(document.querySelector('.tier-badge')).toBeNull();
+  });
+
+  it('30 秒看懂 opens the rules and moves focus there', async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mockFetch(routes(null));
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(await screen.findByRole('button', { name: '30 秒看懂' }));
+      const toggle = screen.getByRole('button', { name: /计分规则/ });
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await waitFor(() => expect(document.activeElement).toBe(toggle));
+      expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }));
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('signed in: no welcome card, and the 段位 only on my own row', async () => {
+    mockFetch(routes(ME));
+    render(<App />);
+    await screen.findByRole('heading', { name: /约局/ });
+    await settle();
+    expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '第 3 名 老王，96 分' })).toHaveClass('lb-row--me');
   });
 });
