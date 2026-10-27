@@ -332,6 +332,16 @@ export interface InvitableUser {
   last_played_with_me_at: string | null;
 }
 
+// --- P2-1 ---
+/** What POST /api/sessions/:id/invite answers. */
+export interface InviteResult {
+  session: SessionDetail;
+  /** Rows actually inserted (each one an invitation; on PostgreSQL each queues a DM). */
+  added: number;
+  /** Distinct requested ids, minus the organizer, minus `added`: already in it, or unknown. */
+  skipped: number;
+}
+
 /** Hono generics for the app: bindings + per-request variables. */
 export interface AppEnv {
   Bindings: Env;

@@ -6,6 +6,8 @@
 // integration "选配、不是必须".
 
 import {
+  MAX_INVITES,
+  MAX_SESSION_ROSTER,
   ORGANIZER_BONUS_MIN_ATTENDEES,
   SESSION_GAME_MAX,
   SESSION_MAX_LEAD_MS,
@@ -45,7 +47,7 @@ import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limit
 import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 
-const MAX_ROLLCALL_ENTRIES = 50;
+const MAX_ROLLCALL_ENTRIES = MAX_SESSION_ROSTER;
 const MAX_LATE_MINUTES = 24 * 60;
 
 // --- Mapping -----------------------------------------------------------------
@@ -61,7 +63,7 @@ SELECT g.*,
 FROM game_sessions g
 JOIN users o ON o.id = g.organizer_id`;
 
-interface SessionJoinRow extends SessionRow {
+export interface SessionJoinRow extends SessionRow {
   o_username: string;
   o_avatar: string | null;
   c_invited: number;
@@ -177,7 +179,7 @@ export async function listSessions(
   return rows.results.map((r) => toSessionItem(r, mine.get(r.id) ?? null));
 }
 
-async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
+export async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
   const row = await db
     .prepare(`${SESSION_SELECT} WHERE g.id = ?`)
     .bind(id)
@@ -200,7 +202,7 @@ export async function getSessionDetail(
 
 // --- Writes ------------------------------------------------------------------
 
-function requireOrganizer(row: SessionRow, caller: User): void {
+export function requireOrganizer(row: SessionRow, caller: User): void {
   if (caller.is_admin) return;
   if (row.organizer_id !== caller.id) throw new ApiError(403, '只有组织者可以操作这个约局');
 }
@@ -253,7 +255,7 @@ export interface CreateSessionInput {
   invite?: unknown;
 }
 
-export const MAX_INVITES = 20;
+export { MAX_INVITES } from '../shared/attendance';
 /**
  * Per organizer: sessions open at once, and sessions created per 24 hours.
  * Every session invites, posts a card and DMs reminders (Discord, P7), so
@@ -279,12 +281,17 @@ async function assertCanOrganize(db: D1Database, organizerId: string): Promise<v
   }
 }
 
-function normalizeInvites(raw: unknown, organizerId: string): string[] {
+/** `field` names the list in the errors: `invite` when creating, `user_ids` for POST …/invite (P2-1). */
+export function normalizeInvites(
+  raw: unknown,
+  organizerId: string,
+  field: 'invite' | 'user_ids' = 'invite',
+): string[] {
   if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw)) throw new ApiError(400, 'invite 必须是数组');
+  if (!Array.isArray(raw)) throw new ApiError(400, `${field} 必须是数组`);
   const ids = new Set<string>();
   for (const v of raw) {
-    if (typeof v !== 'string' || v.length === 0) throw new ApiError(400, 'invite 里有无效的用户 ID');
+    if (typeof v !== 'string' || v.length === 0) throw new ApiError(400, `${field} 里有无效的用户 ID`);
     if (v === organizerId) continue; // the organizer is already going
     ids.add(v);
   }

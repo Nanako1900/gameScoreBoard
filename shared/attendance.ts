@@ -172,3 +172,11 @@ export const SESSION_GAME_MAX = 40;
 export const SESSION_NOTE_MAX = 300;
 /** Sanity bound on how far ahead a session may be scheduled (90 days). */
 export const SESSION_MAX_LEAD_MS = 90 * 24 * 60 * 60 * 1000;
+
+// --- P2-1 ---
+/** People one create (invite) or one POST …/invite may name. */
+export const MAX_INVITES = 20;
+/** A session's roster never grows past this by invitation: roll call takes at most this many entries. */
+export const MAX_SESSION_ROSTER = 50;
+/** Invitation DMs one organizer may send one person per 24 h (the dispatcher enforces it; the web says it). */
+export const INVITES_PER_ORGANIZER = 3;
