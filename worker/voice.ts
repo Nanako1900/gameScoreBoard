@@ -1,7 +1,8 @@
 // Read the same private evidence through the D1 facade on both backends.
-// Coverage goes first: a later checkpoint must not certify an earlier,
-// incomplete snapshot of the segment rows.
+// Read coverage around the segment query: later checkpoints cannot certify
+// earlier missing rows, and a concurrent cleanup cannot leave revoked coverage.
 import { VOICE_RETENTION_DAYS } from '../shared/voice';
+import { intersectVoiceCoverage } from '../shared/voiceCoverage';
 import { firstAvailableVoiceDate, voiceDays, voiceRangeBounds, type CoverageRow, type VoiceSegmentRow } from '../shared/voiceDays';
 import type { VoiceDayResponse, VoiceDayUser, VoiceHistoryResponse, VoiceUserRef } from '../shared/voiceApi';
 import { ApiError } from './errors';
@@ -56,10 +57,11 @@ export async function getVoiceHistory(db: D1Database, userId: string, from: stri
   const user = await db.prepare('SELECT id, COALESCE(display_name, username) AS username, avatar_url FROM users WHERE id = ?')
     .bind(userId).first<VoiceUserRef>();
   if (!user) throw new ApiError(404, '用户不存在');
-  const coverage = await readCoverage(db, range);
+  const before = await readCoverage(db, range);
   const rows = await db.prepare(`SELECT channel_name, joined_at, left_at, start_reason, end_reason
     FROM voice_sessions WHERE user_id = ? AND joined_at < ? AND COALESCE(left_at, ?) > ?
     ORDER BY joined_at, id`).bind(userId, range.end, now, range.start).all<VoiceSegmentRow>();
+  const coverage = intersectVoiceCoverage(before, await readCoverage(db, range));
   const result = voiceDays({ segments: rows.results, coverage, from: range.from, to: range.to, offsetHours, now });
   return { user, ...result, retention_days: VOICE_RETENTION_DAYS };
 }
@@ -67,12 +69,13 @@ export async function getVoiceHistory(db: D1Database, userId: string, from: stri
 export async function getVoiceDay(db: D1Database, date: string | undefined, offsetHours: number, now: string): Promise<VoiceDayResponse> {
   const selected = date ?? boardDate(now, offsetHours);
   const range = checkedRange(selected, selected, offsetHours, now);
-  const coverage = await readCoverage(db, range);
+  const before = await readCoverage(db, range);
   const rows = await db.prepare(`SELECT s.user_id, COALESCE(u.display_name, u.username) AS username, u.avatar_url,
       s.channel_name, s.joined_at, s.left_at, s.start_reason, s.end_reason
     FROM voice_sessions s JOIN users u ON u.id = s.user_id
     WHERE s.joined_at < ? AND COALESCE(s.left_at, ?) > ? ORDER BY s.joined_at, s.id`)
     .bind(range.end, now, range.start).all<RosterRow>();
+  const coverage = intersectVoiceCoverage(before, await readCoverage(db, range));
   const grouped = new Map<string, RosterRow[]>();
   for (const row of rows.results) {
     const group = grouped.get(row.user_id) ?? [];

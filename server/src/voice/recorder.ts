@@ -248,16 +248,35 @@ export function createVoiceRecorder(deps: VoiceRecorderDeps): VoiceRecorder {
   }
   async function cleanup(): Promise<void> {
     if (stopped) return;
-    const result = await control('retention cleanup', async () => {
-      const removed = await pool.query<{ left_at: string | null }>(`DELETE FROM voice_sessions
-        WHERE joined_at < datetime('now', $1) RETURNING left_at`, [`-${VOICE_RETENTION_DAYS} days`]);
-      await pool.query("DELETE FROM voice_coverage WHERE last_seen_at < datetime('now', $1)", [`-${VOICE_RETENTION_DAYS} days`]);
-      return removed.rows.some((row) => row.left_at === null);
-    });
-    if (!result.ok || stopped || !result.value) return;
-    // Retention intentionally deletes old open rows too. A present, bound
-    // person starts a fresh bot_online row; no expired history is retained.
-    generation += 1; current = null;
+    const result = await control('retention cleanup', () => transaction(async (client) => {
+      const bounds = await client.query<{ at: string; cutoff: string }>(
+        "SELECT datetime('now') AS at, datetime('now', $1) AS cutoff", [`-${VOICE_RETENTION_DAYS} days`]);
+      const { at, cutoff: expiredBefore } = bounds.rows[0];
+      const removed = await client.query<{ joined_at: string; left_at: string | null }>(`DELETE FROM voice_sessions
+        WHERE joined_at < $1 RETURNING joined_at, left_at`, [expiredBefore]);
+      // All removed joins precede cutoff, so their intersections with the
+      // retained window share that one start. Their union is a single prefix.
+      let lostUntil: string | null = null;
+      for (const row of removed.rows) {
+        const observedEnd = row.left_at === null || row.left_at > at ? at : row.left_at;
+        if (observedEnd > expiredBefore && (lostUntil === null || observedEnd > lostUntil)) lostUntil = observedEnd;
+      }
+      if (lostUntil !== null) {
+        // Invalidate inside the control job, before a previously queued
+        // heartbeat can reuse this cursor. The DELETE and coverage withdrawal
+        // commit together, so a failure rolls the evidence deletion back too.
+        generation += 1; current = null;
+        await client.query('DELETE FROM voice_coverage WHERE last_seen_at <= $1', [lostUntil]);
+        await client.query('UPDATE voice_coverage SET started_at = $1 WHERE started_at < $1', [lostUntil]);
+      }
+      await client.query('DELETE FROM voice_coverage WHERE last_seen_at < $1', [expiredBefore]);
+      return { openRemoved: removed.rows.some((row) => row.left_at === null), lost: lostUntil !== null };
+    }));
+    if (!result.ok || stopped || (!result.value.openRemoved && !result.value.lost)) return;
+    // An expired visit may have described recent attendance. Its retained
+    // prefix is now explicitly unknown; a complete current snapshot can begin
+    // fresh evidence without keeping any part of the expired visit itself.
+    if (!result.value.lost) { generation += 1; current = null; }
     if (isReady() && getPresent() !== null) await reconcile();
     else { degraded = true; lastError = FAILURE; }
   }

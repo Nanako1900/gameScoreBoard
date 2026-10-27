@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { boardTzLabel } from '@shared/boardTime';
 import { VOICE_RETENTION_DAYS } from '@shared/voice';
 import { firstAvailableVoiceDate, type VoiceDay, type VoiceGap } from '@shared/voiceDays';
-import { VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voiceTime } from '@shared/voicePresentation';
+import { VOICE_GAP_EXPLANATION, VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voiceTime } from '@shared/voicePresentation';
 import type { VoiceDayResponse, VoiceHistoryResponse } from '@shared/voiceApi';
 import { ApiError, getVoiceDay, getVoiceHistory } from '../api';
 import { adminVoicePath } from '../lib/routes';
@@ -27,7 +27,7 @@ const daysBefore = (date: string, days: number): string => new Date(Date.parse(`
 function CoverageGaps({ gaps, offsetHours }: { gaps: readonly VoiceGap[]; offsetHours: number }): JSX.Element | null {
   if (gaps.length === 0) return null;
   return <aside className="voice-log__gaps" role="note" aria-label="未覆盖时段">
-    <h3>未覆盖时段</h3><p>{VOICE_GAP_NOTICE}</p>
+    <h3>未覆盖时段</h3><p>{VOICE_GAP_NOTICE}</p><p>{VOICE_GAP_EXPLANATION}</p>
     <ul>{gaps.map((gap, index) => <li key={`${gap.from}:${gap.to}:${index}`}>
       {voiceTime(gap.from, offsetHours, true, true)} – {voiceTime(gap.to, offsetHours, true, true)}
     </li>)}</ul>

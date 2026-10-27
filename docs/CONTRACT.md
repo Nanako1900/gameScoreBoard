@@ -331,12 +331,16 @@ An open segment is capped at the fixed query time for arithmetic and displayed w
 
 `gaps` are the complement of the union of persisted `[started_at, last_seen_at]` coverage intervals,
 clipped to the requested range up to the fixed query time. Readers never extend coverage to the query time,
-even when the last heartbeat is recent. Coverage is read before segments so a later checkpoint cannot certify
-an earlier, incomplete segment read. A day row's `in_voice_now` is true only for an open segment on the current
+even when the last heartbeat is recent. Readers take coverage snapshots before and after the segment read
+and use their interval-set intersection. New checkpoints cannot certify an earlier, incomplete segment read,
+and coverage withdrawn by a concurrent retention cleanup cannot survive alongside already-deleted segments.
+A day row's `in_voice_now` is true only for an open segment on the current
 board day whose query time is inside persisted coverage. `has_open_segment` alone only means
 「尚未记录离开」. History details never label an unclosed segment as online.
 
 Render gaps visibly, with second-resolution endpoints and 「这段时间机器人不在线，没有记录不代表没来。」.
+Keep the qualifier 「未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。」
+on the web and bot, including truncated bot output; a gap is not a claim that the Gateway was definitely offline.
 An empty result says 「没有保存的语音记录，不代表没来」: the requested period may predate binding,
 or records may have expired or be unavailable.
 Neither a gap nor an empty day proves absence.
@@ -448,7 +452,15 @@ Binding deletion or replacement closes the old account's open segment with `unli
 recording and binding changes serialize on the binding row, so a late write cannot revive the old binding.
 The recorder checks complete available-guild snapshots, resumes and minute heartbeats; database failure
 marks recording degraded and stops extending coverage until a successful reconciliation. Hourly cleanup enforces
-`VOICE_RETENTION_DAYS`; see the owner-run deployment checklist in `docs/DEPLOY-DISCORD.md`.
+`VOICE_RETENTION_DAYS`: segments whose `joined_at` predates the cutoff are removed as whole rows, including open rows.
+If such a row overlaps the retained window, the same PostgreSQL transaction atomically withdraws coverage
+from the cutoff through the latest deleted end (capped at cleanup time; open rows end at that time for withdrawal).
+This is global coverage, so all users see the affected time as uncovered; no surviving records are removed for other users.
+Unqueryable coverage prefixes are also discarded; trustworthy suffixes after the withdrawn interval are retained.
+The old cursor is invalidated and a complete available snapshot is reconciled before coverage can resume from now.
+Any cleanup failure rolls back both deletion and withdrawal and degrades the recorder. A still-present bound member
+whose open row expired starts a new `bot_online` row at reconciliation time, without backdating evidence.
+See the owner-run deployment checklist in `docs/DEPLOY-DISCORD.md`.
 
 ## Frontend expectations
 

@@ -1,6 +1,7 @@
 // Real local-PG evidence recording, including interrupted writes and live-cache races.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_HEARTBEAT_MS } from '../../shared/voice';
+import { voiceDays } from '../../shared/voiceDays';
 import { createVoiceRecorder, type VoicePresent, type VoiceRecorder } from '../../server/src/voice/recorder';
 import { linkAccounts } from '../../server/src/discord/links';
 import { seedUser } from '../worker/helpers';
@@ -52,6 +53,7 @@ async function allowInsert() {
 afterEach(async () => {
   for (const recorder of running.splice(0)) await recorder.stop();
   await allowInsert();
+  await pool.query('DROP TRIGGER IF EXISTS test_reject_coverage ON voice_coverage; DROP FUNCTION IF EXISTS test_reject_coverage()');
   vi.restoreAllMocks(); vi.useRealTimers();
   present = []; ready = true; clock = undefined;
 });
@@ -282,5 +284,77 @@ describe('resume, retention and lifecycle', () => {
     recorder.start(); recorder.start(); expect(vi.getTimerCount()).toBe(2);
     await recorder.stop(); expect(vi.getTimerCount()).toBe(0);
     await recorder.onVoiceUpdate(update()); expect(await segments()).toEqual([]);
+  });
+});
+
+
+describe('retention does not certify erased in-window evidence', () => {
+  async function recentCoverage() {
+    await pool.query("INSERT INTO voice_coverage (started_at, last_seen_at) VALUES (datetime('now', '-89 days'), datetime('now'))");
+  }
+  async function expiredClosed(leaveAgo = '-1 hour') {
+    await oldOpen('91 days');
+    await pool.query("UPDATE voice_sessions SET left_at = datetime('now', $1), end_reason = 'left'", [leaveAgo]);
+  }
+  async function dayEvidence(daysAgo = 1) {
+    const now = String((await pool.query("SELECT datetime('now') AS at")).rows[0].at);
+    const date = new Date(Date.parse(now.replace(' ', 'T') + 'Z') - daysAgo * 86_400_000).toISOString().slice(0, 10);
+    return voiceDays({ segments: await segments(), coverage: await coverage(), from: date, to: date, offsetHours: 0, now });
+  }
+  it('withdraws historical coverage when an expired closed row still described a retained day', async () => {
+    await person(); await expiredClosed(); await recentCoverage();
+    expect((await dayEvidence()).days[0].total_min).toBeGreaterThan(0);
+    expect((await dayEvidence()).gaps).toEqual([]);
+    await make().cleanup();
+    const day = await dayEvidence();
+    expect(day.days[0].segments).toEqual([]); expect(day.gaps.length).toBeGreaterThan(0);
+  });
+  it('reopens a deleted old active row but marks its erased retained history uncovered', async () => {
+    await person(); await oldOpen('91 days'); await recentCoverage();
+    present = [{ discordUserId: DISCORD, channelId: A, channelName: '开黑一号' }];
+    const recorder = make(); await recorder.cleanup();
+    expect(await segments()).toEqual([expect.objectContaining({ start_reason: 'bot_online', left_at: null })]);
+    const day = await dayEvidence(); expect(day.days[0].segments).toEqual([]); expect(day.gaps.length).toBeGreaterThan(0);
+    expect((await recorder.status()).degraded).toBe(false);
+  });
+  it('preserves the original trusted coverage suffix after the erased visit ended', async () => {
+    await person(); await expiredClosed('-2 days'); const [erased] = await segments(); await recentCoverage();
+    const [original] = await coverage(); await make().cleanup();
+    const kept = (await coverage()).find((row) => row.id === original.id);
+    expect(kept).toMatchObject({ started_at: erased.left_at, last_seen_at: original.last_seen_at });
+    expect((await dayEvidence()).gaps).toEqual([]);
+    expect((await dayEvidence(3)).gaps.length).toBeGreaterThan(0);
+  });
+  it('does not withdraw recent coverage for a visit that ended entirely before retention', async () => {
+    await person(); await expiredClosed('-91 days'); await recentCoverage(); const recorder = make(); await recorder.reconcile();
+    const before = await coverage(); const status = await recorder.status();
+    await recorder.cleanup(); expect(await segments()).toEqual([]); expect(await coverage()).toEqual(before);
+    expect((await recorder.status()).coverage_since).toBe(status.coverage_since);
+  });
+  it('rolls erased segments back when coverage withdrawal fails and enters degraded mode', async () => {
+    await person(); await expiredClosed(); await recentCoverage(); const before = await segments(); const coverageBefore = await coverage();
+    const recorder = make();
+    await pool.query(`CREATE OR REPLACE FUNCTION test_reject_coverage() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'coverage unavailable'; END; $$;
+      CREATE TRIGGER test_reject_coverage BEFORE UPDATE ON voice_coverage FOR EACH ROW EXECUTE FUNCTION test_reject_coverage()`);
+    await recorder.cleanup();
+    expect(await segments()).toEqual(before); expect(await coverage()).toEqual(coverageBefore);
+    expect(await recorder.status()).toMatchObject({ degraded: true, coverage_since: null });
+  });
+  it('invalidates an already queued heartbeat before withdrawing the old interval', async () => {
+    await person(); await oldOpen('91 days'); await recentCoverage(); const recorder = make(); await recorder.reconcile();
+    // Reconcile closed the expired row; it still contains retained history.
+    const real = pool.query.bind(pool); const writes: unknown[][] = [];
+    const spy = vi.spyOn(pool, 'query');
+    spy.mockImplementation((async (...args: unknown[]) => {
+      if (typeof args[0] === 'string' && /UPDATE voice_coverage SET last_seen_at/i.test(args[0])) writes.push(args);
+      return (real as (...input: unknown[]) => unknown)(...args);
+    }) as typeof pool.query);
+    try {
+      const cleaning = recorder.cleanup(); const beat = recorder.heartbeat(); await Promise.all([cleaning, beat]);
+      expect(writes).toEqual([]);
+      expect((await dayEvidence()).gaps.length).toBeGreaterThan(0);
+      expect(await recorder.status()).toMatchObject({ degraded: false, last_error: null });
+    } finally { spy.mockRestore(); }
   });
 });

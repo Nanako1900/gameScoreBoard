@@ -85,6 +85,7 @@ describe('voice management page', () => {
     expect(screen.getByText('尚未记录离开')).toBeInTheDocument();
     expect(screen.getAllByText('时长按查询时刻估算')).toHaveLength(2);
     expect(screen.getByText(VOICE_GAP_NOTICE)).toBeInTheDocument();
+    expect(within(screen.getByRole('note', { name: '未覆盖时段' })).getByText('未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。')).toBeInTheDocument();
     expect(screen.getByText('10-28 04:15:00 – 10-28 04:15:20')).toBeInTheDocument();
     expect(container.querySelector('.admin-page [style], .admin-page style')).toBeNull();
   });

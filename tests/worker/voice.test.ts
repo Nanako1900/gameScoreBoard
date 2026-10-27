@@ -37,6 +37,25 @@ async function add(user: string, joined: string, left: string | null, patch: { s
 async function cover(from: string, to: string) {
   await env.DB.prepare('INSERT INTO voice_coverage (started_at, last_seen_at) VALUES (?, ?)').bind(from, to).run();
 }
+// Model a cleanup/checkpoint transaction committed around the segment query,
+// using the real D1/PG database for both snapshots and the returned rows.
+function aroundSegments(timing: 'before' | 'after', change: () => Promise<void>): D1Database {
+  return { prepare(sql: string) {
+    let statement = env.DB.prepare(sql);
+    if (!/FROM voice_sessions\b/i.test(sql)) return statement;
+    const wrapped = {
+      bind(...values: unknown[]) { statement = statement.bind(...values); return wrapped; },
+      async all<T>() {
+        if (timing === 'before') await change();
+        const result = await statement.all<T>();
+        if (timing === 'after') await change();
+        return result;
+      },
+    };
+    return wrapped as unknown as D1PreparedStatement;
+  } } as unknown as D1Database;
+}
+
 function noPrivateFields(body: unknown): void {
   const text = JSON.stringify(body);
   expect(text).not.toMatch(/secret-discord|secret-channel/);
@@ -176,5 +195,59 @@ describe('voice history and roster reads', () => {
     expect(sql.findIndex((text) => /FROM voice_coverage/i.test(text))).toBeLessThan(sql.findIndex((text) => /FROM voice_sessions/i.test(text)));
     sql.length = 0; await getVoiceDay(db, '2026-10-27', 0, NOW);
     expect(sql.findIndex((text) => /FROM voice_coverage/i.test(text))).toBeLessThan(sql.findIndex((text) => /FROM voice_sessions/i.test(text)));
+  });
+});
+
+
+describe('voice reads across concurrent retention cleanup', () => {
+  it.each(['before', 'after'] as const)('drops revoked history coverage when cleanup commits %s the segment read', async (timing) => {
+    await add('self', '2026-07-28 00:00:00', '2026-10-27 11:00:00');
+    await cover('2026-10-27 00:00:00', NOW);
+    const db = aroundSegments(timing, async () => {
+      await env.DB.prepare("DELETE FROM voice_sessions WHERE joined_at < '2026-07-29 12:00:00'").run();
+      await env.DB.prepare('DELETE FROM voice_coverage').run();
+      await cover(NOW, NOW);
+    });
+    const result = await getVoiceHistory(db, 'self', '2026-10-27', '2026-10-27', 0, NOW);
+    expect(result.days[0].segments).toHaveLength(timing === 'before' ? 0 : 1);
+    expect(result.gaps).toEqual([{ from: '2026-10-27 00:00:00', to: NOW }]);
+  });
+  it.each(['before', 'after'] as const)('drops revoked roster coverage and live claims when cleanup commits %s the segment read', async (timing) => {
+    await add('other', '2026-07-28 00:00:00', '2026-10-27 11:00:00');
+    await add('self', '2026-10-27 10:00:00', null);
+    await cover('2026-10-27 00:00:00', NOW);
+    const db = aroundSegments(timing, async () => {
+      await env.DB.prepare("DELETE FROM voice_sessions WHERE joined_at < '2026-07-29 12:00:00'").run();
+      await env.DB.prepare('DELETE FROM voice_coverage').run();
+      await cover('2026-10-27 00:00:00', '2026-10-27 06:00:00');
+      await cover('2026-10-27 12:00:01', '2026-10-27 12:00:01');
+    });
+    const result = await getVoiceDay(db, '2026-10-27', 0, NOW);
+    expect(result.users.find((person) => person.user.id === 'self')).toMatchObject({ has_open_segment: true, in_voice_now: false });
+    expect(result.users.some((person) => person.user.id === 'other')).toBe(timing === 'after');
+    expect(result.gaps).toEqual([{ from: '2026-10-27 06:00:00', to: NOW }]);
+  });
+  it.each(['history', 'day'] as const)('does not let a new checkpoint certify earlier missing %s segments', async (kind) => {
+    await cover('2026-10-27 00:00:00', '2026-10-27 06:00:00');
+    const db = aroundSegments('after', async () => {
+      await add('self', '2026-10-27 10:00:00', null);
+      await cover('2026-10-27 06:00:00', NOW);
+    });
+    const result = kind === 'history' ? await getVoiceHistory(db, 'self', '2026-10-27', '2026-10-27', 0, NOW)
+      : await getVoiceDay(db, '2026-10-27', 0, NOW);
+    expect(result.gaps).toEqual([{ from: '2026-10-27 06:00:00', to: NOW }]);
+    if ('days' in result) expect(result.days[0].segments).toEqual([]);
+    else expect(result.users).toEqual([]);
+  });
+  it('retains a common current endpoint without treating that point as earlier continuous coverage', async () => {
+    await add('self', '2026-10-27 10:00:00', null);
+    await cover('2026-10-27 00:00:00', NOW);
+    const db = aroundSegments('after', async () => {
+      await env.DB.prepare('DELETE FROM voice_coverage').run();
+      await cover(NOW, '2026-10-27 12:00:01');
+    });
+    const result = await getVoiceDay(db, '2026-10-27', 0, NOW);
+    expect(result.users[0]).toMatchObject({ has_open_segment: true, in_voice_now: true });
+    expect(result.gaps).toEqual([{ from: '2026-10-27 00:00:00', to: NOW }]);
   });
 });

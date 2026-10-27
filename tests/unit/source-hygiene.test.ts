@@ -215,6 +215,8 @@ describe('voice evidence documentation', () => {
     expect(voice).toContain('`continued`');
     expect(voice).toContain('persisted `[started_at, last_seen_at]`');
     expect(voice).toContain('never extend coverage to the query time');
+    expect(voice).toContain('before and after the segment read');
+    expect(voice).toContain('intersection');
     expect(voice).toContain('second-resolution UTC');
     expect(voice).toContain('尚未记录离开');
     expect(voice).toContain('没有保存的语音记录，不代表没来');
@@ -226,6 +228,7 @@ describe('voice evidence documentation', () => {
     expect(contract).toContain('partial unique index');
     expect(contract).toContain('`ON DELETE CASCADE`');
     expect(contract).toContain('`worker/voice.ts`');
+    expect(contract).toContain('atomically withdraws coverage');
     expect(contract).toMatch(/\| `\/admin`, `\/admin\/voice` \|[^\n]*full page[^\n]*same full page/);
     expect(contract).toContain('`/admin/ai` and `/admin/members` still render NotFound');
     expect(contract).toContain('`target="_blank" rel="noopener"`');
@@ -242,6 +245,8 @@ describe('voice evidence documentation', () => {
     for (const field of ['coverage_since', 'degraded', 'open_segments', 'last_error']) expect(deploy).toContain('`' + field + '`');
     expect(deploy).toContain('HTTP 200');
     expect(deploy).toContain('不代表语音记录健康');
+    expect(deploy).toContain('同一事务');
+    expect(deploy).toContain('同一时段所有人的覆盖提示');
     expect(deploy).toContain('`open_segments: null`');
     expect(deploy).toContain('语音记录暂不可用，请查看机器人日志');
     expect(deploy).toContain('`0010_voice.sql`');

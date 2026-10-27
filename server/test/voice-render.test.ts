@@ -6,6 +6,7 @@ import { LIMITS } from '../src/discord/render';
 import { renderVoiceHistory } from '../src/discord/voice';
 
 const NOTICE = '这段时间机器人不在线，没有记录不代表没来。';
+const EXPLANATION = '未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。';
 const FULL = '完整记录请找裁判在网页查看';
 function segment(patch: Partial<VoiceDaySegment> = {}): VoiceDaySegment {
   return { channel_name: '开黑一号', joined_at: '2026-10-27 12:14:00', left_at: '2026-10-27 14:49:00',
@@ -81,6 +82,7 @@ describe('voice history embed', () => {
     const data = history({ days: [{ date: '2026-10-27', first_join: null, total_min: 0, segments: [] }],
       gaps: [{ from: '2026-10-26 16:00:00', to: '2026-10-27 16:00:00' }] });
     expect(text(data)).toContain(NOTICE); expect(text(data)).toContain('共 0 分');
+    expect(renderVoiceHistory(data, 8).description).toContain(EXPLANATION);
     expect(text(data)).toContain('10-27 00:00'); expect(text(data)).toContain('10-28 00:00');
   });
   it('escapes user/channel text and never copies private source identifiers', () => {
@@ -101,7 +103,9 @@ describe('voice history embed', () => {
     const data = history(); data.days[0].segments = Array.from({ length: 100 }, () => segment({
       channel_name: '明细频道'.repeat(40), continued: true, start_reason: 'bot_online', end_reason: 'bot_offline',
     }));
+    data.gaps = [{ from: '2026-10-27 02:00:10', to: '2026-10-27 02:00:30' }];
     const out = text(data);
+    expect(renderVoiceHistory(data, 8).description).toContain(EXPLANATION);
     expect(out).not.toContain('明细频道'); expect(out).toContain('10-27 周二'); expect(out).toContain('共 2 小时 35 分');
     for (const note of ['接上一天', '机器人上线时已在语音里', '之后机器人离线，离开时间不确定']) expect(out).toContain(note);
     expect(out).toContain(FULL); limits(data);
@@ -114,6 +118,7 @@ describe('voice history embed', () => {
     data.gaps = Array.from({ length: 500 }, () => ({ from: '2026-10-26 16:00:00', to: '2026-10-27 16:00:00' }));
     const out = text(data);
     for (const note of [NOTICE, FULL, '接上一天', '机器人上线时已在语音里', '之后机器人离线，离开时间不确定', '尚未记录离开', '时长按查询时刻估算']) expect(out).toContain(note);
+    expect(renderVoiceHistory(data, 8).footer?.text).toContain(EXPLANATION);
     expect(out).toContain('省略'); limits(data);
   });
 });

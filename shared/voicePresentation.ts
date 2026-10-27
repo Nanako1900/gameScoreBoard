@@ -2,6 +2,7 @@
 import type { VoiceDaySegment } from './voiceDays';
 
 export const VOICE_GAP_NOTICE = '这段时间机器人不在线，没有记录不代表没来。';
+export const VOICE_GAP_EXPLANATION = '未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。';
 const HOUR_MS = 3_600_000;
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
 const pad2 = (value: number): string => String(value).padStart(2, '0');

@@ -3,7 +3,7 @@
 import { boardTzLabel } from '../../../shared/boardTime';
 import type { VoiceHistoryResponse } from '../../../shared/voiceApi';
 import type { VoiceDay, VoiceDaySegment } from '../../../shared/voiceDays';
-import { VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voiceTime } from '../../../shared/voicePresentation';
+import { VOICE_GAP_EXPLANATION, VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voiceTime } from '../../../shared/voicePresentation';
 import { VOICE_UNKNOWN_CHANNEL } from '../../../shared/voice';
 import { GOLD, RED, LIMITS, fitLines, safeLine } from './render';
 import type { BotEmbed } from './types';
@@ -40,7 +40,7 @@ export function renderVoiceHistory(history: VoiceHistoryResponse, offsetHours: n
   });
   const gaps = history.gaps.map((gap) => `${voiceTime(gap.from, offsetHours, true, true)}–${voiceTime(gap.to, offsetHours, true, true)}`);
   const body = (days: string[], warning = true): string => [days.join('\n'),
-    ...(gaps.length ? ['未覆盖时段', ...(warning ? [VOICE_GAP_NOTICE] : []), gaps.join('\n')] : [])].filter(Boolean).join('\n\n');
+    ...(gaps.length ? ['未覆盖时段', ...(warning ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []), gaps.join('\n')] : [])].filter(Boolean).join('\n\n');
   const footer = `保留 ${history.retention_days} 天 · 时间按${boardTzLabel(offsetHours)}`;
   const embed: BotEmbed = {
     title: `语音记录 · ${safeLine(history.user.username, NAME_MAX) || '未命名玩家'}`,
@@ -61,6 +61,6 @@ export function renderVoiceHistory(history: VoiceHistoryResponse, offsetHours: n
   const qualifications = notes(history.days.flatMap((day) => day.segments));
   return { ...embed,
     description: fitLines(body(compact, false).split('\n'), LIMITS.embedDescription, (count) => `…其余 ${count} 行已省略`),
-    footer: { text: [footer, omission, qualifications.join('；'), ...(gaps.length ? [VOICE_GAP_NOTICE] : []), COMPLETE].filter(Boolean).join('\n') },
+    footer: { text: [footer, omission, qualifications.join('；'), ...(gaps.length ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []), COMPLETE].filter(Boolean).join('\n') },
   };
 }
