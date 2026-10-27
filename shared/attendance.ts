@@ -180,3 +180,7 @@ export const MAX_INVITES = 20;
 export const MAX_SESSION_ROSTER = 50;
 /** Invitation DMs one organizer may send one person per 24 h (the dispatcher enforces it; the web says it). */
 export const INVITES_PER_ORGANIZER = 3;
+
+// --- P2-6 ---
+/** People shown on a session card before "+N". */
+export const GOING_PREVIEW_MAX = 5;
