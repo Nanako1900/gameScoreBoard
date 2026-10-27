@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Config, User } from '../types';
-import { AUTH_LOGIN_URL } from '../api';
 import { COUNTDOWN_TICK_MS } from '../lib/constants';
 import { formatResetCountdown } from '../lib/time';
 import { useNow } from '../lib/useNow';
 import { Avatar } from './Avatar';
+import { LoginLink } from './LoginLink';
 import { Link } from './Link';
 import './header.css';
 
@@ -141,9 +141,7 @@ export function Header({
               )}
             </div>
           ) : (
-            <a className="btn btn--gold" href={AUTH_LOGIN_URL}>
-              登录
-            </a>
+            <LoginLink className="btn btn--gold">登录</LoginLink>
           )}
         </div>
       </div>
