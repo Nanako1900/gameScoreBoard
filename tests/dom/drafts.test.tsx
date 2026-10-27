@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { quickSlots } from '@shared/quickTime';
 import { CaseDialog } from '../../src/components/CaseDialog';
 import { DraftNote } from '../../src/components/DraftNote';
+import { RollCallDialog } from '../../src/components/RollCallDialog';
 import { SessionFormDialog } from '../../src/components/SessionFormDialog';
 import { StatementDialog } from '../../src/components/StatementDialog';
 import { clearAllDrafts, draftKey, readDraft, writeDraft } from '../../src/lib/drafts';
@@ -399,5 +400,78 @@ describe('SessionFormDialog — draft', () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
     expect(calls[0]).toMatchObject({ method: 'POST', path: '/api/sessions', body: { invite: ['b'] } });
     expect(localStorage.getItem('edg.draft.session')).toBeNull();
+  });
+});
+
+function rollCallSession(): SessionDetail {
+  const player = (id: string, username: string) => ({
+    user: { id, username, avatar_url: null },
+    rsvp: 'going' as const,
+    rsvp_at: '2026-10-01 00:00:00',
+    attendance: null,
+    late_minutes: null,
+    attendance_note: null,
+    record_id: null,
+    is_participant: true,
+  });
+  return aSession({ players: [player('a', '甲'), player('b', '乙')] });
+}
+
+describe('RollCallDialog — draft', () => {
+  it('keeps each mark on this device and brings it back', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<RollCallDialog open session={rollCallSession()} onClose={() => {}} onSettled={() => {}} />);
+    await user.click(within(screen.getByRole('group', { name: '甲 出勤' })).getByRole('button', { name: '准时' }));
+    await waitFor(() => expect(stored(localStorage, 'edg.draft.rollcall.1')).toEqual({ a: { attendance: 'on_time' } }));
+    unmount();
+
+    render(<RollCallDialog open session={rollCallSession()} onClose={() => {}} onSettled={() => {}} />);
+    expect(within(screen.getByRole('group', { name: '甲 出勤' })).getByRole('button', { name: '准时' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('never rewrites what is being typed into the minutes field', async () => {
+    const user = userEvent.setup();
+    render(<RollCallDialog open session={rollCallSession()} onClose={() => {}} onSettled={() => {}} />);
+    await user.click(within(screen.getByRole('group', { name: '甲 出勤' })).getByRole('button', { name: '迟到' }));
+    const minutes = screen.getByRole('spinbutton', { name: /甲 迟到分钟数/ });
+    await user.type(minutes, '1500'); // over LATE_MINUTES_MAX: the server says so, the field keeps it
+    expect(minutes).toHaveValue(1500);
+    // Only a whole number in range is kept for next time.
+    await waitFor(() => expect(stored(localStorage, 'edg.draft.rollcall.1')).toEqual({ a: { attendance: 'late' } }));
+  });
+
+  it('asks before leaving a half-done roll call', async () => {
+    writeDraft('rollcall', 1, { a: { attendance: 'late', late_minutes: 12 } });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<RollCallDialog open session={rollCallSession()} onClose={onClose} onSettled={() => {}} />);
+    expect(screen.getByRole('spinbutton', { name: /甲 迟到分钟数/ })).toHaveValue(12);
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    const leave = screen.getByRole('group', { name: '点名还没提交，标记会留在这台设备上。' });
+    expect(within(leave).getByRole('button', { name: '继续点名' })).toHaveFocus();
+    await user.click(within(leave).getByRole('button', { name: '继续点名' }));
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('forgets the marks once the session is settled', async () => {
+    const session = rollCallSession();
+    mockFetch({
+      'POST /api/sessions/1/rollcall': () => json(200, { session, drafts: [] }),
+      'POST /api/sessions/1/settle': () => json(200, { session, created: 0, skipped: 0 }),
+    });
+    writeDraft('rollcall', 1, { a: { attendance: 'on_time' } });
+    const onSettled = vi.fn();
+    const user = userEvent.setup();
+    render(<RollCallDialog open session={session} onClose={() => {}} onSettled={onSettled} />);
+
+    await user.click(screen.getByRole('button', { name: '保存点名（1 人）' }));
+    await user.click(await screen.findByRole('button', { name: '跳过全部，仅记录出勤' }));
+    await waitFor(() => expect(onSettled).toHaveBeenCalledWith(session, 0));
+    expect(localStorage.getItem('edg.draft.rollcall.1')).toBeNull();
   });
 });
