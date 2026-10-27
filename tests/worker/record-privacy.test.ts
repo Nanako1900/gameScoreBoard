@@ -152,3 +152,96 @@ describe('cases returned by writes', () => {
   });
 });
 
+
+// B1-1 (spec §11 #3 tier b): before the verdict an outsider learns only that a
+// case exists — not its type, its accusation, the judge's note or its range.
+describe('a case before its verdict, on the web', () => {
+  const ACCUSATION = ['SECRETCLAIM', 'SECRETSUMMARY', 'SECRETNOTE'];
+
+  /** A case still awaiting its verdict, with the accusation filled in and a statement already written. */
+  async function castPending(status: 'awaiting_statement' | 'judging'): Promise<{ recordId: number; sessionId: number }> {
+    await seedUser({ id: 'subject' });
+    await seedUser({ id: 'reporter', judge: true });
+    await seedUser({ id: 'judge2', judge: true });
+    await seedUser({ id: 'admin', admin: true });
+    await seedUser({ id: 'outsider' });
+    const session = await env.DB.prepare(
+      "INSERT INTO game_sessions (organizer_id, title, starts_at, status) VALUES ('reporter', '周五五排', ?, 'settled')",
+    )
+      .bind(new Date(Date.now() - 86_400_000).toISOString())
+      .run();
+    const sessionId = Number(session.meta.last_row_id);
+    const record = await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, note, claim, claim_summary, escalation_suggested,
+                            statement, statement_at, deadline_at, status, session_id)
+       VALUES ('subject', 'reporter', 'no_show', 0, 'SECRETNOTE 短评', 'SECRETCLAIM 说好八点五排结果没来', 'SECRETSUMMARY 八点没来', 1,
+               'SECRETSTMT 家里有事', datetime('now'), datetime('now', '+1 day'), ?, ?)`,
+    )
+      .bind(status, sessionId)
+      .run();
+    return { recordId: Number(record.meta.last_row_id), sessionId };
+  }
+
+  for (const status of ['awaiting_statement', 'judging'] as const) {
+    for (const viewer of [undefined, 'outsider'] as const) {
+      it(`is only “a case in progress” while ${status}, for ${viewer ?? 'a visitor who is not logged in'}, on every route`, async () => {
+        const { recordId, sessionId } = await castPending(status);
+        for (const route of routes(recordId, sessionId)) {
+          const res = await get(route.path, viewer);
+          expect(res.status, route.path).toBe(200);
+          for (const marker of [...ACCUSATION, 'SECRETSTMT']) expect(res.text, `${route.path} leaks ${marker}`).not.toContain(marker);
+          const record = route.pick(res.json);
+          expect(record, route.path).toMatchObject({
+            id: recordId,
+            type: null,
+            range: null,
+            claim: null,
+            claim_summary: null,
+            note: null,
+            escalation_suggested: false,
+            statement: null,
+            redacted: true,
+            pending_hidden: true,
+            status,
+            delta: 0,
+            session_id: sessionId,
+            subject: { id: 'subject' },
+            reporter: { id: 'reporter' },
+          });
+          // A statement was written: the page must still be able to say so.
+          expect(record.statement_at, route.path).not.toBeNull();
+          expect(record.deadline_at, route.path).not.toBeNull();
+        }
+      });
+    }
+  }
+
+  for (const viewer of ['subject', 'reporter', 'judge2', 'admin']) {
+    it(`is shown whole to the ${viewer}`, async () => {
+      const { recordId, sessionId } = await castPending('awaiting_statement');
+      for (const route of routes(recordId, sessionId)) {
+        const res = await get(route.path, viewer);
+        for (const marker of ACCUSATION) expect(res.text, `${route.path} for ${viewer}`).toContain(marker);
+        const record = route.pick(res.json);
+        expect(record, route.path).toMatchObject({ type: 'no_show', escalation_suggested: true, redacted: false });
+        expect(record, route.path).not.toHaveProperty('pending_hidden');
+        expect(record.range, route.path).not.toBeNull();
+      }
+    });
+  }
+
+  it('is decided case by case in one list: a decided case of the same person stays public', async () => {
+    const { recordId } = await castPending('awaiting_statement');
+    await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, claim, status, verdict_source)
+       VALUES ('subject', 'reporter', 'late_minor', -3, '迟到了五分钟', 'decided', 'fallback')`,
+    ).run();
+    const res = await get('/api/records', 'outsider');
+    const records = res.json.records as Array<Record<string, unknown>>;
+    const pending = records.find((r) => r.id === recordId);
+    const decided = records.find((r) => r.id !== recordId);
+    expect(pending).toMatchObject({ type: null, pending_hidden: true });
+    expect(decided).toMatchObject({ type: 'late_minor', claim: '迟到了五分钟', delta: -3, redacted: true });
+    expect(decided).not.toHaveProperty('pending_hidden');
+  });
+});

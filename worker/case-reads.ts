@@ -65,18 +65,45 @@ export function canReadPrivate(
   );
 }
 
+/** No verdict yet: the case is still an accusation, not an outcome. */
+export function isPreVerdict(status: CaseStatus): boolean {
+  return status === 'awaiting_statement' || status === 'judging';
+}
+
+/** A bonus's 'manual' verdict is only its label (no statement was ever read for it), so it stays. */
+function blankVerdictWords(verdict: RecordItem['verdict']): RecordItem['verdict'] {
+  return verdict && verdict.source !== 'manual'
+    ? { ...verdict, headline: '', reasoning: '', factors: [] }
+    : verdict;
+}
+
 /**
  * The case as `viewer` may see it — a new object; the input is left as it is.
- * A bonus's 'manual' verdict is only its label (no statement was ever read for
- * it), so it stays.
+ * An outsider never gets the statement, the appeal reason or the verdict's
+ * words; before the verdict they get no accusation either (B1-1, spec §11 #3
+ * tier b): no type, claim, summary, note, range or escalation hint — only that
+ * a case is in progress. statement_at stays either way.
  */
 export function redactRecord(record: RecordItem, viewer: User | null): RecordView {
   if (canReadPrivate(record, viewer)) return { ...record, redacted: false };
-  const verdict =
-    record.verdict && record.verdict.source !== 'manual'
-      ? { ...record.verdict, headline: '', reasoning: '', factors: [] }
-      : record.verdict;
-  return { ...record, statement: null, appeal_reason: null, verdict, redacted: true };
+  const outsider = {
+    ...record,
+    statement: null,
+    appeal_reason: null,
+    verdict: blankVerdictWords(record.verdict),
+    redacted: true as const,
+  };
+  if (!isPreVerdict(record.status)) return outsider;
+  return {
+    ...outsider,
+    type: null,
+    range: null,
+    claim: null,
+    claim_summary: null,
+    note: null,
+    escalation_suggested: false,
+    pending_hidden: true,
+  };
 }
 
 export function redactRecords(records: readonly RecordItem[], viewer: User | null): RecordView[] {
