@@ -87,7 +87,7 @@
 }
 
 .scale__pin--heavy {
-  background: var(--down);
+  background: var(--danger);
   box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 16px -2px rgba(229, 72, 77, 0.8);
 }
 
