@@ -1,0 +1,48 @@
+/* 宽恕看得见 — the way back after a penalty (spec §5 #3). Full width inside
+ * .vc__actions (a wrapping flex row), so it sits above the buttons. */
+
+.fgn {
+  flex-basis: 100%;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid var(--ok);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--ok) 8%, transparent);
+}
+
+.fgn__text {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.fgn__appeal {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--info);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .fgn__appeal:hover {
+    text-decoration: underline;
+  }
+}
+
+@media (pointer: coarse) {
+  .fgn__appeal {
+    min-height: var(--tap-min);
+  }
+}
+
+/* Forced colours drop the link colour: keep the appeal recognisable as a link. */
+@media (forced-colors: active) {
+  .fgn__appeal {
+    text-decoration: underline;
+  }
+}
