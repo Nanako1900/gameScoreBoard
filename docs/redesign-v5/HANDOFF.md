@@ -31,17 +31,20 @@
 
 > #24（P0-5）和 #26（B1-1）都改了后端：申诉理由上限 1000 → 500、常量移到 `shared/`、判决前脱敏。合并后要在 Coolify Redeploy 一次，否则线上后端仍是旧版本，判决前的指控也仍然公开。
 
-## 3. 接手要做的（按顺序）
+## 3. 接手要做的（按顺序，一期一个 PR）
 
 1. **在 Coolify Redeploy 后端**，让 #24、#26 的后端改动上线（见上一节）。
-2. **P1-1 路由与旧深链**：[plan-p1/plan-P1-1.md](plan-p1/plan-P1-1.md)，分支 `claude/p1-1-router`。
-3. **P1-2 浮层入 history 与返回键**：[plan-p1/plan-P1-2.md](plan-p1/plan-P1-2.md)。
-4. **P1-3 登录回跳与 ResumeHint**：[plan-p1/plan-P1-3.md](plan-p1/plan-P1-3.md)。
-5. **P1-4 契约文档、路由表与实机验收清单**：[plan-p1/plan-P1-4.md](plan-p1/plan-P1-4.md)。之后按它产出的 `p1-acceptance.md` 做 P1-5 实机验收（iOS Safari、Android Chrome）。
-6. **P2，顺序 P2-2 → P2-1 → P2-6 → P2-3 → P2-4 → P2-5**：见 [plan-p2/README.md](plan-p2/README.md)。
+2. **P1 剩余部分，开一个 PR**：按顺序做这四份计划，每份做完是一组 commit，全部做完后一起开 PR。
+   1. [plan-P1-1.md](plan-p1/plan-P1-1.md) 路由与旧深链
+   2. [plan-P1-2.md](plan-p1/plan-P1-2.md) 浮层入 history 与返回键
+   3. [plan-P1-3.md](plan-p1/plan-P1-3.md) 登录回跳与 ResumeHint
+   4. [plan-P1-4.md](plan-p1/plan-P1-4.md) 契约文档、路由表与实机验收清单
+
+   之后按 P1-4 产出的 `p1-acceptance.md` 做 P1-5 实机验收（iOS Safari、Android Chrome）。
+3. **P2，开一个 PR**：按 P2-2 → P2-1 → P2-6 → P2-3 → P2-4 → P2-5 的顺序做，见 [plan-p2/README.md](plan-p2/README.md)。
    - P2-3 带数据库迁移，部署前先备份。
    - P2-5、P2-6 可按 spec §11 第 11 条的瘦身选项推迟到 P5。
-7. **P3、P4、P5 的计划还没写**，由文档方在 P2 之后补上。
+4. **P3、P4、P5，各开一个 PR**：每期一份计划 `plan-p3.md`、`plan-p4.md`、`plan-p5.md`，由文档方补上。
 
 ### 后续待办（不在任何分期里，需要机主拍板后再做）
 
@@ -55,8 +58,12 @@
 
 ## 4. 每个 PR 怎么做
 
-1. **一次只做一个 PR，按顺序来。** 每个 PR 有一份计划（`plan-pN/plan-<id>.md`），里面按 TDD 拆好了 Task：先写失败的测试 → 确认它按写明的原因失败 → 实现 → 测试通过 → commit。计划里的代码都在临时副本上实际跑过。
-2. **开分支**：从最新的 `origin/main`（前一个 PR 已合并时），或者从前一个 PR 的分支（还没合并时，叠放）开。计划写的行号只作参考，**以锚点文字定位**。
+1. **一期一个 PR，按期的顺序做。** 期内按计划的顺序一步步做：
+   - P1、P2 每一步各有一份计划（`plan-pN/plan-<id>.md`），按 TDD 拆好了 Task：先写失败的测试 → 确认它按写明的原因失败 → 实现 → 测试通过 → commit。计划里的代码都在临时副本上实际跑过。
+   - P3–P5 是每期一份计划，写到文件、接口、测试要点这一层，代码由实现方自己写，测试照样先写。
+
+   一期做完、全量验证通过后，开一个 PR。
+2. **开分支**：每期开工时从最新的 `origin/main` 开一个分支，比如 `claude/p1-rest`、`claude/p2`，整期都在这个分支上做。计划里「每步单独开分支、叠放 PR」「不 push、不开 PR」之类的说法一律忽略。计划写的行号只作参考，**以锚点文字定位**。
 3. **计划和实际代码对不上时**：在计划意图之内做最小修改，在 PR 描述里写明偏离了什么、为什么。
 4. **提 PR 前跑全量验证**（Node 24：`export PATH=$HOME/.nvm/versions/node/v24.22.0/bin:$PATH`）：
    ```bash
@@ -66,7 +73,7 @@
    npm run build
    ```
    动了 `worker/`、`server/`、`shared/` 或迁移时，再跑对应的 `tests/worker/*.test.ts`，以及 `npm run test:pg` 和 `npm run test:server`（会起嵌入式 Postgres）。
-5. **PR 标题**：`<type>: <中文描述>（<PR id>）`。commit 和 PR 描述都不加署名行。
+5. **PR 标题**：`<type>: <中文描述>（P1）` 这种形式，标出是哪一期。PR 描述按步骤分节，写清每一步做了什么、偏离了什么。commit 和 PR 描述都不加署名行。
 6. **固定的约束**（详见 `plan-p0/README.md`「共享契约 · 规则」）：
    - 深链 `?case`、`?session`、`?linked`、`?onboarding` 永久兼容；
    - spec §6.5 锁定的文案和类名不改；
