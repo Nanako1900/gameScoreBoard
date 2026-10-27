@@ -175,7 +175,7 @@
   color: var(--muted);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 600px) {
   .rbb__cards {
     grid-template-columns: 1fr;
   }

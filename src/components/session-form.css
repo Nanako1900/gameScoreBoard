@@ -213,7 +213,7 @@
   gap: 0.6rem;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   /* 竖排铺满；DOM 顺序是 [取消, 主操作]，用 column 让主操作落在底部 ——
      手机上最靠拇指的位置该给主操作，不是给「取消」。 */
   .sf__actions {

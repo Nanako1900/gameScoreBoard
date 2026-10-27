@@ -193,7 +193,7 @@
   font-size: var(--text-sm);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .pd__header {
     flex-direction: column;
     text-align: center;

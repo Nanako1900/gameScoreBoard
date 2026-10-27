@@ -148,7 +148,7 @@
   place-items: center;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .lb-row {
     grid-template-columns: 1.9rem 1fr auto;
     gap: 0.5rem 0.6rem;

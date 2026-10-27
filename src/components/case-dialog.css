@@ -259,7 +259,7 @@
   font-size: max(16px, var(--text-sm));
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   /* 主操作在底部，最靠拇指 */
   .cd__actions {
     flex-direction: column;

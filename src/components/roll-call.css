@@ -231,7 +231,7 @@
   justify-content: space-between;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .rc__actions--settle {
     /* 同上：主操作（确认立案）在底部 */
     flex-direction: column;

@@ -157,7 +157,7 @@
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .app__grid {
     grid-template-columns: 1fr;
   }
@@ -171,7 +171,7 @@
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 600px) {
   .app__fab-label {
     display: none;
   }

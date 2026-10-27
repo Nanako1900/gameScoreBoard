@@ -182,7 +182,7 @@
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .dlink__bind,
   .dlink__confirm .btn {
     flex: 1 1 auto;
