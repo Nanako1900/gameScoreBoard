@@ -2,7 +2,19 @@
   margin: 0;
 }
 
+/* Tick column + canvas: the numbers get their own column instead of being
+   squeezed into the SVG's padding. */
+.chart__plot {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+}
+
+.chart__canvas {
+  cursor: pointer;
+}
+
 .chart__svg {
+  display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 640 / 200;
@@ -15,10 +27,19 @@
   vector-effect: non-scaling-stroke;
 }
 
-.chart__axis {
-  fill: var(--faint);
+/* Axis numbers: HTML beside the stretched SVG, so they stay 12px at any width (M26). */
+.chart__ticks {
+  position: relative;
+}
+
+.chart__tick {
+  position: absolute;
+  left: 0;
+  transform: translateY(-50%);
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--muted);
 }
 
 .chart__line {
@@ -38,15 +59,37 @@
   vector-effect: non-scaling-stroke;
 }
 
-.chart__dot--last {
+.chart__dot--last,
+.chart__dot--active {
   fill: var(--accent, var(--blue));
+}
+
+.chart__scrub {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0 0;
+  accent-color: var(--accent, var(--blue));
+}
+
+@media (pointer: coarse) {
+  /* A finger needs a 44px track to grab the thumb. */
+  .chart__scrub {
+    min-height: var(--tap-min);
+  }
+}
+
+.chart__readout {
+  margin-top: 0.25rem;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  text-align: center;
 }
 
 .chart__caption {
   display: flex;
   justify-content: space-between;
   margin-top: 0.5rem;
-  font-size: var(--text-xs);
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
