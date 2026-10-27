@@ -166,3 +166,13 @@
   color: var(--faint);
   text-align: right;
 }
+
+/* P0-6 — 取消这局's in-place confirm takes a row of its own, under the buttons. */
+.sdt__cancel-confirm {
+  flex-basis: 100%;
+}
+
+.sdt__cancel-detail {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ATTENDANCE_MAP,
   RSVP_LABEL,
@@ -9,8 +9,10 @@ import type { SelfRsvp } from '@shared/attendance';
 import type { RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
+import { useInlineConfirm } from '../lib/useInlineConfirm';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
+import { ConfirmInline } from './ConfirmInline';
 import { VerdictCard } from './VerdictCard';
 import { RollCallDialog } from './RollCallDialog';
 import { RescheduleSheet } from './RescheduleSheet';
@@ -40,6 +42,7 @@ export function SessionDetailDialog({
   const [rollCallOpen, setRollCallOpen] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const toast = useToast();
 
   const load = useCallback(async (): Promise<void> => {
@@ -57,13 +60,15 @@ export function SessionDetailDialog({
     void load();
   }, [load]);
 
-  const mutate = async (fn: () => Promise<unknown>): Promise<void> => {
+  /** Runs a write, then reloads. Resolves false — with the reason on screen — when it failed. */
+  const mutate = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     try {
       await fn();
       await load();
       onChanged();
       setError(null);
+      return true;
     } catch (err) {
       const message = err instanceof ApiError ? err.message : '操作失败';
       // Moved since it loaded: show the new time to answer to (and tell the
@@ -73,9 +78,21 @@ export function SessionDetailDialog({
         onChanged();
       }
       setError(message);
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleCancel = async (): Promise<boolean> => {
+    if (!session) return false;
+    const ok = await mutate(() => cancelSession(session.id));
+    if (ok) {
+      toast.show({ message: '这局已取消。', tone: 'ok' });
+      // The confirm and the button that opened it leave with the open state.
+      titleRef.current?.focus();
+    }
+    return ok;
   };
 
   const handleRescheduled = (updated: SessionDetail): void => {
@@ -104,7 +121,7 @@ export function SessionDetailDialog({
           <div className="sdt">
             <header className="sdt__head">
               <p className="sdt__when tabular">{formatDateTime(session.starts_at)}</p>
-              <h2 id="session-detail-title" className="sdt__title">
+              <h2 id="session-detail-title" className="sdt__title" ref={titleRef} tabIndex={-1}>
                 {session.title}
               </h2>
               <p className="sdt__meta">
@@ -195,40 +212,14 @@ export function SessionDetailDialog({
             )}
 
             {canManage && session.status === 'open' && (
-              <div className="sdt__actions">
-                {!started && (
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    disabled={busy}
-                    onClick={() => setRescheduleOpen(true)}
-                  >
-                    改时间
-                  </button>
-                )}
-                {!started && (
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    disabled={busy}
-                    onClick={() => void mutate(() => cancelSession(session.id))}
-                  >
-                    取消约局
-                  </button>
-                )}
-                {canRollCall && (
-                  <button
-                    type="button"
-                    className="btn btn--gold"
-                    onClick={() => setRollCallOpen(true)}
-                  >
-                    点名结算
-                  </button>
-                )}
-                {!started && (
-                  <p className="sdt__hint">约局开始后可以点名，点名不等于扣分。</p>
-                )}
-              </div>
+              <OrganizerActions
+                started={started}
+                canRollCall={canRollCall}
+                busy={busy}
+                onReschedule={() => setRescheduleOpen(true)}
+                onRollCall={() => setRollCallOpen(true)}
+                onCancel={handleCancel}
+              />
             )}
           </div>
         )}
@@ -261,5 +252,84 @@ export function SessionDetailDialog({
         />
       )}
     </>
+  );
+}
+
+interface OrganizerActionsProps {
+  started: boolean;
+  canRollCall: boolean;
+  busy: boolean;
+  onReschedule: () => void;
+  onRollCall: () => void;
+  onCancel: () => Promise<boolean>;
+}
+
+/** The organizer's (or an admin's) controls on an open session; 取消这局 comes last. */
+function OrganizerActions({
+  started,
+  canRollCall,
+  busy,
+  onReschedule,
+  onRollCall,
+  onCancel,
+}: OrganizerActionsProps): JSX.Element {
+  return (
+    <div className="sdt__actions">
+      {!started && (
+        <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onReschedule}>
+          改时间
+        </button>
+      )}
+      {canRollCall && (
+        <button type="button" className="btn btn--gold" onClick={onRollCall}>
+          点名结算
+        </button>
+      )}
+      {!started && <p className="sdt__hint">约局开始后可以点名，点名不等于扣分。</p>}
+      {!started && <CancelSessionControl busy={busy} onConfirm={onCancel} />}
+    </div>
+  );
+}
+
+interface CancelSessionControlProps {
+  busy: boolean;
+  onConfirm: () => Promise<boolean>;
+}
+
+/**
+ * 取消这局 → an in-place confirm with focus on 不取消了 (DiscordLinkCard's way).
+ * Confirming submits at once: nothing reopens a cancelled session, so a delayed
+ * submit lost to a closed tab would look done and not be (spec §3.5).
+ */
+function CancelSessionControl({ busy, onConfirm }: CancelSessionControlProps): JSX.Element {
+  const { confirming, ask, dismiss, close, triggerRef } = useInlineConfirm();
+  const confirm = async (): Promise<void> => {
+    if (await onConfirm()) close();
+  };
+  if (!confirming) {
+    return (
+      <button ref={triggerRef} type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={ask}>
+        取消这局
+      </button>
+    );
+  }
+  return (
+    <div className="sdt__cancel-confirm">
+      <ConfirmInline
+        question="取消这局？"
+        confirmLabel="确认取消"
+        cancelLabel="不取消了"
+        tone="danger"
+        focus="cancel"
+        busy={busy}
+        busyLabel="取消中…"
+        onCancel={dismiss}
+        onConfirm={() => void confirm()}
+      >
+        <p className="sdt__cancel-detail">
+          会私信通知说了来、待定的人，以及收到过邀请还没回的人；说了不来的人不会收到。
+        </p>
+      </ConfirmInline>
+    </div>
   );
 }

@@ -252,3 +252,84 @@ describe('改时间 in the session dialog', () => {
     expect(writes(calls)).toHaveLength(1);
   });
 });
+
+describe('who manages it', () => {
+  it('a player gets neither 改时间 nor 取消这局', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ my_rsvp: 'invited' })) });
+    renderDialog(PLAYER);
+    expect(await screen.findByRole('button', { name: '来' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '改时间' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '取消这局' })).toBeNull();
+  });
+
+  it('an admin who is not the organizer gets both, and can still answer', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ my_rsvp: 'invited' })) });
+    renderDialog(ADMIN);
+    const reschedule = await screen.findByRole('button', { name: '改时间' });
+    const cancel = screen.getByRole('button', { name: '取消这局' });
+    // 取消这局 comes last (spec §3.5): after 改时间 in DOM order, which is the visual order.
+    expect(reschedule.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: '来' })).toBeInTheDocument();
+  });
+
+  it('once it has started there is only 点名结算', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ starts_at: at(28, 9) })) });
+    renderDialog(ORGANIZER);
+    expect(await screen.findByRole('button', { name: '点名结算' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '改时间' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '取消这局' })).toBeNull();
+  });
+});
+
+describe('取消这局', () => {
+  it('asks in place with focus on 不取消了, and backing out sends nothing', async () => {
+    const calls = mockFetch({ 'GET /api/sessions/1': () => detail(makeSession()) });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '取消这局' }));
+    const confirm = screen.getByRole('group', { name: '取消这局？' });
+    expect(
+      within(confirm).getByText('会私信通知说了来、待定的人，以及收到过邀请还没回的人；说了不来的人不会收到。'),
+    ).toBeInTheDocument();
+    expect(within(confirm).getAllByRole('button').map((b) => b.textContent)).toEqual(['不取消了', '确认取消']);
+    expect(within(confirm).getByRole('button', { name: '不取消了' })).toHaveFocus();
+    await user.click(within(confirm).getByRole('button', { name: '不取消了' }));
+    expect(screen.queryByRole('group', { name: '取消这局？' })).toBeNull();
+    expect(screen.getByRole('button', { name: '取消这局' })).toHaveFocus();
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('confirming cancels at once: one POST, a toast, focus on the title', async () => {
+    let cancelled = false;
+    const calls = mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession({ status: cancelled ? 'cancelled' : 'open' })),
+      'POST /api/sessions/1/cancel': () => {
+        cancelled = true;
+        return json(200, { session: makeSession({ status: 'cancelled' }) });
+      },
+    });
+    const user = userEvent.setup();
+    const onChanged = renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '取消这局' }));
+    await user.click(screen.getByRole('button', { name: '确认取消' }));
+    expect(await screen.findByText('这局已取消。')).toBeInTheDocument();
+    expect(writes(calls)).toEqual([{ method: 'POST', path: '/api/sessions/1/cancel', body: null }]);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole('heading', { name: '周五五排' })).toHaveFocus());
+    expect(screen.queryByRole('button', { name: '取消这局' })).toBeNull();
+  });
+
+  it('a refused cancel keeps the confirm and shows why', async () => {
+    mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'POST /api/sessions/1/cancel': () => json(400, { error: '已结算的约局不能取消' }),
+    });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '取消这局' }));
+    await user.click(screen.getByRole('button', { name: '确认取消' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('已结算的约局不能取消');
+    expect(screen.getByRole('group', { name: '取消这局？' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认取消' })).toBeEnabled();
+  });
+});
