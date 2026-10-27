@@ -386,3 +386,32 @@ describe('App — the weekly reset passes with the page open', () => {
     expect(gets(calls, '/api/config')).toBe(2);
   });
 });
+
+describe('App — tab title', () => {
+  it('signed in with things to do: the same URLs plus the two follow-ups, and (N) in the tab title', async () => {
+    const calls = mockFetch(
+      routes({
+        'GET /api/me': () => json(200, { user: ADMIN, pending: { statements: 2, appeals: 1 } }),
+        'GET /api/records?limit=20&mine=pending': () => json(200, { records: [] }),
+        'GET /api/me/invites': () => json(200, { sessions: [] }),
+      }),
+    );
+    const { unmount } = render(<App />);
+    await waitFor(() => expect(document.title).toBe('(3) EDG 信誉分'));
+    await settle();
+    expect(new Set(calls.map((c) => c.path))).toEqual(
+      new Set([
+        '/api/config',
+        '/api/leaderboard',
+        '/api/records?limit=50',
+        '/api/me',
+        '/api/report/latest',
+        '/api/sessions?scope=upcoming',
+        '/api/records?limit=20&mine=pending',
+        '/api/me/invites',
+      ]),
+    );
+    unmount();
+    expect(document.title).toBe('EDG 信誉分');
+  });
+});

@@ -9,6 +9,8 @@ import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
 import { useVisibleRefresh } from './lib/useVisibleRefresh';
 import { useResetWatch } from './lib/useResetWatch';
+import { todoCount } from './lib/tabTitle';
+import { useTabTitle } from './lib/useTabTitle';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
@@ -198,6 +200,8 @@ function AppMain(): JSX.Element {
     void refresh(['leaderboard', 'me']);
   }, [refresh]);
   useResetWatch(ready?.config.nextResetAt ?? null, handleResetCrossed);
+
+  useTabTitle(ready ? todoCount(ready) : 0);
 
   // The admin re-rolls the weekly report's prose: nothing but the report changes.
   // It used to reject unhandled on failure; now the admin is told.
