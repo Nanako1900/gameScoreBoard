@@ -1,5 +1,11 @@
 # 拆分部署指南 — 前端 EdgeOne + 后端 Cloudflare
 
+> **已停用（P1-0）**：前端已迁到 Cloudflare Pages（`community.nanako.org`），API 跑在 Node（`capi.nanako.org`），EdgeOne 不再使用。
+> 本文提到的 `functions/api/[[default]].js`、`functions/auth/[[default]].js` 和 `edgeone.json` 已从仓库删除——留着它们，
+> Cloudflare Pages 会把 `functions/` 部署成 Pages Functions，把 `community.nanako.org/api/*`、`/auth/*` 反代到已下线的 workers.dev。
+> 下面的正文只作历史参考；真要用时从 git 历史取回：`git show "$(git log -1 --format=%H --diff-filter=D -- edgeone.json)^:functions/api/[[default]].js"`。
+> 当前部署见 [docs/DEPLOY-PAGES.md](./docs/DEPLOY-PAGES.md)。
+
 本指南把 EDG 信誉分**前端部署到腾讯 EdgeOne Pages（现 EdgeOne Makers），后端保留在 Cloudflare Worker**。
 默认的 [DEPLOY.md](./DEPLOY.md) 是「单 Worker 同时托管前端和 API」的一体化部署；本文档处理拆分后最关键、也最容易被忽略的问题：**跨域会话（Cookie）**。
 

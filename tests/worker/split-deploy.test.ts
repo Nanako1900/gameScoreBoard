@@ -144,3 +144,20 @@ describe('credentialed CORS for the SPA origin', () => {
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
   });
 });
+
+// P1-0: the P1 routes (/sessions/:id, /players/:id/cases/:caseId) are plain SPA
+// paths, so an old link on this host must land on the same address over there.
+describe('old links to the P1 routes', () => {
+  it('302s /sessions/5?x=1 to the same path and query on FRONTEND_URL', async () => {
+    const res = await call(`${API}/sessions/5?x=1`, {}, SPLIT);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(res.headers.get('Location')).toBe(`${SPA}/sessions/5?x=1`);
+  });
+
+  it('keeps an encoded player id and the case segment as they were', async () => {
+    const res = await call(`${API}/players/a%2Fb/cases/7?utm=dc`, {}, SPLIT);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe(`${SPA}/players/a%2Fb/cases/7?utm=dc`);
+  });
+});
