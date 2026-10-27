@@ -17,7 +17,7 @@ import {
   restChannelApi,
   type BotConfig,
 } from './discord/client';
-import { COMMANDS, handleCommand } from './discord/commands';
+import { COMMANDS, handleBoardButton, handleCommand, parseBoardButton } from './discord/commands';
 import { createClient, readVoicePresence, wireBoardRefresh, wireVoice } from './discord/gateway';
 import { createHealthServer, type GatewayState } from './discord/health';
 import { createVoiceRecorder } from './voice/recorder';
@@ -188,7 +188,13 @@ function main(): void {
       const caseButton = parseCaseButton(interaction.customId);
       const retiredSession = handleRetiredSessionButton(interaction.customId);
       const escalation = parseEscalationButton(interaction.customId);
-      if (escalation) {
+      const boardAction = parseBoardButton(interaction.customId);
+      if (boardAction) {
+        // The board works in any target-guild channel, while private data stays guild-bound.
+        work = answer(interaction, `board ${boardAction} button`, () => handleBoardButton(boardAction, caller, ctx), {
+          guildId: config.guildId,
+        });
+      } else if (escalation) {
         // Pressed in the filing judge's DM: no guild check.
         work = answer(interaction, 'escalation button', () =>
           handleEscalationButton(escalation.recordId, escalation.choice, caller, ctx),
