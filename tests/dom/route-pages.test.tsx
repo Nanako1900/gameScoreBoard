@@ -205,3 +205,73 @@ describe('SessionDetailDialog — page and drawer', () => {
     expect(screen.queryByRole('heading', { name: '找不到这局，链接可能写错了。' })).not.toBeInTheDocument();
   });
 });
+
+describe('PlayerDetail — page, drawer and the focused case', () => {
+  it('moves the focused case to the top: one #case-7, the list skips it, the count stays', async () => {
+    mockFetch(routes());
+    render(<PlayerDetail userId="p" me={null} onClose={() => {}} focusRecordId={7} />);
+    await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
+    expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
+    const pinned = screen.getByRole('region', { name: '你点开的这一起' });
+    expect(pinned).toHaveTextContent('案件 #7 · 放鸽子');
+    expect(pinned).toContainElement(document.getElementById('case-7'));
+    expect(document.querySelectorAll('.pd__cases .vc')).toHaveLength(1);
+    expect(document.querySelector('.pd__count')).toHaveTextContent('2');
+  });
+
+  it('pins the route’s copy when the list does not hold the case', async () => {
+    mockFetch({ ...routes(), 'GET /api/users/p': () => json(200, { user: PLAYER, records: [{ ...CASE, id: 6 }], history: [] }) });
+    render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} focusRecordId={7} pinnedRecord={CASE} />);
+    await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
+    expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
+    expect(document.querySelector('.pd__count')).toHaveTextContent('1');
+  });
+
+  it('page form: the name takes focus; a case that is nowhere leaves the page unscrolled', async () => {
+    mockFetch(routes());
+    const plain = render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} />);
+    const name = await screen.findByRole('heading', { name: '选手' });
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    expect(document.querySelector('.modal-page')?.firstElementChild).toHaveClass('pagebar');
+    plain.unmount();
+
+    render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} focusRecordId={99} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('region', { name: '你点开的这一起' })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.pd__cases .vc')).toHaveLength(2);
+  });
+
+  it('loads again when refreshKey changes', async () => {
+    const calls = mockFetch(routes());
+    const view = render(<PlayerDetail userId="p" me={null} onClose={() => {}} refreshKey={0} />);
+    await screen.findByRole('heading', { name: '选手' });
+    view.rerender(<PlayerDetail userId="p" me={null} onClose={() => {}} refreshKey={1} />);
+    await waitFor(() => expect(count(calls, '/api/users/p')).toBe(2));
+  });
+
+  it('shows everyone the score, but the 段位 only to the player themself', async () => {
+    mockFetch(routes());
+    const visitor = render(<PlayerDetail userId="p" me={null} onClose={() => {}} />);
+    const gauge = await screen.findByRole('img', { name: /^信誉分 88 分/ });
+    expect(gauge.getAttribute('aria-label')).not.toContain('段位');
+    expect(gauge).toHaveClass('gauge--neutral');
+    visitor.unmount();
+
+    render(<PlayerDetail userId="p" me={SELF} onClose={() => {}} />);
+    expect(await screen.findByRole('img', { name: /^信誉分 88 分/ })).toHaveAccessibleName(/段位/);
+  });
+
+  it('a 404 is NotFound on the page and drawer forms — and still today’s line in the center dialog', async () => {
+    mockFetch(routes());
+    const page = render(<PlayerDetail variant="page" userId="ghost" me={null} onClose={() => {}} />);
+    expect(await screen.findByRole('heading', { name: '找不到这位选手。' })).toHaveAttribute('id', 'player-detail-title');
+    page.unmount();
+
+    const drawer = render(<PlayerDetail variant="drawer" userId="ghost" me={null} onClose={() => {}} />);
+    expect(await screen.findByRole('heading', { name: '找不到这位选手。' })).toBeInTheDocument();
+    drawer.unmount();
+
+    render(<PlayerDetail userId="ghost" me={null} onClose={() => {}} />);
+    expect(await screen.findByText('unrouted GET /api/users/ghost')).toBeInTheDocument();
+  });
+});
