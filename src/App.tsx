@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { affectsScore } from '@shared/scoring';
 import type { RecordItem, User } from './types';
 import { ApiError, getRecord, logout as apiLogout, regenerateReport } from './api';
-import { lastWeekStartOf, parseTimestamp } from './lib/time';
+import { lastWeekStartOf } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
+import { computeCounts, computeTrends } from './lib/feedStats';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -32,33 +32,6 @@ import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import './app.css';
-
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** Sum of scored deltas per subject within the current heal week. */
-function computeTrends(records: RecordItem[], nextResetAt: string): Record<string, number> {
-  const weekStart = parseTimestamp(nextResetAt) - WEEK_MS;
-  const trends: Record<string, number> = {};
-  for (const r of records) {
-    if (!affectsScore(r.status)) {
-      continue;
-    }
-    const at = parseTimestamp(r.created_at);
-    if (!Number.isNaN(at) && at >= weekStart) {
-      trends[r.subject.id] = (trends[r.subject.id] ?? 0) + r.delta;
-    }
-  }
-  return trends;
-}
-
-/** Count of records involving each subject (from the loaded feed). */
-function computeCounts(records: RecordItem[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const r of records) {
-    counts[r.subject.id] = (counts[r.subject.id] ?? 0) + 1;
-  }
-  return counts;
-}
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
 export function App(): JSX.Element {
