@@ -6,7 +6,8 @@
 // only renders and parses.
 
 import { ButtonStyle, ComponentType, type APIActionRowComponent, type APIButtonComponent } from 'discord.js';
-import { SESSION_CANCEL_REASON_MAX } from '../../../shared/attendance';
+import { RSVP_LABEL, SESSION_CANCEL_REASON_MAX } from '../../../shared/attendance';
+import { BOARD_SLOTS, BOARD_SLOT_MIN_LEAD_MS, slotIso } from '../../../shared/quickTime';
 import { ApiError } from '../../../worker/errors';
 import { createSession, getSessionDetail, setRsvp } from '../../../worker/sessions';
 import type { SessionDetail } from '../../../worker/types';
@@ -34,7 +35,6 @@ const NOT_LINKED = '你还没有绑定 Nanako 账号，先用 /link 绑定。';
 const READ_ONLY_TEXT = '系统维护中（只读），请稍后再试。';
 
 export type RsvpChoice = 'going' | 'maybe' | 'out';
-const RSVP_LABEL: Record<RsvpChoice, string> = { going: '来', maybe: '可能', out: '不来' };
 const RSVP_BUTTON = /^v1:rsvp:(\d{1,15}):(going|maybe|out):(\d{1,15})$/;
 
 /**
@@ -117,8 +117,8 @@ export function sessionCard(session: SessionDetail, frontendUrl: string, now = D
       .join('\n'),
     fields: [
       { name: '组织者', value: safeLine(session.organizer.username, NAME_MAX), inline: true },
-      { name: '来', value: seats(session), inline: true },
-      { name: '可能', value: `${session.counts.maybe} 人`, inline: true },
+      { name: RSVP_LABEL.going, value: seats(session), inline: true },
+      { name: RSVP_LABEL.maybe, value: `${session.counts.maybe} 人`, inline: true },
       { name: '报名的人', value: going.length > 0 ? fitLines(going, LIMITS.fieldValue) : '—' },
     ],
     footer: { text: state },
@@ -175,7 +175,7 @@ export function renderSessionDm(kind: SessionDmKind, session: SessionDetail, fro
   switch (kind) {
     case 'dm.session.invited':
       return message(
-        { title: `📨 ${organizer} 约你：${title}`, description: when, color: GOLD, fields: [{ name: '来', value: seats(session), inline: true }] },
+        { title: `📨 ${organizer} 约你：${title}`, description: when, color: GOLD, fields: [{ name: RSVP_LABEL.going, value: seats(session), inline: true }] },
         [rsvpRow(session, frontendUrl)],
       );
     case 'dm.session.starting':
@@ -241,21 +241,11 @@ export async function handleRsvpButton(
 
 // --- /yue ----------------------------------------------------------------------
 
-/** The `when` choices of /yue, in the board's time zone (RESET_TZ_OFFSET). */
-export const YUE_SLOTS: ReadonlyArray<{ value: string; name: string; dayOffset: number; hour: number }> = [
-  { value: 'tonight20', name: '今晚 20:00', dayOffset: 0, hour: 20 },
-  { value: 'tonight21', name: '今晚 21:00', dayOffset: 0, hour: 21 },
-  { value: 'tonight22', name: '今晚 22:00', dayOffset: 0, hour: 22 },
-  { value: 'tomorrow20', name: '明晚 20:00', dayOffset: 1, hour: 20 },
-  { value: 'dayafter20', name: '后天 20:00', dayOffset: 2, hour: 20 },
-];
+/** The `when` choices of /yue, in the board's time zone (RESET_TZ_OFFSET): the web's quick picks too (shared/quickTime). */
+export const YUE_SLOTS = BOARD_SLOTS;
 
-/** `dayOffset` days from today at `hour`:00, board-local, as an ISO instant. */
-export function slotIso(dayOffset: number, hour: number, offsetHours: number, now = Date.now()): string {
-  const local = new Date(now + offsetHours * 3_600_000);
-  const atLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() + dayOffset, hour);
-  return new Date(atLocal - offsetHours * 3_600_000).toISOString();
-}
+/** `dayOffset` days from today at `hour`:00, board-local, as an ISO instant. Lives in shared/quickTime now. */
+export { slotIso };
 
 /** /yue: propose a session. The card is posted by the dispatcher, like any new session. */
 export async function handleYue(input: CommandInput, ctx: BotContext & { offsetHours: number }): Promise<BotReply> {
@@ -265,7 +255,7 @@ export async function handleYue(input: CommandInput, ctx: BotContext & { offsetH
   if (!user.is_participant) return ephemeralReply('只有上榜选手可以发起约局（网页上可以改身份）。');
   const slot = YUE_SLOTS.find((s) => s.value === input.when) ?? YUE_SLOTS[0];
   const startsAt = slotIso(slot.dayOffset, slot.hour, ctx.offsetHours);
-  if (Date.parse(startsAt) < Date.now() + 15 * 60_000) {
+  if (Date.parse(startsAt) < Date.now() + BOARD_SLOT_MIN_LEAD_MS) {
     return ephemeralReply(`${slot.name} 已经过了（或马上就到），换个时间吧。`);
   }
   try {

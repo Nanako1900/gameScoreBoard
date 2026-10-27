@@ -567,6 +567,15 @@ describe('/yue, more', () => {
     );
     expect(withCards.content).toContain('约局频道');
   });
+
+  // P2-4: the bot says 待定 where it said 可能 — the web's word (RSVP_LABEL).
+  it('a 待定 button is answered with 待定', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const reply = await handleRsvpButton(session.id, 'maybe', session.starts_at, dc(2), ctx);
+    expect(reply.content).toContain('已登记：**待定**');
+    expect(reply.content).not.toContain('可能');
+  });
 });
 
 describe('bursts, caps and moves', () => {
