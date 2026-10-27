@@ -188,14 +188,12 @@ h3 {
   letter-spacing: 0.01em;
 }
 
-:root {
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue);
-}
-
+/* Keyboard focus is a real outline (H9): box-shadows such as the gold button's
+   can't paint over it, it follows each element's own border-radius, and
+   forced-colors mode keeps it. Never remove it — restyle the outline instead. */
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--r-sm);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* --- Reusable primitives -------------------------------------------------- */

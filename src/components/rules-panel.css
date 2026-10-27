@@ -24,6 +24,11 @@
   background: var(--panel-2);
 }
 
+/* .rules clips its overflow (rounded panel): draw the ring inside the button. */
+.rules__toggle:focus-visible {
+  outline-offset: -4px;
+}
+
 .rules__toggle-label {
   display: inline-flex;
   align-items: center;

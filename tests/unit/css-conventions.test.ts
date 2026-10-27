@@ -102,6 +102,9 @@ const RULES = SHEETS.flatMap((sheet) => scanRules(sheet.file, sheet.css));
 const STYLE_RULES = RULES.filter((rule) => !rule.prelude.startsWith('@'));
 const where = (rule: CssRule): string => `${rule.file}: ${rule.prelude}`;
 
+const OUTLINE_REMOVED = /(?:^|[;\s])outline\s*:\s*(?:none|0)\s*(?:!important\s*)?(?:;|$)/;
+const BOX_SHADOW = /(?:^|[;\s])box-shadow\s*:/;
+
 describe('css scanner', () => {
   it('sees every stylesheet and its rules', () => {
     const files = SHEETS.map((sheet) => sheet.file);
@@ -131,5 +134,21 @@ describe('src/**/*.css', () => {
         .map((feature) => `${rule.file}: @media (${feature})`),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it('never removes the focus outline', () => {
+    expect(STYLE_RULES.filter((rule) => OUTLINE_REMOVED.test(rule.body)).map(where)).toEqual([]);
+  });
+
+  it('has no --focus-ring box-shadow token left', () => {
+    const offenders = SHEETS.filter((sheet) => stripNoise(sheet.css).includes('--focus-ring'));
+    expect(offenders.map((sheet) => sheet.file)).toEqual([]);
+  });
+
+  it('never draws focus with box-shadow (it hides under glows and vanishes in forced colors)', () => {
+    const offenders = STYLE_RULES.filter(
+      (rule) => rule.prelude.includes(':focus') && BOX_SHADOW.test(rule.body),
+    );
+    expect(offenders.map(where)).toEqual([]);
   });
 });

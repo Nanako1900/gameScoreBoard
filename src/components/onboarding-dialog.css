@@ -161,9 +161,7 @@
 }
 
 .ob__name-input:focus {
-  outline: none;
   border-color: var(--gold);
-  box-shadow: var(--glow-gold);
 }
 
 @media (max-width: 600px) {

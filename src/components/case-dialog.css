@@ -47,7 +47,6 @@
 .cd__select:focus-visible,
 .cd__textarea:focus-visible {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--blue) 25%, transparent);
 }
 
 .cd__textarea {
@@ -148,7 +147,8 @@
 
 /* checkbox 是 visually-hidden 的，焦点环得画在 label 上 */
 .cd-chip:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .cd-chip:hover {

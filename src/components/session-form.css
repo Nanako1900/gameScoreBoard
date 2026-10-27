@@ -92,7 +92,8 @@
 
 /* 隐藏的 radio 拿到键盘焦点时，把焦点环画在 label 上 */
 .sf-slot:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .sf-slot--on {
@@ -182,7 +183,8 @@
 }
 
 .sf-person:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .sf-person--on {
