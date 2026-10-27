@@ -6,5 +6,6 @@
 | [analysis.md](analysis.md) | 现状分析：角色与场景、页面结构、按严重度排序的问题清单（H1–H16、M1–M30）、邀请功能现状、约束 |
 | [design-A.md](design-A.md) · [design-B.md](design-B.md) · [design-C.md](design-C.md) | 三个候选方向的完整方案（A 工作台优先 / B 约局为中心 / C 渐进改造），定稿以 B 为底 |
 | [spec-gaps.md](spec-gaps.md) | 对定稿草案的查漏意见，已全部并入 spec.md |
+| [plan-p0/](plan-p0/README.md) | **P0 实施计划**：6 个可单独上线的 PR（地基、Modal 栈、数据不崩与 Toast、约局改时间与取消、榜单去羞辱化、安全网），每个 PR 一份按 TDD 拆好的计划，附共享接口契约和合并顺序 |
 
 先读 spec.md 的「0. 结论速览」和「11. 需要你拍板」。2026-10-26 已拍板：方向和 §11 全部按推荐默认值。
