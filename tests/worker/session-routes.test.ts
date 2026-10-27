@@ -91,3 +91,91 @@ describe('GET /api/me/invitable (P2-2)', () => {
     expect(((await res.json()) as { users: { id: string }[] }).users.map((u) => u.id)).toEqual(['a']);
   });
 });
+
+describe('POST /api/sessions/:id/invite (P2-1)', () => {
+  const IN_3H = (): string => new Date(Date.now() + 3 * 3_600_000).toISOString();
+  const json = { 'Content-Type': 'application/json' };
+
+  /** `org` opens a session through the API; `a` and `b` exist. Returns its id. */
+  async function openSession(): Promise<number> {
+    await seedUser({ id: 'org' });
+    await seedUser({ id: 'a' });
+    await seedUser({ id: 'b', participant: false });
+    const res = await call('/api/sessions', {
+      method: 'POST',
+      headers: await asUser('org', json),
+      body: JSON.stringify({ starts_at: IN_3H() }),
+    });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { session: { id: number } }).session.id;
+  }
+
+  async function invite(path: string, sub: string, body: unknown, overrides: Partial<Env> = {}): Promise<Response> {
+    return call(path, { method: 'POST', headers: await asUser(sub, json), body: JSON.stringify(body) }, overrides);
+  }
+
+  async function rosterOf(id: number): Promise<string[]> {
+    const res = await call(`/api/sessions/${id}`);
+    const body = (await res.json()) as { session: { players: { user: { id: string } }[] } };
+    return body.session.players.map((p) => p.user.id).sort();
+  }
+
+  it('invites, and answers exactly { session, added, skipped }', async () => {
+    const id = await openSession();
+    const res = await invite(`/api/sessions/${id}/invite`, 'org', { user_ids: ['a', 'b', 'ghost'] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      session: { id: number; players: { user: { id: string }; rsvp: string }[] };
+      added: number;
+      skipped: number;
+    };
+    expect(Object.keys(body).sort()).toEqual(['added', 'session', 'skipped']);
+    expect(body).toMatchObject({ added: 2, skipped: 1, session: { id } });
+    expect(body.session.players.filter((p) => p.rsvp === 'invited').map((p) => p.user.id).sort()).toEqual(['a', 'b']);
+    // Nothing about who can be reached by DM (spec §11 #9).
+    expect(JSON.stringify(body).toLowerCase()).not.toContain('discord');
+  });
+
+  it('answers 401 未登录 without a session cookie', async () => {
+    const id = await openSession();
+    const res = await call(`/api/sessions/${id}/invite`, {
+      method: 'POST',
+      headers: { Origin: 'https://score.example.com', ...json },
+      body: JSON.stringify({ user_ids: ['a'] }),
+    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: '未登录' });
+  });
+
+  it('answers 400 for a bad id, 404 for a missing session, 403 for a stranger', async () => {
+    const id = await openSession();
+    const bad = await invite('/api/sessions/abc/invite', 'org', { user_ids: ['a'] });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: '无效的约局 ID' });
+    const missing = await invite('/api/sessions/999999/invite', 'org', { user_ids: ['a'] });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: '约局不存在' });
+    const stranger = await invite(`/api/sessions/${id}/invite`, 'a', { user_ids: ['b'] });
+    expect(stranger.status).toBe(403);
+    expect(await stranger.json()).toEqual({ error: '只有组织者可以操作这个约局' });
+    const noList = await invite(`/api/sessions/${id}/invite`, 'org', {});
+    expect(noList.status).toBe(400);
+    expect(await noList.json()).toEqual({ error: 'user_ids 必须是数组' });
+  });
+
+  it('writes nothing for a cross-origin form-style post or while read-only', async () => {
+    const id = await openSession();
+    // text/plain needs no preflight, and readJsonBody still parses it: hono/csrf must stop it.
+    const foreign = await call(`/api/sessions/${id}/invite`, {
+      method: 'POST',
+      headers: await asUser('org', { 'Content-Type': 'text/plain', Origin: 'https://evil.example.com' }),
+      body: JSON.stringify({ user_ids: ['a'] }),
+    });
+    expect(foreign.status).toBe(403);
+    expect(await foreign.json()).toEqual({ error: '请求来源不被允许' });
+    const readOnly = await invite(`/api/sessions/${id}/invite`, 'org', { user_ids: ['a'] }, { READ_ONLY: '1' });
+    expect(readOnly.status).toBe(503);
+    expect(await readOnly.json()).toEqual({ error: '系统维护中（只读），请稍后再试' });
+    expect(await rosterOf(id)).toEqual(['org']);
+  });
+});

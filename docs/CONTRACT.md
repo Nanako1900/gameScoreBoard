@@ -311,6 +311,15 @@ fields) and answer `Cache-Control: private, no-store`.
   just another spelling) puts every other player — yes, maybe or no — back to
   `invited`: they answer again for the new time.
 - `POST /api/sessions/:id/cancel` → `{ session }`.
+- `POST /api/sessions/:id/invite` `{ user_ids: string[] }` → `{ session, added, skipped }` (P2-1).
+  Invite more people after creation. Organizer/admin (403 first, like `PATCH`), `open`
+  and not started (400). `user_ids` is required and not empty; at most 20 distinct ids
+  at once, the session's organizer dropped (nobody left → 200 with `added: 0`). The
+  roster never grows past 50 by invitation (400 「这局最多 50 人，已经有 N 人了」).
+  New people land in `invited`; a row already there — going, maybe, out or invited — is
+  never touched, and unknown ids are dropped. `added` = rows inserted, `skipped` = the
+  other requested ids. On PostgreSQL each new row queues one invitation DM under the
+  same allowances as at creation; nothing in the answer says who can be reached by DM.
 - `POST /api/sessions/:id/rsvp` `{ rsvp, starts_at? }` → `{ session }`. Self only, and only
   `going | maybe | out` — `invited` is organizer-assigned and rejected here.
   `starts_at` is the start time the client showed: for `going` / `maybe`, **409**

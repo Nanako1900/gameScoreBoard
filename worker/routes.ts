@@ -77,6 +77,7 @@ import {
 } from './ai/config';
 import { judgeCase } from './ai/provider';
 import { listInvitable } from './invitable';
+import { inviteToSession } from './session-invites';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
@@ -513,6 +514,14 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const caller = requireUser(c.get('user'));
     const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'));
     return c.json({ session });
+  });
+
+  // P2-1: invite more people after creation. Organizer or admin, open and not started.
+  app.post('/api/sessions/:id/invite', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const result = await inviteToSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.user_ids);
+    return c.json(result);
   });
 
   app.post('/api/sessions/:id/rsvp', async (c) => {
