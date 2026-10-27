@@ -182,9 +182,23 @@ interface SessionItem {
   counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: 'invited' | 'going' | 'maybe' | 'out' | null;
   going_preview: { id: string; username: string; avatar_url: string | null }[];  // up to GOING_PREVIEW_MAX (5) who said 来, earliest answer first; never a score
+  cancel_reason: string | null;  // P2-3: the organizer's reason (trimmed, ≤ 80 chars); public like `note`
+  cancelled_at: string | null;   // P2-3: sqlite datetime format; null if not cancelled (or cancelled before P2-3)
 }
 
 interface SessionDetail extends SessionItem { players: SessionPlayer[] }
+
+// P2-3: GET /api/sessions?scope=history
+interface HistorySessionItem extends SessionItem {
+  attendance_summary: { on_time: number; late: number; no_show: number; left_early: number; excused: number }; // all five keys
+}
+
+// P2-3: GET /api/me/invites — the context is the caller's own, never shown elsewhere
+interface InvitedSessionItem extends SessionItem {
+  invite_reason: 'new' | 'moved';            // 'moved' = they had answered, then the time changed
+  prev_rsvp: 'going' | 'maybe' | 'out' | null; // what they had said to the old time
+  prev_starts_at: string | null;               // the old time (ISO), as they answered it
+}
 
 interface SessionPlayer {
   user: { id: string; username: string; avatar_url: string | null };
@@ -230,6 +244,9 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/records/:id` → `{ record }`.
 - `GET /api/users/:id` → `{ user: PublicUser, records: RecordItem[], history: HistoryPoint[] }`.
 - `GET /api/sessions?scope=upcoming|past|mine` → `{ sessions: SessionItem[] }` (`mine` requires auth).
+  `scope=history[&before=<id>]` → `{ sessions: HistorySessionItem[] }`: sessions that have started,
+  **cancelled ones included** (`past` leaves them out), newest first (`starts_at`, then id), 20 a page;
+  `before` is the last id of the previous page (an unknown id gives `[]`; not a positive integer → 400).
 - `GET /api/sessions/:id` → `{ session: SessionDetail, records: RecordItem[] }`.
 - `GET /api/avatar?u=<https url>` → proxied image (worker/avatar.ts). The host
   must be exactly the OAuth host or one in `AVATAR_ALLOWED_HOSTS`, or the URL must
@@ -311,7 +328,9 @@ fields) and answer `Cache-Control: private, no-store`.
   before it starts (400 afterwards). A new `starts_at` (a different instant, not
   just another spelling) puts every other player — yes, maybe or no — back to
   `invited`: they answer again for the new time.
-- `POST /api/sessions/:id/cancel` → `{ session }`.
+- `POST /api/sessions/:id/cancel` `{ reason? }` → `{ session }`. The body is optional (none = no
+  reason). `reason` is trimmed and cut to 80 characters; blank or not a string → null. Stored with
+  `cancelled_at`; cancelling again changes neither. The cancel DM quotes it.
 - `POST /api/sessions/:id/invite` `{ user_ids: string[] }` → `{ session, added, skipped }` (P2-1).
   Invite more people after creation. Organizer/admin (403 first, like `PATCH`), `open`
   and not started (400). `user_ids` is required and not empty; at most 20 distinct ids
@@ -330,8 +349,10 @@ fields) and answer `Cache-Control: private, no-store`.
   Blocked once the session started, is full, or is not `open`. The organizer
   cannot RSVP out. **Only `going` consumes a capacity slot**, so over-inviting is
   intentional and safe.
-- `GET /api/me/invites` → `{ sessions: SessionItem[] }`. Open, future sessions the
-  caller was invited to and has not answered. Drives the one-tap invite banner.
+- `GET /api/me/invites` → `{ sessions: InvitedSessionItem[] }`. Open, future sessions the
+  caller was invited to and has not answered. Drives the one-tap invite banner. Each says why:
+  `invite_reason: 'moved'` with `prev_rsvp` / `prev_starts_at` when the caller had answered and the
+  time then changed (a later move keeps the time they answered; answering again clears it), else `'new'`.
 - `POST /api/sessions/:id/rollcall` `{ entries: [{ user_id, attendance, late_minutes?, note? }] }`
   → `{ session, drafts: CaseDraft[] }`. Organizer/admin, after `starts_at`, only
   for signed-up players. **Writes attendance only — no score changes.** Repeatable
