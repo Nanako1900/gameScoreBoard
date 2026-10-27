@@ -112,3 +112,62 @@ export function synthesizeTitle(startsAtIso: string, offsetHours: number): strin
 export function isSynthesizedTitle(title: string): boolean {
   return /^周[日一二三四五六]\s\d{2}:\d{2}\s开黑$/.test(title.trim());
 }
+
+// --- P2-4: the board's time zone (RESET_TZ_OFFSET) ---------------------------
+// Everything below reads the board's wall clock (UTC + offsetHours), never the
+// process's or the browser's zone: /yue and the web offer the same instants.
+
+const HOUR_MS = 3_600_000;
+/** The board offset whose label is a name rather than a number. */
+const BEIJING_OFFSET_HOURS = 8;
+
+export interface BoardSlotDef {
+  value: string;
+  name: string;
+  dayOffset: number;
+  hour: number;
+}
+
+/** /yue's `when` choices and the web's quick picks — one list (spec §4.2). Board-local. */
+export const BOARD_SLOTS: readonly BoardSlotDef[] = [
+  { value: 'tonight20', name: '今晚 20:00', dayOffset: 0, hour: 20 },
+  { value: 'tonight21', name: '今晚 21:00', dayOffset: 0, hour: 21 },
+  { value: 'tonight22', name: '今晚 22:00', dayOffset: 0, hour: 22 },
+  { value: 'tomorrow20', name: '明晚 20:00', dayOffset: 1, hour: 20 },
+  { value: 'dayafter20', name: '后天 20:00', dayOffset: 2, hour: 20 },
+];
+
+/** A slot closer than this is not offered on the web, and /yue refuses it. (Was 15 * 60_000 inline in handleYue.) */
+export const BOARD_SLOT_MIN_LEAD_MS = 15 * 60_000;
+
+/** `dayOffset` days from today at `hour`:00, board-local, as an ISO instant. Moved verbatim from server/src/discord/sessions.ts. */
+export function slotIso(dayOffset: number, hour: number, offsetHours: number, now = Date.now()): string {
+  const local = new Date(now + offsetHours * HOUR_MS);
+  const atLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() + dayOffset, hour);
+  return new Date(atLocal - offsetHours * HOUR_MS).toISOString();
+}
+
+export interface BoardSlot extends QuickSlot {
+  value: string;
+}
+
+/** BOARD_SLOTS still at least BOARD_SLOT_MIN_LEAD_MS ahead, as chips: label = the slot's name. Never empty (明晚 is always ahead). */
+export function boardSlots(now: number, offsetHours: number): BoardSlot[] {
+  const earliest = now + BOARD_SLOT_MIN_LEAD_MS;
+  return BOARD_SLOTS.flatMap((slot) => {
+    const iso = slotIso(slot.dayOffset, slot.hour, offsetHours, now);
+    const at = Date.parse(iso);
+    return at >= earliest ? [{ value: slot.value, label: slot.name, iso, at }] : [];
+  });
+}
+
+/** 8 → '北京时间'; 0 → 'UTC'; 9 → 'UTC+9'; -5 → 'UTC-5'; 5.5 → 'UTC+5:30'; -3.5 → 'UTC-3:30'. */
+export function boardTzLabel(offsetHours: number): string {
+  if (offsetHours === BEIJING_OFFSET_HOURS) return '北京时间';
+  if (offsetHours === 0) return 'UTC';
+  const sign = offsetHours < 0 ? '-' : '+';
+  const minutes = Math.round(Math.abs(offsetHours) * 60);
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `UTC${sign}${hours}${rest === 0 ? '' : `:${pad2(rest)}`}`;
+}
