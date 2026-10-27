@@ -45,9 +45,10 @@
      不要直接填 discord.gg 邀请码；不填或不是 https 地址时整行隐藏）
    - 生产分支：`main`
    - Custom domain：`community.nanako.org`（如果你想用别的名字，下面所有 `community.` 一起换）
-   - 注意：仓库根目录的 `functions/`（EdgeOne 的反代）会被 Pages 一起部署成 Pages Functions，
-     挂在 `community.nanako.org/api/*`、`/auth/*` 上。SPA 不会请求它们（所有请求都走
-     `VITE_API_BASE`），第 8 步下线 EdgeOne 时删掉 `functions/` 目录即可。
+   - 仓库根目录**不能有** `functions/`：Pages 会把它部署成 Pages Functions，挂在 `/api/*`、`/auth/*` 上。
+     原来那份 EdgeOne 反代（转发到已下线的 workers.dev）已在 P1-0 删除，见文末「SPA 回退核验（P1-0）」。
+   - `dist/` 里**不能有** `404.html`：有它 Pages 就不做 SPA 回退，`/sessions/1` 这类地址会变成 404。
+     `npm run build:pages` 发现它（任何层级）会直接失败。
 3. **OAuth 回调**：在 nanako.org 的 OAuth 后台给这个 client 登记
    `https://capi.nanako.org/auth/callback`（保留旧回调直到切换完成）。
 
@@ -79,10 +80,9 @@
    放在 `[vars]` 或 `[[d1_databases]]` 下面都不生效——会被当成那张表的字段，wrangler 只给个警告。
    Workers Builds 暂停着的话，改在后台 → Worker → Settings → Domains & Routes 里把 workers.dev 和
    Preview URLs 关掉；重新开启 Builds 之前同样要先把这两行合并进 `wrangler.toml`。
-   **注意**：EdgeOne 边缘函数反代的上游写死了 workers.dev 地址（`functions/api/[[default]].js`），
-   做这一步之前先处理 EdgeOne。
-8. **EdgeOne**：在 EdgeOne Pages 项目里把整站重定向到 `https://community.nanako.org`，
-   或者直接删除该项目；然后删掉仓库里的 `functions/` 目录。
+   EdgeOne 的边缘函数反代（上游写死了 workers.dev）已在 P1-0 删除，做这一步不必再先处理 EdgeOne。
+8. **EdgeOne**：已完成。EdgeOne 不再使用，仓库里的 `functions/` 和 `edgeone.json` 已在 P1-0 删除。
+   EdgeOne 控制台里如果还留着项目，删掉或整站重定向到 `https://community.nanako.org` 即可，与本仓库无关。
 
 ## 回滚
 
@@ -99,3 +99,36 @@
 - 删掉 `workers_dev = false` / `preview_urls = false`（或改成 `true`），让旧的 workers.dev 入口回来；
 - 在 OAuth 后台确认旧回调地址还在（第 3 步说过切换完成前保留它）；
 - EdgeOne 如果已经删除也不影响：`score.nanako.org` 一直留在 Worker 上，回滚后它就是入口。
+
+## SPA 回退核验（P1-0）
+
+P1 起前端有真实地址（`/sessions/:id`、`/players/:id`、`/players/:id/cases/:caseId`、`/cases/:id`，以及前端渲染的 404 页）。
+任何托管都必须把这些未知路径交给 `index.html`（状态码 200），并且不接管 `/api`、`/auth`、`/link`（SPA 的路由规则也从不使用这三个前缀）。
+
+### 各托管的结论
+
+| 托管 | 现状 | SPA 回退靠什么 | P1-0 做了什么 |
+|---|---|---|---|
+| Cloudflare Pages（`community.nanako.org`） | 生产前端 | Pages 的规则：部署里**没有** `404.html` 时，未知路径一律返回 `index.html`（200） | `npm run build:pages` 发现 `dist/` 任何层级有 `404.html` 就失败（`scripts/pages-headers.mjs` 的 `assertSpaFallback`，`tests/unit/pages-headers.test.ts` 覆盖） |
+| Pages Functions（根目录 `functions/`） | EdgeOne 遗留，被 Pages 当成 Functions 部署在 `/api/*`、`/auth/*` 上，反代到已下线的 workers.dev（实测 404） | — | **删除** `functions/api/[[default]].js`、`functions/auth/[[default]].js` 和 `edgeone.json`（spec §11 第 16 条默认：EdgeOne 已不用）；`tests/unit/pages-headers.test.ts` 断言它们不会回来 |
+| EdgeOne Pages | 不再使用 | — | 不需要回退规则；`DEPLOY-EDGEONE.md` 顶部标注「已停用」 |
+| 旧 Worker 单源部署（`wrangler.toml` `[assets]`） | 已由机主下线；配置还在，只给本地 `npm run dev` / `npm run preview` 用 | `not_found_handling = "single-page-application"` + `run_worker_first = true`，`worker/index.ts` 的 `app.all('*')` 回退到 `ASSETS` | 只核验、不改：本地 `npx wrangler dev` 实测 `/sessions/1`、`/players/x/cases/1`、`/xyz` 都是 200 SPA 外壳，`/api/config` 是 Worker 的 JSON；`tests/worker/split-deploy.test.ts`「keeps serving the SPA when FRONTEND_URL is unset…」覆盖 `app.all('*')` 的回退 |
+| Node API（`capi.nanako.org`） | 生产 API，**不托管前端** | 不回退：`server/src/api.ts` 的 `NO_ASSETS` 对非 API 路径答 404；设了 `FRONTEND_URL`（`compose.yaml` 默认 `https://community.nanako.org`）时，`legacySpaRedirect` 先把它们带着 path 和 query 302 + `no-store` 到前端 | 新增测试：`split-deploy.test.ts`「old links to the P1 routes」、`node-api.test.ts`「createApi — old SPA links on the API host」 |
+| Discord 分享页（`discord.nanako.org`） | 独立的静态页，不是这个 SPA | 不适用 | 无 |
+
+### 实测记录
+
+只发 GET。`<预览>` 是这个 PR 分支在 Pages 上的预览地址：机主 push 分支后，在 Cloudflare 后台 → Workers & Pages → 本项目 → Deployments 里找分支 `claude/p1-0-hosting` 的那次部署（分支别名形如 `https://claude-p1-0-hosting.<项目名>.pages.dev`）。
+
+| 检查 | 命令 | 期望 | 本地 `wrangler pages dev` | P1-0 部署前（生产） | PR 预览 | 合并部署后（生产） |
+|---|---|---|---|---|---|---|
+| 约局地址 | `curl -sI <站点>/sessions/1` | `200`，`text/html`，预览和生产带 `Content-Security-Policy` | 200 text/html，SPA shell | 200 text/html，带 CSP | 待领队填写 | 待领队填写 |
+| 案件地址 | `curl -sI <站点>/players/x/cases/1` | `200`，`text/html` | 200 text/html，SPA shell | 200 text/html，带 CSP | 待领队填写 | 待领队填写 |
+| 未知地址 | `curl -s -o /dev/null -w '%{http_code}' <站点>/xyz` | `200`（404 由前端渲染） | 200 | 200 | 待领队填写 | 待领队填写 |
+| `/api` 不归 Pages 管 | `curl -s -o /dev/null -w '%{http_code} %{content_type}' <站点>/api/config` | 删除后：`200 text/html`（SPA 外壳，不是反代、不是 JSON） | 200 text/html，SPA shell | 404 text/html（Functions 反代到已下线的 workers.dev） | 待领队填写 | 待领队填写 |
+| `/auth` 不归 Pages 管 | `curl -sI <站点>/auth/login` | 删除后：`200 text/html`，没有指向 nanako.org 的 302 | 200 text/html，SPA shell | 404 text/html（同上） | 待领队填写 | 待领队填写 |
+| Pages 构建日志 | Pages 后台该次部署的 Build log | 没有 `Found Functions directory` / `Compiled Worker successfully`；部署详情的 Functions 页显示没有函数 | 日志里 `Compiled Worker successfully` 出现 0 次 | 有 Functions（由上面两行的 404 推断，执行时没有看后台日志） | 待领队填写 | 待领队填写 |
+| 旧主机 302 | `curl -sI 'https://capi.nanako.org/sessions/1?x=1'` | `302`，`location: https://community.nanako.org/sessions/1?x=1`，`cache-control: no-store` | — | 执行时（2026-10-27 11:14 UTC）无法访问：Cloudflare `502`（`error code: 502`，源站没有响应），待领队补测 | — | 待领队填写 |
+| API 本身 | `curl -s https://capi.nanako.org/api/config` | `200` JSON | — | 执行时（同上）无法访问：Cloudflare `502`，待领队补测 | — | 待领队填写 |
+
+删除 `functions/` 要等机主合并并重新部署 Pages 才在生产生效：部署后复测 `/api/config` 在 `community.nanako.org` 上应返回 SPA 的 `index.html`（200、`text/html`），而不是反代结果。SPA 自己从不请求这个地址（所有请求都走 `VITE_API_BASE`），所以删除前后用户都感觉不到差别。

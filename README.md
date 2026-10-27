@@ -274,4 +274,4 @@ npm run dev:web
 - **一体化部署**（前后端都在 Cloudflare Worker）：见 [DEPLOY.md](./DEPLOY.md)。
 - **SPA → Cloudflare Pages，Worker 只做 API**（`score.` + `api.` 子域）：见 [docs/DEPLOY-PAGES.md](./docs/DEPLOY-PAGES.md)。
 - **Node 后端（Coolify + Docker Compose）**：Discord 分享页 `discord.nanako.org`，以及（P3a 起）跑在 PostgreSQL 上的 API。见 [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md)；API 从 Worker 切过去的步骤见 [docs/DEPLOY-CUTOVER.md](./docs/DEPLOY-CUTOVER.md)。
-- **拆分部署**（前端 → 腾讯 EdgeOne Pages，后端 → Cloudflare Worker）：见 [DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md)，内含跨域会话 Cookie 的处理与三种架构方案（推荐 EdgeOne 边缘函数反代，保持单源、Safari 安全、无需自定义域名）。
+- **EdgeOne（已停用）**：前端已在 Cloudflare Pages（`community.nanako.org`），API 在 Node（`capi.nanako.org`），EdgeOne 不再使用。遗留的边缘函数 `functions/`（把 `/api`、`/auth` 反代到已下线的 workers.dev）和 `edgeone.json` 已在 P1-0 删除：Cloudflare Pages 会把根目录的 `functions/` 部署成 Pages Functions，挂在 `community.nanako.org/api/*`、`/auth/*` 上。核验记录见 [docs/DEPLOY-PAGES.md](./docs/DEPLOY-PAGES.md)「SPA 回退核验（P1-0）」；[DEPLOY-EDGEONE.md](./DEPLOY-EDGEONE.md) 只作历史参考。
