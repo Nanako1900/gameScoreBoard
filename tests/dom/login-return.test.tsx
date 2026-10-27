@@ -306,3 +306,128 @@ describe('a lobby row for a visitor', () => {
     expect(window.location.pathname).toBe('/');
   });
 });
+
+describe('登录回跳 — back from the login page', () => {
+  it('a visitor clicks 来, logs in, is back on the page and asked — nothing is written', async () => {
+    const stub = stubApi();
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/sessions/5');
+    const { unmount } = render(<App />);
+
+    const prompt = await screen.findByRole('group', { name: '登录后报名' });
+    expect(within(prompt).queryByRole('button', { name: '来' })).not.toBeInTheDocument();
+    await user.click(within(prompt).getByRole('link', { name: '来' }));
+    expect(stored()).toEqual({
+      v: 1,
+      path: '/sessions/5',
+      savedAt: expect.any(Number),
+      intent: { kind: 'rsvp', sessionId: 5, rsvp: 'going' },
+    });
+
+    unmount();
+    backFromLogin(stub, null);
+
+    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/sessions/5');
+    expect(screen.getByRole('button', { name: '来' })).toHaveClass(SUGGESTED);
+    expect(screen.getByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'false');
+    expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull();
+    await settle();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('the first-run dialog goes first, then the way back', async () => {
+    const stub = stubApi();
+    const user = userEvent.setup();
+    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()), '/?onboarding=1');
+
+    expect(await screen.findByRole('radiogroup', { name: '选择身份' })).toBeInTheDocument();
+    await settle();
+    await settle();
+    expect(window.location.pathname).toBe('/');
+    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/sessions/5');
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it.each([
+    ['/?case=7', '/players/q/cases/7'],
+    ['/?session=3', '/sessions/3'],
+  ])('an old link (%s) wins: edg.return is dropped, not followed', async (url, landing) => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()), url);
+
+    await waitFor(() => expect(window.location.pathname).toBe(landing));
+    await settle();
+    expect(stub.calls.some((c) => c.path === '/api/sessions/5')).toBe(false);
+    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('a stale or tampered value goes nowhere and is removed', async () => {
+    const values = [
+      serializeLoginReturn('/sessions/5', GOING, Date.now() - LOGIN_RETURN_TTL_MS - 1),
+      JSON.stringify({ v: 1, path: '//evil.example/sessions/5', savedAt: Date.now() }),
+      JSON.stringify({ v: 1, path: '/sessions/abc', savedAt: Date.now() }),
+      JSON.stringify({ v: 1, path: '/auth/login', savedAt: Date.now() }),
+      '{not json',
+    ];
+    for (const raw of values) {
+      const stub = stubApi();
+      const { unmount } = backFromLogin(stub, raw);
+      await screen.findByRole('heading', { name: /约局/ });
+      await settle();
+      expect(window.location.pathname, raw).toBe('/');
+      expect(stub.calls.some((c) => c.path === '/api/sessions/5'), raw).toBe(false);
+      expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY), raw).toBeNull();
+      expect(writes(stub.calls), raw).toEqual([]);
+      unmount();
+    }
+  });
+
+  it('a visitor load neither follows nor removes it', async () => {
+    const raw = serializeLoginReturn('/sessions/5', GOING, Date.now());
+    window.sessionStorage.setItem(LOGIN_RETURN_KEY, raw);
+    stubApi();
+    render(<App />);
+    await screen.findByRole('heading', { name: /约局/ });
+    await settle();
+    expect(window.location.pathname).toBe('/');
+    expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe(raw);
+  });
+
+  it('once the session page is left, the question is not asked again', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/sessions/5', GOING, Date.now()));
+    expect(await screen.findByText(QUESTION)).toBeInTheDocument();
+
+    act(() => navigate('/'));
+    await waitFor(() => expect(screen.queryByText(QUESTION)).not.toBeInTheDocument());
+    act(() => navigate('/sessions/5'));
+    expect(await screen.findByRole('button', { name: '来' })).not.toHaveClass(SUGGESTED);
+    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('logging out forgets it', async () => {
+    // jsdom cannot reload (handleLogout ends with location.reload()) and says so on console.error.
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const stub = stubApi();
+      const user = userEvent.setup();
+      backFromLogin(stub, null);
+      await screen.findByRole('heading', { name: /约局/ });
+      window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/sessions/5', GOING, Date.now()));
+      await user.click(screen.getByRole('button', { name: /选手/ }));
+      await user.click(screen.getByRole('button', { name: '退出登录' }));
+      await waitFor(() => expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull());
+      expect(quiet.mock.calls.every(([first]) => String(first).includes('Not implemented: navigation'))).toBe(true);
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+});
