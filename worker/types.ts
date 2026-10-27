@@ -320,6 +320,18 @@ export interface CaseDraft {
   already_filed: boolean;
 }
 
+// --- P2-2 ---
+/** One row of GET /api/me/invitable. Never a score, never anything about Discord. */
+export interface InvitableUser {
+  id: string;
+  /** COALESCE(display_name, username), like every other name the site shows. */
+  username: string;
+  avatar_url: string | null;
+  is_participant: boolean;
+  /** starts_at (ISO) of the latest session, already started and not cancelled, where both said 来 and neither was marked 没来 / 请假; else null. */
+  last_played_with_me_at: string | null;
+}
+
 /** Hono generics for the app: bindings + per-request variables. */
 export interface AppEnv {
   Bindings: Env;
