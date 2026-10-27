@@ -4,6 +4,8 @@ import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
 import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE } from '../lib/routeCopy';
 import { useCaseLookup, type PinnedCase } from '../lib/useCaseLookup';
+import { resumeRsvpFor } from '../lib/loginReturnShape';
+import type { LoginIntent } from '../lib/loginReturnShape';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
@@ -22,6 +24,9 @@ interface RouteViewProps {
   onPinned: (pinned: PinnedCase) => void;
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
+  /** P1-3: from useEntryTarget — only handed to the session it is about. */
+  resume?: LoginIntent | null;
+  onResumeDone?: () => void;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -130,6 +135,8 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
             me={props.me}
             onClose={close}
             onChanged={props.onChanged}
+            resumeRsvp={resumeRsvpFor(props.resume, route.sessionId)}
+            onResumeDone={props.onResumeDone}
           />
         </LayoutShell>
       );

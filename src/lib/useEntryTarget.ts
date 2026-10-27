@@ -6,6 +6,8 @@ import { navigate } from './router';
 import { HOME_PATH, playerCasePath, sessionPath } from './routes';
 import { CASE_GONE, CASE_UNAVAILABLE } from './routeCopy';
 import type { PinnedCase } from './useCaseLookup';
+import { useLoginResume } from './useLoginResume';
+import type { LoginIntent } from './loginReturnShape';
 
 // Old links (spec §2.3, kept forever): the bot's DMs say /?case=N and /?session=N.
 // They are read once, on '/', and translated into the view's own address.
@@ -29,6 +31,9 @@ interface EntryTargetResult {
   /** CASE_GONE / CASE_UNAVAILABLE for the lobby's LinkMissingNotice. */
   readonly linkMissing: string | null;
   readonly dismissLinkMissing: () => void;
+  /** P1-3: the answer clicked before login, for the session page to ask about (never sent). */
+  readonly resume: LoginIntent | null;
+  readonly clearResume: () => void;
 }
 
 /** Everything a target does not carry along; what is left (utm=…) rides to the new address. */
@@ -56,7 +61,9 @@ function stripEntryParams(): void {
   navigate(HOME_PATH + withoutParams(search, names), { replace: true });
 }
 
-export function useEntryTarget({ ready, blocked, onPinned }: EntryTargetInput): EntryTargetResult {
+export function useEntryTarget({ ready, me, blocked, onPinned }: EntryTargetInput): EntryTargetResult {
+  // P1-3: edg.return, the second source of an entry target (contract 4.11).
+  const { resume, clearResume } = useLoginResume({ ready, me, isBlocked: blocked });
   const [target] = useState(readEntryTarget);
   const opened = useRef(false);
   const [linkMissing, setLinkMissing] = useState<string | null>(null);
@@ -89,5 +96,5 @@ export function useEntryTarget({ ready, blocked, onPinned }: EntryTargetInput): 
   }, [landing]);
 
   const dismissLinkMissing = useCallback((): void => setLinkMissing(null), []);
-  return { linkMissing, dismissLinkMissing };
+  return { linkMissing, dismissLinkMissing, resume, clearResume };
 }

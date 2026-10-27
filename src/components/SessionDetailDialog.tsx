@@ -22,6 +22,8 @@ import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
 import { RollCallDialog } from './RollCallDialog';
 import { RescheduleSheet } from './RescheduleSheet';
+import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
+import { VisitorRsvpPrompt } from './VisitorRsvpPrompt';
 import { useToast } from './Toast';
 import './session-detail.css';
 
@@ -33,6 +35,10 @@ interface SessionDetailDialogProps {
   onChanged: () => void;
   /** Default 'center' — today's dialog, byte for byte. 'page' / 'drawer': the /sessions/:id route (P1-1). */
   variant?: 'center' | 'page' | 'drawer';
+  /** P1-3: the answer clicked before logging in — only pointed at, never submitted. */
+  resumeRsvp?: SelfRsvp | null;
+  /** P1-3: the question above was answered, dismissed, or does not apply here. */
+  onResumeDone?: () => void;
 }
 
 const RSVP_ORDER = SELF_RSVPS;
@@ -45,6 +51,8 @@ export function SessionDetailDialog({
   onClose,
   onChanged,
   variant = 'center',
+  resumeRsvp = null,
+  onResumeDone,
 }: SessionDetailDialogProps): JSX.Element {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -166,6 +174,28 @@ export function SessionDetailDialog({
     me !== null && session?.status === 'open' && !started && !isOrganizer;
   const canRollCall = canManage && session?.status === 'open' && started;
 
+  // P1-3: a visitor answers through the login page; back here, the click is asked about.
+  const canVisitorRsvp = me === null && session?.status === 'open' && !started;
+  const resumeAsk: SelfRsvp | null =
+    resumeRsvp !== null && canRsvp && session?.my_rsvp !== resumeRsvp ? resumeRsvp : null;
+
+  // Nothing to ask (already that answer, the organizer, started…): forget the click.
+  useEffect(() => {
+    if (resumeRsvp !== null && session !== null && resumeAsk === null) onResumeDone?.();
+  }, [resumeRsvp, session, resumeAsk, onResumeDone]);
+
+  /** An answer clicked here, with or without the hint: the hint is done either way. */
+  const answerHere = async (next: SelfRsvp): Promise<void> => {
+    await answer(next);
+    if (resumeRsvp !== null) onResumeDone?.();
+  };
+
+  const dismissResume = (): void => {
+    onResumeDone?.();
+    // The hint (and its focused button) leaves: focus the title, not <body>.
+    titleRef.current?.focus();
+  };
+
   return (
     <>
       <Modal open onClose={onClose} labelledBy={TITLE_ID} size="lg" variant={variant}>
@@ -208,9 +238,16 @@ export function SessionDetailDialog({
             )}
             {flash && <p className="sdt__flash">{flash}</p>}
 
+            {resumeAsk && <ResumeHint rsvp={resumeAsk} onDismiss={dismissResume} />}
             {canRsvp && (
-              <RsvpControls session={session} busy={busy} onAnswer={(r) => void answer(r)} />
+              <RsvpControls
+                session={session}
+                busy={busy}
+                suggested={resumeAsk ?? undefined}
+                onAnswer={(r) => void answerHere(r)}
+              />
             )}
+            {canVisitorRsvp && <VisitorRsvpPrompt sessionId={session.id} />}
 
             <section className="sdt__section">
               <h3 className="sdt__section-title">
@@ -300,9 +337,17 @@ export function SessionDetailDialog({
 
 const FULL_NOTICE_ID = 'session-detail-full';
 
+/** aria-describedby from the ids that apply, or undefined when none does. */
+function describedBy(...ids: (string | null)[]): string | undefined {
+  const present = ids.filter((id): id is string => id !== null);
+  return present.length > 0 ? present.join(' ') : undefined;
+}
+
 interface RsvpControlsProps {
   session: SessionDetail;
   busy: boolean;
+  /** P1-3: ringed in gold — the answer clicked before login. Only clicking it answers. */
+  suggested?: SelfRsvp;
   onAnswer: (rsvp: SelfRsvp) => void;
 }
 
@@ -311,7 +356,7 @@ interface RsvpControlsProps {
  * and what an answer commits to. 来 closes once the seats are taken — the
  * server refuses it anyway — and the notice says what to do instead.
  */
-function RsvpControls({ session, busy, onAnswer }: RsvpControlsProps): JSX.Element {
+function RsvpControls({ session, busy, suggested, onAnswer }: RsvpControlsProps): JSX.Element {
   const closed = goingClosed(session);
   const notice = fullNotice(session);
   return (
@@ -324,10 +369,15 @@ function RsvpControls({ session, busy, onAnswer }: RsvpControlsProps): JSX.Eleme
             <button
               key={r}
               type="button"
-              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}`}
+              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}${
+                suggested === r ? ' sdt__rsvp-btn--suggested' : ''
+              }`}
               disabled={busy || shut}
               aria-pressed={session.my_rsvp === r}
-              aria-describedby={shut && notice ? FULL_NOTICE_ID : undefined}
+              aria-describedby={describedBy(
+                shut && notice ? FULL_NOTICE_ID : null,
+                suggested === r ? RESUME_HINT_TEXT_ID : null,
+              )}
               onClick={() => onAnswer(r)}
             >
               {RSVP_LABEL[r]}

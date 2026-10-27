@@ -192,3 +192,17 @@
   font-size: var(--fs-sm);
   color: var(--ok);
 }
+
+/* P1-3 — the answer clicked before login, ringed in gold until it is clicked again.
+   The selected state stays aria-pressed; this is only a pointer. */
+.sdt__rsvp-btn--suggested {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
+}
+
+@media (hover: hover) {
+  /* Restate the ring: .btn:hover would otherwise grey the edge out. */
+  .sdt__rsvp-btn--suggested:hover {
+    border-color: var(--gold);
+  }
+}

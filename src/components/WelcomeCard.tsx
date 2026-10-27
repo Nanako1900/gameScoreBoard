@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { LoginLink } from './LoginLink';
 import './welcome-card.css';
 
 interface WelcomeCardProps {
@@ -65,9 +66,9 @@ export function WelcomeCard({
         放鸽子会被记一笔，每周一 0 点自动回血 <span className="tabular">+{weeklyHeal}</span>。
       </p>
       <div className="welcome__actions">
-        <a className="btn btn--gold" href={loginUrl}>
+        <LoginLink className="btn btn--gold" href={loginUrl}>
           用 Nanako 账号登录
-        </a>
+        </LoginLink>
         <button type="button" className="welcome__rules" onClick={onShowRules}>
           30 秒看懂 <span aria-hidden="true">›</span>
         </button>

@@ -1,0 +1,23 @@
+/* P1-3 — VisitorRsvpPrompt: the signed-out visitor's 登录后报名 area in a session. */
+.vrp {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.vrp__line {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.vrp__choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.vrp__label {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}

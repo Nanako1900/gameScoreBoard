@@ -19,6 +19,7 @@ import { useResetWatch } from './lib/useResetWatch';
 import { todoCount } from './lib/tabTitle';
 import { useTabTitle } from './lib/useTabTitle';
 import { clearAllDrafts } from './lib/drafts';
+import { clearLoginReturn } from './lib/loginReturn';
 import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
@@ -114,7 +115,7 @@ function AppMain(): JSX.Element {
   // Old ?case= / ?session= links, once the data is in and the first-run dialog is done
   // (declared after the onboarding effects: it reads onboardingAsked after they ran).
   const entryBlocked = useCallback(() => onboardingOpen || onboardingAsked.current, [onboardingOpen]);
-  const { linkMissing, dismissLinkMissing } = useEntryTarget({
+  const { linkMissing, dismissLinkMissing, resume, clearResume } = useEntryTarget({
     ready: ready !== null,
     me: ready?.me ?? null,
     blocked: entryBlocked,
@@ -137,6 +138,7 @@ function AppMain(): JSX.Element {
     }
     // Drafts are this person's: whoever signs in next on this device must not find them.
     clearAllDrafts();
+    clearLoginReturn();
     window.location.reload();
   }, []);
 
@@ -350,6 +352,8 @@ function AppMain(): JSX.Element {
         onPinned={setPinned}
         onChanged={handleChanged}
         onOpenStatement={setStatementCase}
+        resume={resume}
+        onResumeDone={clearResume}
       />
 
       <footer className="app__footer" hidden={covered}>

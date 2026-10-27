@@ -210,3 +210,31 @@
     flex: 1;
   }
 }
+
+/* P1-3 — a visitor's 登录后报名 on a row: a login link that comes back to this session. */
+.srow__login {
+  flex: none;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.8rem;
+  margin-right: 0.4rem;
+  border-radius: var(--r-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--gold);
+  border: 1px solid var(--gold-dim);
+}
+
+@media (hover: hover) {
+  .srow__login:hover {
+    color: var(--text);
+    border-color: var(--gold);
+  }
+}
+
+@media (max-width: 600px) {
+  .srow__login {
+    margin: 0 0.4rem 0.4rem;
+  }
+}
