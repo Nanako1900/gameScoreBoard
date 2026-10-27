@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DraftNote } from '../../src/components/DraftNote';
+import { StatementDialog } from '../../src/components/StatementDialog';
 import { clearAllDrafts, draftKey, readDraft, writeDraft } from '../../src/lib/drafts';
 import { isBlankText, validateStatementDraft } from '../../src/lib/draftShapes';
 import { useDraft } from '../../src/lib/useDraft';
+import type { Config, RecordItem } from '../../src/types';
 
 // Six local drafts (spec §5 #4): what is typed survives a closed dialog, a
 // reload and the Discord round trip, and is gone after a successful submit or
@@ -149,5 +151,114 @@ describe('useDraft', () => {
     expect(box).toHaveValue('');
     expect(localStorage.getItem('edg.draft.statement.3')).toBeNull();
     expect(screen.queryByText(/草稿已存在这台设备/)).not.toBeInTheDocument();
+  });
+});
+
+const HOUR = 3_600_000;
+const sqlTime = (ms: number): string => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+
+const CONFIG: Config = {
+  violations: [],
+  tiers: [],
+  weeklyHeal: 5,
+  weeklyBonusCap: 6,
+  statementWindowHours: 12,
+  aiEnabled: false,
+  maxBatchSubjects: 5,
+  nextResetAt: '2030-01-06T16:00:00.000Z',
+};
+
+function openCase(over: Partial<RecordItem> = {}): RecordItem {
+  return {
+    id: 12,
+    subject: { id: 'me', username: '我', avatar_url: null },
+    reporter: { id: 'j', username: '阿飞', avatar_url: null },
+    type: 'late_major',
+    delta: 0,
+    note: null,
+    claim: '迟到 25 分钟，没打招呼',
+    claim_summary: null,
+    classified_by: 'ai',
+    escalation_suggested: false,
+    session_id: null,
+    statement: null,
+    statement_at: null,
+    appeal_reason: null,
+    deadline_at: sqlTime(Date.now() + 5 * HOUR),
+    status: 'awaiting_statement',
+    verdict: null,
+    range: { min: -9, max: -3, base: -6 },
+    created_at: sqlTime(Date.now() - HOUR),
+    redacted: false,
+    ...over,
+  };
+}
+
+const decided = (over: Partial<RecordItem> = {}): RecordItem =>
+  openCase({
+    status: 'decided',
+    delta: -6,
+    statement: '家里临时有事',
+    statement_at: sqlTime(Date.now()),
+    deadline_at: null,
+    verdict: { source: 'ai', headline: '情有可原', reasoning: '', factors: [] },
+    ...over,
+  });
+
+describe('StatementDialog — draft, confirm, verdict', () => {
+  function renderStatement(onClose = vi.fn(), onDecided = vi.fn()) {
+    render(<StatementDialog open record={openCase()} config={CONFIG} onClose={onClose} onDecided={onDecided} score={88} />);
+    return { onClose, onDecided };
+  }
+
+  it('restores a draft and asks before leaving with it', async () => {
+    writeDraft('statement', 12, '家里临时有事');
+    const user = userEvent.setup();
+    const { onClose } = renderStatement();
+    expect(screen.getByRole('textbox', { name: /你的说明/ })).toHaveValue('家里临时有事');
+    expect(screen.getByText('草稿已存在这台设备 · 写了 6 字')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    const leave = screen.getByRole('group', { name: '还没提交的说明会留在这台设备上，下次回来接着写。' });
+    expect(within(leave).getByRole('button', { name: '继续写' })).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(within(leave).getByRole('button', { name: '继续写' }));
+    expect(screen.getByRole('button', { name: '稍后再说' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: '稍后再说' }));
+    await user.click(screen.getByRole('button', { name: '先离开' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(stored(localStorage, 'edg.draft.statement.12')).toBe('家里临时有事');
+  });
+
+  it('refuses an empty statement without asking anything', async () => {
+    const user = userEvent.setup();
+    renderStatement();
+    await user.click(screen.getByRole('button', { name: '提交说明' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('说点什么吧，哪怕一句');
+    expect(screen.queryByRole('group', { name: '确认提交？交了就不能改。' })).not.toBeInTheDocument();
+  });
+
+  it('confirms before submitting, then shows the verdict with the way back', async () => {
+    const calls = mockFetch({ 'POST /api/records/12/statement': () => json(200, { record: decided() }) });
+    writeDraft('statement', 12, '家里临时有事');
+    const user = userEvent.setup();
+    const { onDecided } = renderStatement();
+
+    await user.click(screen.getByRole('button', { name: '提交说明' }));
+    const confirm = screen.getByRole('group', { name: '确认提交？交了就不能改。' });
+    expect(within(confirm).getByRole('button', { name: '再看看' })).toHaveFocus();
+    expect(calls).toEqual([]);
+
+    await user.click(within(confirm).getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByRole('heading', { name: '裁决结果' })).toBeInTheDocument();
+    expect(calls).toEqual([{ method: 'POST', path: '/api/records/12/statement', body: { statement: '家里临时有事' } }]);
+    // 88 − 6 = 82, then + weeklyHeal (5 in this config, not 15) = 87.
+    expect(screen.getByText('这次 -6。每周一 0 点回血 +5，预计下周一后回到 87。')).toBeInTheDocument();
+    expect(localStorage.getItem('edg.draft.statement.12')).toBeNull();
+    expect(onDecided).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: '觉得不公平？可以申诉' }));
+    expect(await screen.findByRole('dialog', { name: '申诉这一起' })).toBeInTheDocument();
   });
 });

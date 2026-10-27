@@ -81,3 +81,19 @@ describe('RulesPanel', () => {
     expect(screen.queryByText(/本地时区/)).not.toBeInTheDocument();
   });
 });
+
+describe('写说明页：截止与隐私', () => {
+  it('gives the deadline as a time and as time left (M19)', () => {
+    render(<StatementDialog open record={awaiting()} config={CONFIG} onClose={() => {}} onDecided={() => {}} />);
+    expect(screen.getByText(/^截止：.+（还剩 .+）· 过期会按缺席裁决$/)).toBeInTheDocument();
+  });
+
+  it('says who sees what, before and after the verdict (M18)', () => {
+    render(<StatementDialog open record={awaiting()} config={CONFIG} onClose={() => {}} onDecided={() => {}} />);
+    expect(screen.getByText('谁能看到：你的说明只给你、立案人、裁判和管理员看。')).toBeInTheDocument();
+    expect(
+      screen.getByText('判决前，立案经过和案由不会公开给其他人；判决后，案由、立案经过和分数变化会公开，你的说明始终只给上面这几类人看。'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('说明只能交一次，交了马上进入 AI 裁决。')).toBeInTheDocument();
+  });
+});
