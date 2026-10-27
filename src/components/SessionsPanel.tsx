@@ -6,6 +6,8 @@ import { useLobbySessions, type LobbySessions } from '../lib/useLobbySessions';
 import { useNow } from '../lib/useNow';
 import { useRsvpAnswer } from '../lib/useRsvpAnswer';
 import { LoginLink } from './LoginLink';
+import { Link } from './Link';
+import { SESSION_HISTORY_PATH } from '../lib/routes';
 import { SessionCard } from './SessionCard';
 import './sessions-panel.css';
 
@@ -41,6 +43,7 @@ export function SessionsPanel(props: SessionsPanelProps): JSX.Element {
   return <section className="sessions panel" aria-labelledby="sessions-title">
     <header className="sessions__head">
       <h2 id="sessions-title" className="sessions__title"><span aria-hidden="true">📅</span> 约局</h2>
+      <Link to={SESSION_HISTORY_PATH} className="sessions__more">历史 <span aria-hidden="true">›</span></Link>
       {props.me && <button type="button" className="btn btn--gold btn--sm" onClick={props.onCreate}>组一局</button>}
     </header>
     {props.boardTzOffsetHours !== undefined && <p className="sessions__zone">时间均为{boardTzLabel(props.boardTzOffsetHours) === '北京时间' ? '' : ' '}{boardTzLabel(props.boardTzOffsetHours)}</p>}

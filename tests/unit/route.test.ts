@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { DESKTOP_MEDIA_QUERY, HISTORY_SHEET_NAME_MAX, USER_ID_MAX } from '../../src/lib/constants';
 import { pinnedCaseEyebrow } from '../../src/lib/routeCopy';
 import {
+  boardPath,
+  BOARD_TABS,
+  SESSION_HISTORY_PATH,
   casePath,
   formatRoute,
   isAppPath,
@@ -41,10 +44,7 @@ describe('parseRoute', () => {
   it('knows nothing of the later phases’ routes yet', () => {
     for (const later of [
       '/sessions/new',
-      '/sessions/history',
       '/sessions/5/rollcall',
-      '/board',
-      '/board/feed',
       '/me',
       '/me/notify',
       '/review',
@@ -222,5 +222,30 @@ describe('readEdgState — P1-2 fields', () => {
     expect(readEdgState({ sheet: 'reschedule', layer: 3 })).toBeNull();
     expect(readEdgState({ edg: 2, idx: 1, sheet: 'reschedule' })).toBeNull();
     expect(readEdgState(null)).toBeNull();
+  });
+});
+
+// P3-6: board pages are full pages on every viewport, never drawers.
+describe('board and session history routes', () => {
+  it.each([
+    ['/board', 'list'], ['/board/', 'list'], ['/board/feed', 'feed'],
+    ['/board/report', 'report'], ['/board/rules', 'rules'],
+  ] as const)('reads and formats %s', (path, tab) => {
+    const route: LinkableRoute = { name: 'board', tab };
+    expect(parseRoute(path)).toEqual(route);
+    expect(boardPath(tab)).toBe(tab === 'list' ? '/board' : `/board/${tab}`);
+    expect(formatRoute(route)).toBe(boardPath(tab));
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+  it('recognizes history before the numeric session route', () => {
+    expect(SESSION_HISTORY_PATH).toBe('/sessions/history');
+    const route: LinkableRoute = { name: 'sessionHistory' };
+    expect(parseRoute(SESSION_HISTORY_PATH)).toEqual(route);
+    expect(formatRoute(route)).toBe(SESSION_HISTORY_PATH);
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+    expect(BOARD_TABS).toEqual(['list', 'feed', 'report', 'rules']);
+  });
+  it.each(['/board/list', '/board/xyz', '/board/feed/1', '/sessions/history/2', '/board//'])('refuses %s', (path) => {
+    expect(parseRoute(path)).toEqual(NOT_FOUND);
   });
 });

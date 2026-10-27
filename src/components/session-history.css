@@ -1,0 +1,9 @@
+/* History is a single reading-order list; cancelled sessions stay neutral. */
+.shist { display: grid; gap: 0.8rem; }
+.shist > h2 { font-size: var(--fs-2xl); }
+.shist ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.shist__row { display: grid; gap: 0.35rem; padding: 0.85rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel-2); font-size: var(--fs-md); overflow-wrap: anywhere; }
+.shist__reason, .shist__row--cancelled { color: var(--muted); }
+.shist p { color: var(--muted); font-size: var(--fs-sm); }
+@media (hover: hover) { .shist__row:hover { border-color: var(--border-strong); } }
+@media (pointer: coarse) { .shist button, .shist__row { min-height: 44px; } }

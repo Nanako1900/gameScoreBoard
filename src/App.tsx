@@ -44,6 +44,8 @@ import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import { RouteView } from './components/RouteView';
+import type { BoardData } from './components/BoardPage';
+import { boardPath } from './lib/routes';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -199,6 +201,14 @@ function AppMain(): JSX.Element {
     [ready],
   );
   const counts = useMemo(() => (ready ? computeCounts(ready.records) : {}), [ready]);
+  const board = useMemo<BoardData | undefined>(() => {
+    if (!ready) return undefined;
+    const lastWeek = lastWeekStartOf(ready.config.nextResetAt);
+    return { participants: ready.participants, records: ready.records, report: ready.report, trends, counts,
+      reportStale: lastWeek !== null && ready.report !== null && ready.report.week_start < lastWeek,
+      regenerating, onSelectUser: openPlayer,
+      onRegenerate: ready.me?.is_admin && ready.report ? () => handleRegenerate(ready.report!.week_start) : undefined };
+  }, [ready, trends, counts, regenerating, openPlayer, handleRegenerate]);
   const lobby = useLobbySessions({ enabled: ready !== null, me: ready?.me ?? null, refreshKey: sessionsKey });
 
   if (state.status === 'loading') {
@@ -276,6 +286,7 @@ function AppMain(): JSX.Element {
             loginUrl={AUTH_LOGIN_URL}
             discordInviteUrl={DISCORD_INVITE_URL}
             onShowRules={showRules}
+            rulesTo={boardPath('rules')}
             weeklyHeal={config.weeklyHeal}
           />
         )}
@@ -303,6 +314,7 @@ function AppMain(): JSX.Element {
         {report && (
           <WeeklyReportCard
             report={report}
+            moreTo={boardPath('report')}
             compact
             stale={(() => {
               const lastWeek = lastWeekStartOf(config.nextResetAt);
@@ -349,6 +361,7 @@ function AppMain(): JSX.Element {
       </main>
 
       <RouteView
+        board={board}
         location={location}
         layout={layout}
         me={me}

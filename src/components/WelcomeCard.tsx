@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LoginLink } from './LoginLink';
+import { Link } from './Link';
 import './welcome-card.css';
 
 interface WelcomeCardProps {
@@ -11,6 +12,7 @@ interface WelcomeCardProps {
   onShowRules: () => void;
   /** config.weeklyHeal — never a literal 15 (test configs use 5). */
   weeklyHeal: number;
+  rulesTo?: string;
 }
 
 const DISMISS_KEY = 'edg.welcome.dismissed';
@@ -42,6 +44,7 @@ export function WelcomeCard({
   discordInviteUrl,
   onShowRules,
   weeklyHeal,
+  rulesTo,
 }: WelcomeCardProps): JSX.Element | null {
   const [hidden, setHidden] = useState(isDismissed);
   if (hidden) return null;
@@ -69,9 +72,9 @@ export function WelcomeCard({
         <LoginLink className="btn btn--gold" href={loginUrl}>
           用 Nanako 账号登录
         </LoginLink>
-        <button type="button" className="welcome__rules" onClick={onShowRules}>
+        {rulesTo ? <Link to={rulesTo} className="welcome__rules">30 秒看懂 <span aria-hidden="true">›</span></Link> : <button type="button" className="welcome__rules" onClick={onShowRules}>
           30 秒看懂 <span aria-hidden="true">›</span>
-        </button>
+        </button>}
       </div>
       {discordInviteUrl && (
         <p className="welcome__discord">

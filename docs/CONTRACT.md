@@ -489,6 +489,8 @@ reaches `decided` rather than stranding a player's score.
   |---|---|---|
   | `/` | the hall | the hall |
   | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/sessions/history` | history, including cancelled sessions and their reasons | the same page |
+  | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
   | `/players/<userId>/cases/<id>` | that player's page, the case moved to the top and focused | the same, in the drawer |
   | `/cases/<id>` | alias: looks the case up once, then replaces itself with the row above | the same |
@@ -500,7 +502,7 @@ reaches `decided` rather than stranding a player's score.
   never an error. Not found: `/sessions/<id>` → 「找不到这局，链接可能写错了。」;
   `/players/<userId>` → 「找不到这位选手。」; a case → 「链接里的案件不存在了。」, any
   other failure → 「打不开链接里的案件，稍后再试。」. A cancelled session is not a
-  404; it shows as cancelled.
+  404; it shows as cancelled. A missing session also links to 「看约局历史」; a missing player links to 「看信誉榜」.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
   routing never uses the hash: a `popstate` that only changed the hash is
   ignored. Every host must serve `index.html` for any other path (SPA

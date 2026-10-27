@@ -7,7 +7,8 @@ import {
 import type { Rsvp, SelfRsvp } from '@shared/attendance';
 import type { InviteResponse, RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
-import { PAGE_BACK_LABEL, SESSION_NOT_FOUND } from '../lib/routeCopy';
+import { BACK_HOME, PAGE_BACK_LABEL, SEE_HISTORY, SESSION_NOT_FOUND } from '../lib/routeCopy';
+import { HOME_PATH, SESSION_HISTORY_PATH } from '../lib/routes';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
 import { inviteToast } from '../lib/invitePicker';
 import { formatBoardDateTime, formatDateTime, formatTimeLeft, formatViewerAside, formatWhen, parseTimestamp } from '../lib/time';
@@ -228,7 +229,7 @@ export function SessionDetailDialog({
       <Modal open onClose={onClose} labelledBy={TITLE_ID} size="lg" variant={variant}>
         {variant === 'page' && <PageBar backLabel={PAGE_BACK_LABEL} title={session?.title} onBack={onClose} />}
         {missing ? (
-          <NotFound title={SESSION_NOT_FOUND} headingId={TITLE_ID} />
+          <NotFound title={SESSION_NOT_FOUND} headingId={TITLE_ID} actions={[{ label: BACK_HOME, to: HOME_PATH }, { label: SEE_HISTORY, to: SESSION_HISTORY_PATH }]} />
         ) : !session ? (
           <p className="sdt__status" aria-live="polite">
             {error ?? '加载中…'}

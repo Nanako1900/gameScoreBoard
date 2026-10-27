@@ -149,8 +149,8 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 | 其他任何路径 | 页面 | 「这页不存在」，附「回大厅」 | P1 已有 |
 | `/sessions/new`（可带 `?again=<id>`） | 页面 / 居中弹窗 | 发起约局 | 计划 P3-4 |
 | `/sessions/:id/rollcall` | 页面 | 点名 | 计划 P3-5 |
-| `/sessions/history` | 页面 | 约局历史，含被取消的局和取消理由 | 计划 P3-6 |
-| `/board`、`/board/feed`、`/board/report`、`/board/rules` | 页面 | 信誉榜 / 动态 / 战报 / 规则 | 计划 P3-6 |
+| `/sessions/history` | 页面 | 约局历史，含被取消的局和取消理由 | P3 已有 |
+| `/board`、`/board/feed`、`/board/report`、`/board/rules` | 页面 | 信誉榜 / 动态 / 战报 / 规则 | P3 已有 |
 | `/cases/:id/statement` | 全屏写作页 | 当事人写说明 | 计划 P4-2 |
 | `/cases/new`（可带 `?session=<id>`） | 页面 | 裁判立案 | 计划 P4-2 |
 | `/me`、`/me/notify`、`/me/profile` | 页面 | 我的、通知与 Discord、身份 | 计划 P4-1 |

@@ -407,23 +407,17 @@ describe('App — the board on the home page', () => {
     expect(document.querySelector('.tier-badge')).toBeNull();
   });
 
-  it('30 秒看懂 opens the rules and moves focus there', async () => {
-    const scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll;
-    try {
-      mockFetch(routes(null));
-      const user = userEvent.setup();
-      render(<App />);
-      await user.click(await screen.findByRole('button', { name: '30 秒看懂' }));
-      const toggle = screen.getByRole('button', { name: /计分规则/ });
-      expect(toggle).toHaveAttribute('aria-expanded', 'true');
-      await waitFor(() => expect(document.activeElement).toBe(toggle));
-      expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }));
-      await user.click(toggle);
-      expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    } finally {
-      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  it('30 秒看懂 opens the rules destination and focuses its title', async () => {
+    mockFetch(routes(null));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('link', { name: '30 秒看懂' }));
+    expect(window.location.pathname).toBe('/board/rules');
+    await waitFor(() => expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus());
+    for (const title of ['约局', '守约', '分数与回血', '出事了怎么办', '计分规则']) {
+      expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('button', { name: /计分规则/ })).not.toBeInTheDocument();
   });
 
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {

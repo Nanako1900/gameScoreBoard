@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { WeeklyReport } from '../types';
+import { Link } from './Link';
 import './weekly-report.css';
 
 interface WeeklyReportCardProps {
@@ -15,6 +16,8 @@ interface WeeklyReportCardProps {
    */
   compact?: boolean;
   hidePigeon?: boolean;
+  moreTo?: string;
+  dismissible?: boolean;
 }
 
 const DISMISS_KEY = 'edg.report.dismissed';
@@ -62,16 +65,18 @@ interface ReportHeadProps {
   stale: boolean;
   regenerating: boolean;
   onRegenerate?: () => void;
-  onDismiss: () => void;
+  onDismiss?: () => void;
+  moreTo?: string;
+  titleId?: string;
 }
 
 /** Shared by the full and the compact card: the h2 wording (/上周战报/, /往期战报/) is locked by tests. */
-function ReportHead({ report, stale, regenerating, onRegenerate, onDismiss }: ReportHeadProps): JSX.Element {
+function ReportHead({ report, stale, regenerating, onRegenerate, onDismiss, moreTo, titleId = 'wr-title' }: ReportHeadProps): JSX.Element {
   const s = report.stats;
   return (
     <>
       <header className="wr__head">
-        <h2 id="wr-title" className="wr__title">
+        <h2 id={titleId} className="wr__title">
           <span aria-hidden="true">📮</span> {stale ? '往期战报' : '上周战报'}
           <span className="wr__range tabular">
             {shortDate(s.weekStart)} – {shortDate(s.weekEnd)}
@@ -89,9 +94,10 @@ function ReportHead({ report, stale, regenerating, onRegenerate, onDismiss }: Re
               {regenerating ? '重写中…' : '换个说法'}
             </button>
           )}
-          <button type="button" className="wr__close" onClick={onDismiss} aria-label="本周不再显示">
+          {moreTo && <Link className="wr__more" to={moreTo}>读全文 <span aria-hidden="true">›</span></Link>}
+          {onDismiss && <button type="button" className="wr__close" onClick={onDismiss} aria-label="本周不再显示">
             ✕
-          </button>
+          </button>}
         </div>
       </header>
       {stale && <p className="wr__note">上周的战报周一 10:30 之后发布。</p>}
@@ -181,9 +187,12 @@ export function WeeklyReportCard({
   stale = false,
   compact = false,
   hidePigeon = false,
+  moreTo,
+  dismissible = true,
 }: WeeklyReportCardProps): JSX.Element | null {
-  const [hidden, setHidden] = useState(() => isDismissed(report.week_start));
-  if (hidden) return null;
+  const titleId = useId();
+  const [hidden, setHidden] = useState(() => dismissible && isDismissed(report.week_start));
+  if (dismissible && hidden) return null;
 
   const dismiss = (): void => {
     remember(report.week_start);
@@ -191,13 +200,15 @@ export function WeeklyReportCard({
   };
 
   return (
-    <section className={`wr${compact ? ' wr--compact' : ''}`} aria-labelledby="wr-title">
+    <section className={`wr${compact ? ' wr--compact' : ''}`} aria-labelledby={titleId}>
       <ReportHead
+        titleId={titleId}
         report={report}
         stale={stale}
         regenerating={regenerating}
         onRegenerate={onRegenerate}
-        onDismiss={dismiss}
+        onDismiss={dismissible ? dismiss : undefined}
+        moreTo={moreTo}
       />
       {compact ? <CompactBody report={report} /> : <FullBody report={report} hidePigeon={hidePigeon} />}
     </section>

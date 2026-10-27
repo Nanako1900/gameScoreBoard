@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { PublicUser } from '../types';
 import { competitionRanks } from '../lib/rank';
 import { Avatar } from './Avatar';
@@ -7,6 +7,7 @@ import { TierBadge } from './TierBadge';
 import './leaderboard.css';
 
 interface LeaderboardProps {
+  title?: string;
   participants: PublicUser[];
   /** subject id -> net score change accumulated this week (from the records feed). */
   trends: Record<string, number>;
@@ -89,13 +90,15 @@ export function Leaderboard({
   onSelect,
   meId = null,
   highlights,
+  title = '信誉榜',
 }: LeaderboardProps): JSX.Element {
+  const headingId = useId();
   const ranks = competitionRanks(participants.map((p) => p.score));
   return (
-    <section className="lb panel" aria-labelledby="lb-heading">
+    <section className="lb panel" aria-labelledby={headingId}>
       <header className="lb__head">
-        <h2 id="lb-heading" className="lb__title">
-          信誉榜
+        <h2 id={headingId} className="lb__title">
+          {title}
         </h2>
         <span className="lb__count">{participants.length} 位选手</span>
       </header>

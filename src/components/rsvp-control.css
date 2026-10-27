@@ -1,6 +1,6 @@
 /* Shared RSVP controls; a neutral refusal is not a danger action. */
 .rsvp { display: flex; flex-wrap: wrap; gap: 0.45rem; }
-.rsvp__button { display: inline-flex; align-items: center; justify-content: center; gap: 0.3em; min-width: 44px; min-height: 40px; padding: 0.45rem 0.9rem; border: 1px solid var(--border-strong); border-radius: var(--r-pill); font-size: var(--text-sm); color: var(--muted); background: var(--panel-2); }
+.rsvp__button { display: inline-flex; align-items: center; justify-content: center; gap: 0.3em; min-width: 44px; min-height: 40px; padding: 0.45rem 0.9rem; border: 1px solid var(--border-strong); border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--muted); background: var(--panel-2); }
 .rsvp__button--active { color: var(--text); border-color: var(--gold); background: var(--panel); }
 .rsvp__button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rsvp__button.sdt__rsvp-btn--suggested { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }

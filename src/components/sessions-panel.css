@@ -1,12 +1,15 @@
 /* Lobby timeline: headings and cards stay in reading order. */
 .sessions { padding: 1.1rem 1.15rem 1.25rem; }
 .sessions__head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.9rem; margin-bottom: 0.7rem; }
-.sessions__title { flex: 1; font-size: var(--text-h2); letter-spacing: 0.02em; }
-.sessions__zone { color: var(--muted); font-size: var(--text-xs); margin-bottom: 0.6rem; }
+.sessions__title { flex: 1; font-size: var(--fs-lg); letter-spacing: 0.02em; }
+.sessions__zone { color: var(--muted); font-size: var(--fs-sm); margin-bottom: 0.6rem; }
 .sessions__timeline { display: grid; gap: 0.9rem; }
-.sessions__group { font-size: var(--text-sm); font-weight: 600; color: var(--muted); margin-bottom: 0.45rem; }
+.sessions__group { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin-bottom: 0.45rem; }
 .sessions__list { display: grid; gap: 0.6rem; padding: 0; margin: 0; list-style: none; }
-.sessions__empty { display: grid; justify-items: start; gap: 0.65rem; padding: 0.8rem 0; color: var(--muted); font-size: var(--text-sm); }
-.sessions__error { padding: 0.5rem 0; color: var(--danger-text); font-size: var(--text-sm); }
-.sessions__failed { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; font-size: var(--text-sm); color: var(--muted); padding: 0.5rem 0; }
+.sessions__empty { display: grid; justify-items: start; gap: 0.65rem; padding: 0.8rem 0; color: var(--muted); font-size: var(--fs-sm); }
+.sessions__error { padding: 0.5rem 0; color: var(--danger-text); font-size: var(--fs-sm); }
+.sessions__failed { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; font-size: var(--fs-sm); color: var(--muted); padding: 0.5rem 0; }
 @media (pointer: coarse) { .sessions button { min-height: 44px; } }
+
+.sessions__more { font-size: var(--fs-sm); color: var(--muted); min-height: 40px; display: inline-flex; align-items: center; }
+@media (pointer: coarse) { .sessions__more { min-height: 44px; } }

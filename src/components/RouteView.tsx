@@ -10,6 +10,8 @@ import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
 import { SessionDetailDialog } from './SessionDetailDialog';
+import { BoardPage, type BoardData } from './BoardPage';
+import { SessionHistoryPage } from './SessionHistoryPage';
 
 export type { PinnedCase };
 
@@ -27,6 +29,7 @@ interface RouteViewProps {
   /** P1-3: from useEntryTarget — only handed to the session it is about. */
   resume?: LoginIntent | null;
   onResumeDone?: () => void;
+  board?: BoardData;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -125,6 +128,10 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return null;
     case 'notFound':
       return <RouteNotice layout="page" title={NOT_FOUND_TITLE} />;
+    case 'board':
+      return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
+    case 'sessionHistory':
+      return <PageShell><SessionHistoryPage boardTzOffsetHours={props.config.boardTzOffsetHours} /></PageShell>;
     case 'session':
       return (
         <LayoutShell layout={layout}>

@@ -14,7 +14,8 @@ import {
 } from '../api';
 import { REVOKE_TICK_MS } from '../lib/constants';
 import { healPreview, healPreviewText } from '../lib/forgiveness';
-import { PAGE_BACK_LABEL, PINNED_CASE_LABEL, PLAYER_NOT_FOUND, pinnedCaseEyebrow } from '../lib/routeCopy';
+import { BACK_HOME, PAGE_BACK_LABEL, PINNED_CASE_LABEL, PLAYER_NOT_FOUND, SEE_BOARD, pinnedCaseEyebrow } from '../lib/routeCopy';
+import { HOME_PATH, boardPath } from '../lib/routes';
 import { useNow } from '../lib/useNow';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
@@ -246,7 +247,7 @@ export function PlayerDetail({
       <Modal open onClose={onClose} labelledBy={TITLE_ID} size="lg" variant={variant}>
         {variant === 'page' && <PageBar backLabel={PAGE_BACK_LABEL} onBack={onClose} />}
 
-        {state.status === 'missing' && <NotFound title={PLAYER_NOT_FOUND} headingId={TITLE_ID} />}
+        {state.status === 'missing' && <NotFound title={PLAYER_NOT_FOUND} headingId={TITLE_ID} actions={[{ label: BACK_HOME, to: HOME_PATH }, { label: SEE_BOARD, to: boardPath('list') }]} />}
 
         {state.status === 'loading' && (
           <div className="pd__status" aria-live="polite">
