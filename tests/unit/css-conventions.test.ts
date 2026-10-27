@@ -102,6 +102,17 @@ const RULES = SHEETS.flatMap((sheet) => scanRules(sheet.file, sheet.css));
 const STYLE_RULES = RULES.filter((rule) => !rule.prelude.startsWith('@'));
 const where = (rule: CssRule): string => `${rule.file}: ${rule.prelude}`;
 const HOVER_MEDIA = /^@media\b.*\(\s*hover\s*:\s*hover\s*\)/;
+const COARSE_MEDIA = '@media (pointer: coarse)';
+/** Longhands in theme.css's coarse block, and the shorthands that also set them. */
+const RIVAL_PROPS: Readonly<Record<string, readonly string[]>> = {
+  'padding-block': ['padding'],
+  'margin-block': ['margin'],
+};
+
+const selectorsOf = (rule: CssRule): readonly string[] =>
+  rule.prelude.split(',').map((selector) => selector.trim());
+const propsOf = (rule: CssRule): readonly string[] =>
+  [...rule.body.matchAll(/(?:^|;)\s*([\w-]+)\s*:/g)].map((match) => match[1]);
 
 const OUTLINE_REMOVED = /(?:^|[;\s])outline\s*:\s*(?:none|0)\s*(?:!important\s*)?(?:;|$)/;
 const BOX_SHADOW = /(?:^|[;\s])box-shadow\s*:/;
@@ -178,6 +189,32 @@ describe('src/**/*.css', () => {
         !rule.ancestors.some((ancestor) => HOVER_MEDIA.test(ancestor)),
     );
     expect(offenders.map(where)).toEqual([]);
+  });
+
+  it("restates theme.css's touch sizes wherever a component's own rule now beats them", () => {
+    // theme.css loads first (H8): a component's plain `.x { min-height }` silently
+    // undoes the coarse-pointer size theme.css gives `.x`, unless the component
+    // repeats it in its own `@media (pointer: coarse)` after that rule.
+    const components = STYLE_RULES.filter((rule) => rule.file !== 'theme.css');
+    const sets = (rule: CssRule, selector: string, props: readonly string[]): boolean =>
+      selectorsOf(rule).includes(selector) && propsOf(rule).some((prop) => props.includes(prop));
+    const offenders = STYLE_RULES.filter(
+      (rule) => rule.file === 'theme.css' && rule.ancestors.includes(COARSE_MEDIA),
+    ).flatMap((themeRule) =>
+      selectorsOf(themeRule).flatMap((selector) =>
+        propsOf(themeRule)
+          .filter((prop) => {
+            const rivals = [prop, ...(RIVAL_PROPS[prop] ?? [])];
+            const beaten = components.some((r) => r.ancestors.length === 0 && sets(r, selector, rivals));
+            const restated = components.some(
+              (r) => r.ancestors.includes(COARSE_MEDIA) && sets(r, selector, [prop]),
+            );
+            return beaten && !restated;
+          })
+          .map((prop) => `${selector} { ${prop} }`),
+      ),
+    );
+    expect(offenders).toEqual([]);
   });
 });
 

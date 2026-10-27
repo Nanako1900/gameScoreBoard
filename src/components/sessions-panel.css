@@ -40,6 +40,14 @@
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
+/* theme.css loads first now (H8), so its coarse-pointer 40px loses to the 36px
+   above: restate the touch size here, after the rule it has to beat. */
+@media (pointer: coarse) {
+  .sessions__tab {
+    min-height: 40px;
+  }
+}
+
 .sessions__tab--active {
   color: var(--text);
   background: var(--panel-2);

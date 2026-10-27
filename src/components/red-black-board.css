@@ -166,6 +166,14 @@
   transition: gap var(--dur-fast) var(--ease), border-color var(--dur-fast);
 }
 
+/* theme.css loads first now (H8): its coarse padding-block would lose to the
+   padding above while its -0.6rem margin still applied, shrinking the row. */
+@media (pointer: coarse) {
+  .hero-card__link {
+    padding-block: 0.6rem;
+  }
+}
+
 @media (hover: hover) {
   .hero-card__link:hover {
     gap: 0.7rem;
