@@ -7,7 +7,9 @@
 
 import {
   MAX_INVITES,
+  MAX_OPEN_SESSIONS,
   MAX_SESSION_ROSTER,
+  MAX_SESSIONS_PER_DAY,
   ORGANIZER_BONUS_MIN_ATTENDEES,
   SESSION_CANCEL_REASON_MAX,
   SESSION_GAME_MAX,
@@ -276,8 +278,7 @@ export { MAX_INVITES } from '../shared/attendance';
  * Every session invites, posts a card and DMs reminders (Discord, P7), so
  * creating them must not be free.
  */
-export const MAX_OPEN_SESSIONS = 5;
-export const MAX_SESSIONS_PER_DAY = 10;
+export { MAX_OPEN_SESSIONS, MAX_SESSIONS_PER_DAY } from '../shared/attendance';
 
 async function assertCanOrganize(db: D1Database, organizerId: string): Promise<void> {
   const open = await db

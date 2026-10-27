@@ -190,3 +190,10 @@ export const GOING_PREVIEW_MAX = 5;
 export const SESSION_CANCEL_REASON_MAX = 80;
 /** Sessions per page of GET /api/sessions?scope=history. */
 export const SESSION_HISTORY_PAGE = 20;
+
+// --- P2-4 ---
+/** Per organizer: sessions open and still ahead at once, and created per rolling 24 h (cancelled ones count). */
+export const MAX_OPEN_SESSIONS = 5;
+export const MAX_SESSIONS_PER_DAY = 10;
+/** A session without a length is taken to last this long. MUST equal COALESCE(s.duration_min, 120) in server/migrations/0005_sessions.sql (source-hygiene). */
+export const DEFAULT_DURATION_MIN = 120;
