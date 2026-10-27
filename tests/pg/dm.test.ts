@@ -138,7 +138,7 @@ describe('DM events', () => {
         `SELECT kind, entity_id, payload,
                 round(extract(epoch FROM available_at - now()) / 60) AS in_minutes,
                 available_at = ($1::timestamp AT TIME ZONE 'UTC') - interval '2 hours' AS before_deadline
-           FROM outbox ORDER BY id`,
+           FROM outbox WHERE entity = 'user' ORDER BY id`,
         [filed.deadline_at],
       )
     ).rows;
@@ -673,11 +673,11 @@ describe('DM delivery', () => {
     const { judge, subject } = await people();
     await file(judge, subject);
     await pool.query("DELETE FROM outbox WHERE kind = 'dm.deadline'");
-    await pool.query("UPDATE outbox SET available_at = now(), created_at = now() - interval '3 days'");
+    await pool.query("UPDATE outbox SET available_at = now(), created_at = now() - interval '3 days' WHERE entity = 'user'");
     const discord = fakeDiscord();
     discord.fail(Object.assign(new Error('Missing Access'), { status: 403, code: 50001 }));
     await dispatcher(discord.api).runOnce();
-    const [row] = (await pool.query('SELECT result, refused_since IS NOT NULL AS refused FROM outbox')).rows;
+    const [row] = (await pool.query("SELECT result, refused_since IS NOT NULL AS refused FROM outbox WHERE kind = 'dm.filed'")).rows;
     expect(row).toEqual({ result: null, refused: true });
   });
 

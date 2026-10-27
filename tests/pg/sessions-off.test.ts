@@ -45,7 +45,7 @@ describe('sessions off migration', () => {
       await client.query("INSERT INTO outbox (kind, entity, entity_id, dedupe_key, processed_at, result) VALUES ('dm.session.invited', 'user', 'player', 'old-sent', now(), 'sent')");
       await client.query(migration());
       await client.query(migration());
-      const pending = await client.query('SELECT kind, entity, entity_id, payload FROM outbox WHERE processed_at IS NULL ORDER BY id');
+      const pending = await client.query("SELECT kind, entity, entity_id, payload FROM outbox WHERE processed_at IS NULL AND entity <> 'board' ORDER BY id");
       expect(pending.rows).toEqual([{ kind: 'session.removed', entity: 'session', entity_id: sessionId,
         payload: { channel_id: CHANNEL, message_id: MESSAGE } }]);
       expect((await client.query("SELECT COUNT(*)::int AS n FROM outbox WHERE dedupe_key = 'old-sent'")).rows[0].n).toBe(1);
@@ -70,7 +70,7 @@ describe('sessions off migration', () => {
     expect((await pool.query("SELECT * FROM outbox WHERE kind = 'session.removed' AND processed_at IS NULL")).rows).toEqual([]);
   });
 
-  it('writes historical session and player rows without producing new events', async () => {
+  it('writes historical session and player rows without producing retired-session events', async () => {
     await seedUser({ id: 'organizer' });
     await seedUser({ id: 'player' });
     const session = await pool.query("INSERT INTO game_sessions (organizer_id, title, starts_at) VALUES ('organizer', '历史约局', '2099-01-01T12:00:00.000Z') RETURNING id");
@@ -79,7 +79,7 @@ describe('sessions off migration', () => {
     await pool.query("UPDATE game_sessions SET title = '保留历史' WHERE id = $1", [id]);
     await pool.query("UPDATE session_players SET rsvp = 'going' WHERE session_id = $1", [id]);
     await pool.query('DELETE FROM session_players WHERE session_id = $1', [id]);
-    expect((await pool.query('SELECT * FROM outbox')).rows).toEqual([]);
+    expect((await pool.query("SELECT * FROM outbox WHERE entity <> 'board'")).rows).toEqual([]);
   });
 });
 

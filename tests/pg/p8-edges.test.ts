@@ -70,7 +70,9 @@ async function flagged(judge: User, subject: User) {
   return filed;
 }
 
-/** Hold a row lock, queue each contender behind it, then let go (as in concurrency.test.ts). */
+/** Hold only the business row lock, queue contenders, then let go. A watched
+ * UPDATE also takes the board scheduling lock and would split the contenders
+ * across two lock queues, so it cannot establish this test's intended winner. */
 async function queuedBehind<T>(lockSql: string, params: unknown[], contenders: Array<() => Promise<T>>) {
   const holder = await pool.connect();
   try {
@@ -177,7 +179,7 @@ describe('dismissing an escalation, raced', () => {
   it('two at once: one wins, the other gets 409', async () => {
     const { judge, subject } = await cast();
     const filed = await flagged(judge, subject);
-    const settled = await queuedBehind('UPDATE records SET status = status WHERE id = $1', [filed.id], [
+    const settled = await queuedBehind('SELECT id FROM records WHERE id = $1 FOR UPDATE', [filed.id], [
       () => dismissEscalation(env.DB, judge, filed.id),
       () => dismissEscalation(env.DB, judge, filed.id),
     ]);
@@ -188,7 +190,7 @@ describe('dismissing an escalation, raced', () => {
   it('against the case going to judgment: 409, and the case is left as it is', async () => {
     const { judge, subject } = await cast();
     const filed = await flagged(judge, subject);
-    const settled = await queuedBehind<unknown>('UPDATE records SET status = status WHERE id = $1', [filed.id], [
+    const settled = await queuedBehind<unknown>('SELECT id FROM records WHERE id = $1 FOR UPDATE', [filed.id], [
       () => env.DB.prepare("UPDATE records SET status = 'judging' WHERE id = ?").bind(filed.id).run(),
       () => dismissEscalation(env.DB, judge, filed.id),
     ]);
