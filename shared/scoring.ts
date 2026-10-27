@@ -160,7 +160,7 @@ export function isCaseStatus(v: string): v is CaseStatus {
 export type VerdictSource = 'ai' | 'fallback' | 'manual' | 'admin_override';
 
 export const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
-  awaiting_statement: '待陈述',
+  awaiting_statement: '待说明',
   judging: '裁决中',
   decided: '',
   appealed: '申诉中',

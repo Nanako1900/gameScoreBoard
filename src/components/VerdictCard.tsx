@@ -83,7 +83,7 @@ export function VerdictCard({
 
       {record.claim && (
         <blockquote className="vc__quote vc__quote--claim">
-          <span className="vc__quote-who">裁判陈述</span>
+          <span className="vc__quote-who">立案经过</span>
           <p>{record.claim}</p>
         </blockquote>
       )}
@@ -98,7 +98,8 @@ export function VerdictCard({
           <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
         </p>
       ) : (
-        !pending && trial && (
+        // A withdrawn case was never judged at all (M17): no "absent" either.
+        !pending && status !== 'withdrawn' && trial && (
           <p className="vc__absent">该选手没有在期限内说明情况，按缺席裁决。</p>
         )
       )}

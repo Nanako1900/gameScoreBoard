@@ -97,7 +97,7 @@ export function StatementDialog({
           )}
 
           <blockquote className="sd__claim">
-            <span className="sd__claim-who">裁判陈述</span>
+            <span className="sd__claim-who">立案经过</span>
             <p>{record.claim ?? '（未填写）'}</p>
           </blockquote>
 

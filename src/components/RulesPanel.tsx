@@ -44,7 +44,7 @@ export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelP
       {open && (
         <div className="rules__body" id="rules-body">
           <p className="rules__heal">
-            每位选手每周一（{config ? '本地时区' : ''}）自动恢复
+            每位选手每周一 0 点自动恢复
             <strong className="rules__heal-num tabular"> +{config.weeklyHeal} </strong>
             分（上限 100）。守约加分每周最多
             <strong className="rules__heal-num tabular"> +{config.weeklyBonusCap} </strong>
