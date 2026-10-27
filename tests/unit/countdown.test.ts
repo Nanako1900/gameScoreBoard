@@ -1,6 +1,8 @@
 // P0-3: the minute-level reset countdown, prose time-left, and the tab title.
 import { describe, expect, it } from 'vitest';
 import { formatResetCountdown, formatTimeLeft, RESET_PENDING_LABEL } from '../../src/lib/time';
+import { BASE_TITLE, tabTitle, todoCount } from '../../src/lib/tabTitle';
+import type { User } from '../../src/types';
 
 const TARGET = '2026-11-01T16:00:00.000Z';
 const T = Date.parse(TARGET);
@@ -51,5 +53,46 @@ describe('formatTimeLeft', () => {
     expect(formatTimeLeft(TARGET, T)).toBe('');
     expect(formatTimeLeft(TARGET, T + MIN)).toBe('');
     expect(formatTimeLeft('soon', T)).toBe('');
+  });
+});
+
+const ME: User = {
+  id: 'm',
+  username: '我',
+  oauth_username: 'm',
+  avatar_url: null,
+  is_participant: true,
+  is_judge: false,
+  is_admin: false,
+  score: 90,
+  created_at: '2026-10-01 00:00:00',
+};
+
+describe('tabTitle', () => {
+  it('no count: the bare title', () => {
+    expect(BASE_TITLE).toBe('EDG 信誉分');
+    expect(tabTitle(0)).toBe('EDG 信誉分');
+    expect(tabTitle(-1)).toBe('EDG 信誉分');
+    expect(tabTitle(Number.NaN)).toBe('EDG 信誉分');
+  });
+
+  it('a count in front', () => {
+    expect(tabTitle(4)).toBe('(4) EDG 信誉分');
+  });
+});
+
+describe('todoCount', () => {
+  const pending = { statements: 2, appeals: 1 };
+
+  it('signed out: 0', () => {
+    expect(todoCount({ me: null, invites: [1, 2], pending })).toBe(0);
+  });
+
+  it('invites + statements for a player', () => {
+    expect(todoCount({ me: ME, invites: [1], pending })).toBe(3);
+  });
+
+  it('admins also count appeals to review', () => {
+    expect(todoCount({ me: { ...ME, is_admin: true }, invites: [1], pending })).toBe(4);
   });
 });
