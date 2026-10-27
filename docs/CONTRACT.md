@@ -255,15 +255,15 @@ All three POST endpoints return 503 in read-only mode and enforce the existing C
 No per-message delivery tracking or onboarding completion field is added to the GET response.
 
 **Cases**
-- `POST /api/records` — two shapes, both requiring `is_judge`:
+- `POST /api/records` — two shapes, both requiring `is_judge || is_admin` (裁判或管理员):
   - **v3 default (batch, AI classifies):** `{ subject_ids: string[], claim, extras?, note? }`
     → `{ records: RecordItem[], failed: { subject_id, error }[] }`.
     One case per subject, each classified by its own AI call. `extras[subject_id]`
     is appended to that person's claim as `补充：…`. Max `maxBatchSubjects` (8).
     **Partial failure is not an error**: an invalid subject lands in `failed` and
-    the rest are still filed, so a judge never loses everything they typed.
+    the rest are still filed, so the caller never loses everything they typed.
   - **Deterministic (single):** `{ subject_id, type?, claim?, note? }` → `{ record, records, failed }`.
-    Used when the judge already knows a penalty type. Omitting `type` here
+    Used when the caller already knows a penalty type. Omitting `type` here
     also triggers AI classification; explicit bonus types return 400 「加分类型已停用」.
   - Common rules: reject self-reports, unknown types, non-participants; penalties
     require `claim` (≥ `MIN_CLAIM_LEN`) and open `awaiting_statement` with
@@ -385,13 +385,25 @@ Scheduling and invitation API routes have been removed and return the existing 4
   that post.
 
 ### Admin (is_admin)
+- `GET /api/admin/users` → `{ users: AdminUserRow[], truncated: boolean }`.
+  Includes unlisted accounts (judges and visitors as well as participants), ordered by
+  `created_at DESC, id ASC`. Read at most 501 rows, return at most 500; `truncated` is
+  true only when a 501st row exists. No pagination or server-side search parameters.
+  `AdminUserRow` contains exactly `id`, `username` (effective display name, falling back
+  to the OAuth account name), `avatar_url`, `is_participant`, `is_judge`, `is_admin`,
+  `score`, `created_at`; role flags are booleans and registration is UTC text.
+  Returns no email, OAuth username or Discord fields. `Cache-Control: private, no-store`
+  applies to success and denial responses; 401 when signed out, 403 for non-admins.
+  Available on both D1 and PostgreSQL, including read-only mode.
 - `POST /api/admin/report/:week/regenerate` → `{ report }`. Re-roll the narrative
   for `YYYY-MM-DD` (a local Monday); recomputes the stats too. Only a finished
   week: a non-Monday or a week still running is a 400.
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
   `score` sets it by hand (clamped to 0–100, logged as `admin_adjust`); on the
   Node backend a real change DMs the player if they are bound (old → new). The
-  player page offers it to admins (type the number, then confirm).
+  player and members pages offer it to admins (type the number, then confirm).
+  These existing backend capabilities remain available; the members UI has
+  no delete, admin-grant or participant-toggle controls.
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
   `decided`/`appealed` only; delta is clamped to the violation range; the score
   moves by the difference so the record ends up worth exactly the new delta.
@@ -591,6 +603,8 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   | `/welcome` | full page: five-step onboarding and account settings | same full page |
   | `/guide` | full page: shared bot guide | same full page |
   | `/admin`, `/admin/voice` | full page: private voice evidence for judges and admins | same full page |
+  | `/admin/ai` | full page: AI configuration, admins only | same full page |
+  | `/admin/members` | full page: all-account management, admins only | same full page |
   | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | the same page |
   | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the home page |
@@ -606,14 +620,27 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   「约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。」 and a 「回首页」 button.
   Not found: `/players/<userId>` → 「找不到这位选手。」 with 「看信誉榜」; a case →
   「链接里的案件不存在了。」, any other failure → 「打不开链接里的案件，稍后再试。」.
-- `/admin` and `/admin/voice` share the 「管理」 shell and the sole 「语音记录」 tab.
-  Signed-out readers and users without judge/admin roles render NotFound without fetching evidence.
-  `/admin/ai` and `/admin/members` still render NotFound until S5.
-  With no `?user`, show a board-date picker (default today) and the day roster; choosing a person pushes
+- All `/admin` pages share the 「管理」 shell. Admins see 「语音记录」「AI 设置」「成员」;
+  judges see only 「语音记录」. Signed-out readers and users without judge/admin roles render
+  NotFound without fetching private data. `/admin/ai` and `/admin/members` require an admin;
+  judges render NotFound before requesting either API. API 403/404 removes those pages and
+  their navigation without exposing backend details; ordinary errors offer a local retry.
+  On `/admin` or `/admin/voice`, with no `?user`, show a board-date picker (default today)
+  and the day roster; choosing a person pushes
   `/admin/voice?user=<encoded Nanako ID>`. With `?user`, show 7 / 14 / 31-day history ending today.
   Invalid IDs and API 404 render NotFound. Scope or viewer changes immediately hide prior evidence;
   a late response cannot replace the current view. Loading and ordinary errors retain the private page with retry.
-  Judges/admins have a 「管理」 menu link to `/admin`; admins keep the existing AI dialog as 「AI 设置」 until S5.
+  Judges/admins have a 「管理」 menu link to `/admin`. The old AI dialog and its account-menu
+  entry are retired; AI settings now live at `/admin/ai`, preserving the three prompts,
+  saved-configuration dry run (`{}`), and 7-day health statistics.
+  `/admin/members` uses client-side name search over the returned list, with a visible
+  latest-500/search-scope hint when truncated. Each row shows avatar, effective name, role
+  tags, plain score and registration time in the board timezone. Admins can set or revoke
+  judge status and expand the existing two-step score form; self-dismissal is hidden.
+  Successful writes show a Toast and reload the list, also invalidating leaderboard, me
+  and `/api/records?limit=50`. A failed list reload after a successful write says the
+  change was saved. Owner/tab changes or loss of role hide prior data and invalidate
+  late reads/writes, including their refreshes and Toasts.
   Each selected CaseDialog subject has 「看 TA 的语音记录」 linking to their history with
   `target="_blank" rel="noopener"`, preserving the filing draft in its original tab.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
