@@ -6,6 +6,8 @@ import { lastWeekStartOf, parseTimestamp } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
+import { visibleRefreshKeys } from './lib/refreshPolicy';
+import { useVisibleRefresh } from './lib/useVisibleRefresh';
 import { ToastProvider, useToast } from './components/Toast';
 import { Header } from './components/Header';
 import { RedBlackBoard } from './components/RedBlackBoard';
@@ -178,6 +180,13 @@ function AppMain(): JSX.Element {
     void refresh(CHANGE_KEYS);
     setSessionsKey((n) => n + 1);
   }, [refresh]);
+
+  const handleVisible = useCallback((): void => {
+    if (!ready) return;
+    void refresh(visibleRefreshKeys(ready.config.nextResetAt, Date.now()));
+    setSessionsKey((n) => n + 1);
+  }, [ready, refresh]);
+  useVisibleRefresh(handleVisible);
 
   // The admin re-rolls the weekly report's prose: nothing but the report changes.
   // It used to reject unhandled on failure; now the admin is told.

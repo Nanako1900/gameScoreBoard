@@ -240,3 +240,28 @@ describe('App — the admin re-rolls the weekly report', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '换个说法' })).toBeEnabled());
   });
 });
+
+describe('App — coming back to the tab', () => {
+  it('refetches after more than 60 s — board, feed, me and sessions, never config', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    const calls = mockFetch(routes());
+    render(<App />);
+    await screen.findByRole('button', { name: ROW });
+    await settle();
+
+    vi.setSystemTime(START + 30_000);
+    leaveAndReturn();
+    await settle();
+    expect(gets(calls, '/api/leaderboard')).toBe(1);
+
+    vi.setSystemTime(START + MINUTE + 1_000);
+    leaveAndReturn();
+    await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
+    await waitFor(() => expect(gets(calls, '/api/sessions?scope=upcoming')).toBe(2));
+    expect(gets(calls, '/api/records?limit=50')).toBe(2);
+    expect(gets(calls, '/api/me')).toBe(2);
+    expect(gets(calls, '/api/config')).toBe(1);
+    expect(gets(calls, '/api/report/latest')).toBe(1);
+  });
+});
