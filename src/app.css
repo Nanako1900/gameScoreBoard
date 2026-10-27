@@ -46,7 +46,7 @@
 
 .app__error-title {
   font-size: var(--text-h1);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .app__error-msg {

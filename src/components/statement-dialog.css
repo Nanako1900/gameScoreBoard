@@ -109,7 +109,7 @@
 
 .sd__error {
   font-size: var(--text-sm);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .sd__actions {

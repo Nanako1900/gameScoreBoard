@@ -163,7 +163,7 @@
 }
 
 .hdr__dropdown-item--danger {
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .hdr__dropdown-item--danger:hover {

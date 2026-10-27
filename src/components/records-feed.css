@@ -166,7 +166,7 @@
 
 /* AI 想升级到团灭级、等人确认 */
 .feed-row__status--escalate {
-  color: var(--red);
+  color: var(--danger-text);
   background: rgba(229, 72, 77, 0.14);
   border-color: rgba(229, 72, 77, 0.4);
 }

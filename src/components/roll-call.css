@@ -14,7 +14,7 @@
 .rc__error {
   margin-top: 0.75rem;
   font-size: var(--text-sm);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .rc__empty {

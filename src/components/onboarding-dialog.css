@@ -79,7 +79,7 @@
 
 .ob__error {
   margin-top: 1rem;
-  color: var(--red);
+  color: var(--danger-text);
   font-size: var(--text-sm);
   padding: 0.6rem 0.75rem;
   border-radius: var(--r-md);

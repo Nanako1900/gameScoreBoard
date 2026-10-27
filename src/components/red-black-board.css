@@ -27,8 +27,8 @@
 }
 
 .rbb__title-slash {
-  color: var(--red);
-  -webkit-text-fill-color: var(--red);
+  color: var(--danger-text);
+  -webkit-text-fill-color: var(--danger-text);
   margin: 0 0.05em;
 }
 

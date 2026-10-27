@@ -104,6 +104,8 @@ const where = (rule: CssRule): string => `${rule.file}: ${rule.prelude}`;
 
 const OUTLINE_REMOVED = /(?:^|[;\s])outline\s*:\s*(?:none|0)\s*(?:!important\s*)?(?:;|$)/;
 const BOX_SHADOW = /(?:^|[;\s])box-shadow\s*:/;
+/** `color` / `-webkit-text-fill-color` set to the fill red (4.2:1 on --panel-2 — too dim for text). */
+const RED_TEXT = /(?:^|[;\s])(?:-webkit-text-fill-)?color\s*:\s*(?:var\(--red\)|var\(--danger\)|#e5484d)/i;
 
 describe('css scanner', () => {
   it('sees every stylesheet and its rules', () => {
@@ -150,6 +152,10 @@ describe('src/**/*.css', () => {
       (rule) => rule.prelude.includes(':focus') && BOX_SHADOW.test(rule.body),
     );
     expect(offenders.map(where)).toEqual([]);
+  });
+
+  it('writes red text with --danger-text, never the fill red', () => {
+    expect(STYLE_RULES.filter((rule) => RED_TEXT.test(rule.body)).map(where)).toEqual([]);
   });
 });
 

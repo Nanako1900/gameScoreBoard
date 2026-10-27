@@ -55,7 +55,7 @@
 
 .sessions__error {
   padding: 0.5rem 0;
-  color: var(--red);
+  color: var(--danger-text);
   text-align: left;
 }
 
