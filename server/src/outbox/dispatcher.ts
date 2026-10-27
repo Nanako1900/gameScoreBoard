@@ -32,6 +32,7 @@ import {
 } from './kit';
 
 import { deliverReport, REPORT_KINDS } from './report-delivery';
+import { deliverBoard, BOARD_KINDS } from './board-delivery';
 import { deliverEscalation, deliverRecharged, ESCALATION_KINDS } from './escalation-delivery';
 import { deliverScoreAdjusted, SCORE_KIND } from './score-delivery';
 
@@ -208,8 +209,8 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     if (authFailures.length >= AUTH_FAILURES_TO_PAUSE) {
       authFailures.length = 0;
       pause(
-        'Discord keeps refusing the bot (403) — check its permissions in the verdict channel ' +
-          '(DISCORD_VERDICT_CHANNEL_ID)',
+        'Discord keeps refusing the bot (403) — check its channel permissions ' +
+          '(DISCORD_VERDICT_CHANNEL_ID / DISCORD_BOARD_CHANNEL_ID)',
       );
     }
   }
@@ -226,7 +227,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return { result: 'retry', note, refused: true };
     }
     if (errorCode(error) === UNKNOWN_CHANNEL) {
-      return { result: 'dead', note: `unknown channel — check DISCORD_VERDICT_CHANNEL_ID: ${note}` };
+      return { result: 'dead', note: `unknown channel — check ${row.entity === 'board' ? 'DISCORD_BOARD_CHANNEL_ID' : 'DISCORD_VERDICT_CHANNEL_ID'}: ${note}` };
     }
     if (status !== null && status >= 400 && status < 500 && status !== 429) return { result: 'dead', note };
     // 5xx, 429 that outlived discord.js's own handling, network errors.
@@ -430,7 +431,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     if (row.kind === 'dm.welcome') {
       const to = await recipient(row.entity_id);
       if (isOutcome(to)) return to;
-      const sent = await sendDm(row, to, renderWelcomeDm(config.frontendUrl));
+      const sent = await sendDm(row, to, renderWelcomeDm(config.frontendUrl, config.boardChannelId));
       return isOutcome(sent) ? sent : { result: 'sent', note: null };
     }
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
@@ -561,7 +562,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
               ? await deliverSession(row)
               : row.entity === 'report' && REPORT_KINDS.has(row.kind)
                 ? await deliverReport(row, { pool, db, api, config })
-                : unhandled(row);
+                : row.entity === 'board' && BOARD_KINDS.has(row.kind)
+                  ? await deliverBoard(row, { pool, db, api, config })
+                  : unhandled(row);
     } catch (error) {
       outcome = outcomeOf(error, row);
       if (outcome.result === 'retry') log.warn(`outbox ${row.id} failed (attempt ${row.attempts}), will retry: ${outcome.note}`);

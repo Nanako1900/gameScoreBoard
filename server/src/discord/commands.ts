@@ -404,3 +404,27 @@ export async function handleCommand(input: CommandInput, ctx: BotContext): Promi
     throw error;
   }
 }
+
+export type BoardAction = 'me' | 'voice';
+
+/** Board buttons carry no person or range: they always read the caller. */
+export function parseBoardButton(customId: string): BoardAction | null {
+  if (customId === 'v1:board:me') return 'me';
+  if (customId === 'v1:board:voice') return 'voice';
+  return null;
+}
+
+/** Reuse the command paths, including their binding prompts and private reads. */
+export async function handleBoardButton(action: BoardAction, caller: DiscordUserRef, ctx: BotContext): Promise<BotReply> {
+  const input = { caller, targetUser: null };
+  if (action === 'voice') return handleCommand({ ...input, commandName: 'voice' }, ctx);
+
+  const score = await handleCommand({ ...input, commandName: 'score' }, ctx);
+  // An unbound caller gets the original score prompt once, without running todo.
+  if (!score.embeds?.length) return score;
+  const todo = await handleCommand({ ...input, commandName: 'todo' }, ctx);
+  const buttons = [...(score.buttons ?? []), ...(todo.buttons ?? [])]
+    .filter((button, index, all) => all.findIndex((candidate) => candidate.url === button.url) === index);
+  const content = [score.content, todo.content].filter(Boolean).join('\n\n') || undefined;
+  return ephemeralReply(content, { embeds: [...score.embeds, ...(todo.embeds ?? [])], buttons });
+}

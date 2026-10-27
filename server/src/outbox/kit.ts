@@ -18,11 +18,15 @@ export interface ChannelApi {
   remove(channelId: string, messageId: string): Promise<void>;
   /** The DM channel with this Discord user (opened if need be). */
   openDm(discordUserId: string): Promise<string>;
+  /** Internal recovery: all own board marker messages, optionally newer than a canonical id. */
+  findBoards?(channelId: string, afterId?: string): Promise<string[]>;
 }
 
 export interface DispatcherConfig {
   /** null: verdict events are marked skipped, nothing is posted. */
   verdictChannelId: string | null;
+  /** null or absent: public board refreshes are skipped. */
+  boardChannelId?: string | null;
   frontendUrl: string;
   /** The board's time zone (RESET_TZ_OFFSET): when a week is over. Default UTC+8. */
   offsetHours?: number;

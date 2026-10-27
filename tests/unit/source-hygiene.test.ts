@@ -267,3 +267,34 @@ describe('voice evidence documentation', () => {
     expect(readme).not.toContain('后续语音、信息板与管理路由');
   });
 });
+
+
+// S4: deployment docs must describe the implemented public board and recovery boundary.
+describe('information board documentation', () => {
+  it('documents the new queue entity, source triggers and unchanged D1 schema', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const board = contract.split('## Discord information board (S4)')[1]?.split('\n## ')[0] ?? '';
+    for (const token of ['`board.refresh`', '`board`', '`0011_board.sql`', '`schedule_board_refresh()`', '`score_events`', '`records`', '`users`', '`weekly_reports`']) expect(board).toContain(token);
+    expect(board).toContain('D1 needs no S4 migration');
+    expect(board).toContain('BEFORE STATEMENT'); expect(board).toContain('AFTER STATEMENT');
+  });
+  it('documents public projection and private guild-bound board buttons', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const board = contract.split('## Discord information board (S4)')[1]?.split('\n## ')[0] ?? '';
+    for (const token of ['15', '5', '`v1:board:me`', '`v1:board:voice`', 'ephemeral', 'no tiers', 'no Discord account IDs or channel IDs', 'count only']) expect(board).toContain(token);
+  });
+  it('documents strict recovery and the owner-run channel setup', () => {
+    const deploy = readFileSync(path.join(ROOT, 'docs/DEPLOY-DISCORD.md'), 'utf8');
+    for (const text of ['## S4 信息板', '`DISCORD_BOARD_CHANNEL_ID`', '读取消息历史', '机器人自己', '普通聊天正文', 'nonce', '10–40', '`0011_board.sql`']) expect(deploy).toContain(text);
+    expect(deploy).toContain('权限'); expect(deploy).toContain('机主');
+    expect(deploy).not.toContain('信息板频道在 S4 加入');
+  });
+  it('keeps welcome channel links private and stops advertising the board as future work', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    expect(contract).toContain('Only the welcome DM');
+    expect(contract).toContain('`<#channelId>`');
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    expect(readme).toContain('S4'); expect(readme).toContain('`DISCORD_BOARD_CHANNEL_ID`');
+    expect(readme).not.toContain('后续信息板与 AI / 成员管理路由');
+  });
+});
