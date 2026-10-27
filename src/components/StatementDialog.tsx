@@ -121,6 +121,7 @@ export function StatementDialog({ open, record, config, onClose, onDecided, scor
         labelledBy={TITLE_ID}
         size="md"
         dismissible={outcome !== null || !draft.dirty}
+        historyKey="statement"
       >
         {outcome ? (
           <StatementOutcome outcome={outcome} weeklyHeal={config.weeklyHeal} onClose={onClose} onAppeal={() => setAppealing(true)} />

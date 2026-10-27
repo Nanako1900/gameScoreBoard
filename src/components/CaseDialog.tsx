@@ -134,7 +134,7 @@ export function CaseDialog({
   };
 
   return (
-    <Modal open={open} onClose={guard.requestClose} labelledBy="case-dialog-title" size="md" dismissible={!draft.dirty}>
+    <Modal open={open} onClose={guard.requestClose} labelledBy="case-dialog-title" size="md" dismissible={!draft.dirty} historyKey="case">
       <h2 id="case-dialog-title" className="cd__title">
         记一笔
       </h2>
