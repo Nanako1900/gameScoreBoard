@@ -185,7 +185,10 @@ describe('RescheduleSheet', () => {
     });
     const user = userEvent.setup();
     const { sheet } = renderSheet();
-    await user.click(within(sheet).getByRole('button', { name: /其他时间/ }));
+    // The ▸ / ▾ is decoration: the name stays 其他时间, the state is aria-expanded.
+    const toggle = within(sheet).getByRole('button', { name: '其他时间' });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     const input = within(sheet).getByLabelText('自定义开始时间');
     expect(input).toHaveValue('2026-10-28T11:00');
     fireEvent.change(input, { target: { value: '' } });

@@ -169,7 +169,7 @@ function SlotPicker({
           aria-expanded={customOpen}
           onClick={onToggleCustom}
         >
-          其他时间 {customOpen ? '▾' : '▸'}
+          其他时间 <span aria-hidden="true">{customOpen ? '▾' : '▸'}</span>
         </button>
       </div>
       {customOpen && (
