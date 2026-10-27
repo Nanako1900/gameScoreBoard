@@ -6,6 +6,7 @@
 // only renders and parses.
 
 import { ButtonStyle, ComponentType, type APIActionRowComponent, type APIButtonComponent } from 'discord.js';
+import { SESSION_CANCEL_REASON_MAX } from '../../../shared/attendance';
 import { ApiError } from '../../../worker/errors';
 import { createSession, getSessionDetail, setRsvp } from '../../../worker/sessions';
 import type { SessionDetail } from '../../../worker/types';
@@ -184,10 +185,13 @@ export function renderSessionDm(kind: SessionDmKind, session: SessionDetail, fro
         { title: `🔁 约局改时间了：${title}`, description: `新的时间：${when}`, color: GOLD },
         [rsvpRow(session, frontendUrl)],
       );
-    case 'dm.session.cancelled':
-      return message({ title: `🚫 约局取消了：${title}`, description: `原定 ${when}，由 ${organizer} 取消。`, color: GREY }, [
-        web,
-      ]);
+    case 'dm.session.cancelled': {
+      // P2-3: the organizer's reason, when there is one, on a line of its own.
+      const said = `原定 ${when}，由 ${organizer} 取消。`;
+      const reason = session.cancel_reason ? safeLine(session.cancel_reason, SESSION_CANCEL_REASON_MAX) : '';
+      const description = reason ? `${said}\n理由：${reason}` : said;
+      return message({ title: `🚫 约局取消了：${title}`, description, color: GREY }, [web]);
+    }
     case 'dm.session.rollcall':
       return message(
         {

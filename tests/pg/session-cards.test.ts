@@ -951,3 +951,33 @@ describe('invites after creation', () => {
     expect(held.rows.map((r) => r.entity_id)).toEqual(['a']);
   });
 });
+
+// --- P2-3 ---
+describe('a cancel with a reason', () => {
+  async function cancelled(reason?: string): Promise<{ to: string[]; texts: string[] }> {
+    const { org, a, b } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await cancelSession(env.DB, org, session.id, reason);
+    const to = (await events()).filter((e) => e.kind === 'dm.session.cancelled').map((e) => e.entity_id).sort();
+    const discord = fakeDiscord();
+    await dispatcher(discord.api, null).runOnce();
+    const texts = discord.sent.filter((s) => text(s.message).includes('约局取消了')).map((s) => text(s.message));
+    return { to, texts };
+  }
+
+  it('reaches the same people, and the DM carries the reason', async () => {
+    const { to, texts } = await cancelled('  临时加班，改天  ');
+    expect(to).toEqual(['a', 'b']);
+    expect(texts).toHaveLength(2);
+    for (const t of texts) expect(t).toContain('理由：临时加班，改天');
+  });
+
+  it('without one, the same people and no reason line', async () => {
+    const { to, texts } = await cancelled();
+    expect(to).toEqual(['a', 'b']);
+    expect(texts).toHaveLength(2);
+    for (const t of texts) expect(t).not.toContain('理由');
+  });
+});

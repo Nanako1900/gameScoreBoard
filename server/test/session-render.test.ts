@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseRsvpButton, renderSessionDm, sessionCard, sessionDmRelevant, slotIso } from '../src/discord/sessions';
 import type { SessionDetail } from '../../worker/types';
+import { SESSION_CANCEL_REASON_MAX } from '../../shared/attendance';
 
 const EVIL = '[报名](https://evil.example) @everyone <@123456789012345678>';
 const NOW = Date.parse('2026-10-26T04:00:00.000Z'); // 12:00 at UTC+8
@@ -109,3 +110,30 @@ describe('session DMs', () => {
   });
 });
 
+// --- P2-3 ---
+describe('the cancel DM', () => {
+  const BEFORE_P2_3 = '原定 <t:1793016000:F>（<t:1793016000:R>），由 组织者 取消。';
+  const descriptionOf = (s: SessionDetail): string =>
+    renderSessionDm('dm.session.cancelled', s, 'https://score.example').embeds[0].description ?? '';
+
+  it('without a reason reads exactly as before', () => {
+    expect(descriptionOf(session({ status: 'cancelled' }))).toBe(BEFORE_P2_3);
+    expect(descriptionOf(session({ status: 'cancelled', cancel_reason: null, cancelled_at: null }))).toBe(BEFORE_P2_3);
+  });
+
+  it('with a reason adds it on its own line, defused and cut to SESSION_CANCEL_REASON_MAX', () => {
+    const plain = descriptionOf(session({ status: 'cancelled', cancel_reason: '临时加班，改天' }));
+    expect(plain).toBe(`${BEFORE_P2_3}\n理由：临时加班，改天`);
+
+    const evil = descriptionOf(session({ status: 'cancelled', cancel_reason: `${EVIL}\n第二行` }));
+    const reason = evil.split('\n理由：')[1] ?? '';
+    expect(reason).toContain('报名');
+    expect(reason).not.toContain('](');
+    expect(reason).not.toMatch(/@everyone/);
+    expect(reason).not.toContain('<@');
+    expect(reason).not.toContain('\n');
+
+    const long = descriptionOf(session({ status: 'cancelled', cancel_reason: '加'.repeat(SESSION_CANCEL_REASON_MAX + 20) }));
+    expect([...(long.split('\n理由：')[1] ?? '')].length).toBeLessThanOrEqual(SESSION_CANCEL_REASON_MAX);
+  });
+});
