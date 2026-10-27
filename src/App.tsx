@@ -14,8 +14,8 @@ import { useTabTitle } from './lib/useTabTitle';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
-import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
+import { WeekHighlights } from './components/WeekHighlights';
 import { RecordsFeed } from './components/RecordsFeed';
 import { RulesPanel } from './components/RulesPanel';
 import { CaseDialog } from './components/CaseDialog';
@@ -228,8 +228,6 @@ function AppMain(): JSX.Element {
   }
 
   const { config, participants, records, me, myPending, invites, report } = state.data;
-  const top = participants.length > 0 ? participants[0] : null;
-  const bottom = participants.length > 1 ? participants[participants.length - 1] : null;
   const canRecord = me?.is_judge === true;
 
   return (
@@ -278,8 +276,6 @@ function AppMain(): JSX.Element {
           onCreate={() => setSessionFormOpen(true)}
         />
 
-        <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
-
         {report && (
           <WeeklyReportCard
             report={report}
@@ -304,6 +300,13 @@ function AppMain(): JSX.Element {
               counts={counts}
               onSelect={setSelectedUserId}
               meId={me?.id ?? null}
+              highlights={
+                <WeekHighlights
+                  records={records}
+                  nextResetAt={config.nextResetAt}
+                  onSelectUser={setSelectedUserId}
+                />
+              }
             />
             <RulesPanel config={config} />
           </div>

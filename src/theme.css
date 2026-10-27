@@ -372,7 +372,6 @@ h3 {
   /* 句子里的文字型按钮：靠内外边距互相抵消把热区撑大，同时不推动周围排版 */
   .feed-row__subject,
   .invite__detail,
-  .hero-card__link,
   .wr__regen {
     padding-block: 0.6rem;
     margin-block: -0.6rem;

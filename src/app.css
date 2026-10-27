@@ -76,11 +76,6 @@
   margin-top: calc(-1 * clamp(1.1rem, 0.9rem + 1vw, 1.9rem) + 0.5rem);
 }
 
-/* The board is the brand moment: give it room above, but only above. */
-.app__main > .rbb {
-  margin-top: clamp(0.5rem, 0.25rem + 1.5vw, 1.75rem);
-}
-
 .app__grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;
@@ -165,11 +160,6 @@
   }
   .app__col--side {
     position: static;
-  }
-  /* Reclaim the hero's breathing room on phones — vertical space is the scarce
-     resource there, not visual drama. */
-  .app__main > .rbb {
-    margin-top: 0;
   }
 }
 

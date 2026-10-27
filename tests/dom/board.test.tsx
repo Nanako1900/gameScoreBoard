@@ -1,6 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Leaderboard } from '../../src/components/Leaderboard';
+import { WeekHighlights } from '../../src/components/WeekHighlights';
 import type { CaseStatus, PublicUser, RecordItem, ViolationType } from '../../src/types';
 
 // P0-4 (spec §9): the board without shaming — tied ranks, no medals, scores on
@@ -105,5 +107,50 @@ describe('Leaderboard', () => {
       <Leaderboard participants={TIED} trends={{}} counts={{}} onSelect={() => {}} highlights={<p className="wh">x</p>} />,
     );
     expect(container.querySelector('.lb__head + .wh + .lb__list')).not.toBeNull();
+  });
+});
+
+describe('WeekHighlights', () => {
+  it('names this week’s stars, most bonuses first, and links to them', async () => {
+    const onSelectUser = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(
+      <WeekHighlights records={STAR_FEED} nextResetAt={NEXT_RESET} onSelectUser={onSelectUser} />,
+    );
+    expect(container.textContent).toBe('⭐ 本周之星：阿杰（准时 3 次）、小红（准时 2 次）');
+    await user.click(screen.getByRole('button', { name: '小红' }));
+    expect(onSelectUser).toHaveBeenCalledWith('b');
+  });
+
+  it('renders nothing when the feed does not cover the whole week', () => {
+    const { container } = render(<WeekHighlights records={STAR_FEED.slice(0, -1)} nextResetAt={NEXT_RESET} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('celebrates a clean week and nudges when nobody made it', () => {
+    const { rerender } = render(<WeekHighlights records={[onTime(2, 'a'), OLD]} nextResetAt={NEXT_RESET} />);
+    expect(screen.getByText('本周全员守约 🎉')).toBeInTheDocument();
+    rerender(<WeekHighlights records={[rec(2, 'a', 'no_show', -12), OLD]} nextResetAt={NEXT_RESET} />);
+    expect(screen.getByText('本周还没人摘星，今晚去约一局？')).toBeInTheDocument();
+  });
+
+  it('is never a heading', () => {
+    render(<WeekHighlights records={STAR_FEED} nextResetAt={NEXT_RESET} />);
+    expect(screen.queryAllByRole('heading')).toEqual([]);
+  });
+
+  it('a low score can still be the star, and the board names no 鸽王', () => {
+    const low = [player('a', '阿杰', 100), player('b', '小红', 30)];
+    const { container } = render(
+      <Leaderboard
+        participants={low}
+        trends={{}}
+        counts={{}}
+        onSelect={() => {}}
+        highlights={<WeekHighlights records={[onTime(3, 'b'), onTime(2, 'b'), OLD]} nextResetAt={NEXT_RESET} />}
+      />,
+    );
+    expect(container.querySelector('.wh')?.textContent).toBe('⭐ 本周之星：小红（准时 2 次）');
+    expect(container.textContent).not.toContain('鸽王');
   });
 });
