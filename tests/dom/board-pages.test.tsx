@@ -8,7 +8,7 @@ import { useDesktopViewport } from './viewport';
 import type { Config, WeeklyReport } from '../../src/types';
 import type { BoardTab } from '../../src/lib/routes';
 
-const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5, weeklyBonusCap: 5,
+const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5,
   statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2026-11-01T16:00:00Z', boardTzOffsetHours: 8 };
 const REPORT: WeeklyReport = { week_start: '2026-10-19', narrative: '大家好好约局。', source: 'ai', created_at: '2026-10-26 02:30:00',
   stats: { weekStart: '2026-10-19', weekEnd: '2026-10-25', sessionsPlayed: 3, sessionsCollapsed: 0,
@@ -62,9 +62,9 @@ describe('the board destination', () => {
     expect(screen.queryByText('上周鸽王')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '本周不再显示' })).not.toBeInTheDocument();
   });
-  it('reads heal from config and renders the four guide cards, glossary, and open rules without blurb', () => {
+  it('reads heal from config and renders the guide cards, glossary, and open rules without blurb', () => {
     const { container } = render(<BoardPage tab="rules" config={CONFIG} me={null} />);
-    for (const heading of ['约局', '守约', '分数与回血', '出事了怎么办', '用词表']) {
+    for (const heading of ['守约', '分数与回血', '出事了怎么办', '用词表']) {
       expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
     }
     expect(screen.getByText(/每人从 100 分起/)).toHaveTextContent('回血 +5');
@@ -73,6 +73,8 @@ describe('the board destination', () => {
     expect(screen.getByRole('heading', { name: '计分规则' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /计分规则/ })).not.toBeInTheDocument();
     expect(container.querySelector('.rules__tier-blurb')).toBeNull();
+    expect(container.textContent).not.toMatch(/约局|点名|守约守时|组局召集/);
+    expect(screen.getByText(/迟到、放鸽子由裁判记一笔。/)).toBeInTheDocument();
   });
   it.each(['list', 'feed', 'report'] as BoardTab[])('has an empty state without data: %s', (tab) => {
     render(<BoardPage tab={tab} config={CONFIG} me={null} />);

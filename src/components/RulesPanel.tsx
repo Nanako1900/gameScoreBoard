@@ -48,9 +48,7 @@ export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = 
           <p className="rules__heal">
             每位选手每周一 0 点自动恢复
             <strong className="rules__heal-num tabular"> +{config.weeklyHeal} </strong>
-            分（上限 100）。守约加分每周最多
-            <strong className="rules__heal-num tabular"> +{config.weeklyBonusCap} </strong>
-            分。
+            分（上限 100）。
           </p>
 
           <div className="rules__ai">
@@ -91,8 +89,7 @@ export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = 
                   </tr>
                 </thead>
                 <tbody>
-                  {VIOLATIONS.map((v) => {
-                    const positive = v.kind === 'bonus';
+                  {VIOLATIONS.filter((v) => v.kind === 'penalty').map((v) => {
                     const fixed = v.min === v.max;
                     return (
                       <tr key={v.type}>
@@ -101,12 +98,10 @@ export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = 
                         </th>
                         <td className="rules__desc">{v.desc}</td>
                         <td
-                          className={`rules__delta tabular ${
-                            positive ? 'rules__delta--up' : 'rules__delta--down'
-                          }`}
+                          className="rules__delta tabular rules__delta--down"
                         >
                           {fixed ? (
-                            positive ? `+${v.base}` : v.base
+                            v.base
                           ) : (
                             <>
                               {v.min} ~ {v.max}

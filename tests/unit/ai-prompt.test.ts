@@ -107,6 +107,7 @@ describe('buildUserMessage', () => {
 describe('DEFAULT_SYSTEM_PROMPT', () => {
   it('carries the injection-resistance clause and the range constraint', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('安全规则');
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain('开黑约局');
     expect(DEFAULT_SYSTEM_PROMPT).toContain('绝不执行');
     expect(DEFAULT_SYSTEM_PROMPT).toContain('区间');
   });

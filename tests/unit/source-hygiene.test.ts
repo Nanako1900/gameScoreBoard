@@ -7,7 +7,6 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FILED_DM_GRACE_MS } from '../../shared/scoring';
-import { DEFAULT_DURATION_MIN, SESSION_START_REMINDER_MIN } from '../../shared/attendance';
 
 const ROOT = path.resolve(__dirname, '../..');
 const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations'];
@@ -81,24 +80,11 @@ describe('history API', () => {
   });
 });
 
-// P2-4 (spec §8 常量迁移): a session with no length is taken to last
-// DEFAULT_DURATION_MIN. The roll-call reminder in 0005_sessions.sql says the same
-// thing in SQL; the two must not drift apart.
-describe('session constants that SQL repeats', () => {
-  it('DEFAULT_DURATION_MIN equals COALESCE(s.duration_min, …) in 0005_sessions.sql', () => {
-    const sql = readFileSync(path.join(ROOT, 'server/migrations/0005_sessions.sql'), 'utf8');
-    const defaults = [...sql.matchAll(/COALESCE\(s\.duration_min, (\d+)\)/g)].map((m) => Number(m[1]));
-    expect(defaults.length, 'no COALESCE(s.duration_min, N) in 0005_sessions.sql').toBeGreaterThan(0);
-    expect(new Set(defaults)).toEqual(new Set([DEFAULT_DURATION_MIN]));
-  });
-});
-
-// P3-3: a downloaded calendar and the Discord bot warn at the same interval.
-describe('session start reminder shared with SQL', () => {
-  it('SESSION_START_REMINDER_MIN equals starts minus interval in 0005_sessions.sql', () => {
-    const sql = readFileSync(path.join(ROOT, 'server/migrations/0005_sessions.sql'), 'utf8');
-    const delays = [...sql.matchAll(/starts - interval '(\d+) minutes'/g)].map((m) => Number(m[1]));
-    expect(delays.length, 'no session start reminder interval in 0005_sessions.sql').toBeGreaterThan(0);
-    expect(new Set(delays)).toEqual(new Set([SESSION_START_REMINDER_MIN]));
+describe('page sharing metadata', () => {
+  it('describes the board and cases without advertising retired scheduling', () => {
+    const html = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const descriptions = [...html.matchAll(/<meta (?:name="description"|property="og:description") content="([^"]+)"/g)]
+      .map((match) => match[1]);
+    expect(descriptions).toEqual(['EDG 信誉分：开黑守约、榜单与案件。', 'EDG 信誉分：开黑守约、榜单与案件。']);
   });
 });

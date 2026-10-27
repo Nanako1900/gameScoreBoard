@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { Config, PublicUser, RecordItem, SessionDetail, SessionItem, User } from '../types';
+import type { Config, RecordItem, User } from '../types';
 import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
 import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE, SESSIONS_OFF, SESSIONS_OFF_DESCRIPTION } from '../lib/routeCopy';
@@ -23,10 +23,6 @@ interface RouteViewProps {
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
   board?: BoardData;
-  mySessions?: readonly SessionItem[] | null;
-  participants?: PublicUser[];
-  created?: number | null;
-  onCreated?: (session: SessionDetail) => void;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -128,10 +124,6 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':
-    case 'sessionHistory':
-    case 'rollcall':
-    case 'sessionNew':
-    case 'session':
       return <PageShell><NotFound title={SESSIONS_OFF} description={SESSIONS_OFF_DESCRIPTION}
         actions={[{ label: '回首页', to: '/' }]} /></PageShell>;
     case 'player':

@@ -484,3 +484,13 @@ describe('who may become a judge', () => {
     expect((await setRoles('a', { is_judge: true })).status).toBe(200);
   });
 });
+
+describe('public config after scheduling retirement', () => {
+  it('no longer advertises a weekly bonus cap', async () => {
+    const response = await call('/api/config', {}, { READ_ONLY: 'true' });
+    expect(response.status).toBe(200);
+    const config = await response.json() as Record<string, unknown>;
+    expect(config).not.toHaveProperty('weeklyBonusCap');
+    expect(config).toHaveProperty('weeklyHeal');
+  });
+});

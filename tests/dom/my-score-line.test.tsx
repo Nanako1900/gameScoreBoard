@@ -17,7 +17,6 @@ const CONFIG: Config = {
   violations: [],
   tiers: [],
   weeklyHeal: 5,
-  weeklyBonusCap: 6,
   statementWindowHours: 12,
   aiEnabled: false,
   maxBatchSubjects: 5,
@@ -131,9 +130,7 @@ describe('MyScoreLine in the app', () => {
       'GET /api/leaderboard': () => json(200, { participants: board }),
       'GET /api/records?limit=50': () => json(200, { records: [] }),
       'GET /api/me': () => json(200, { user: ME, pending: { statements: 0, appeals: 0 } }),
-      'GET /api/me/invites': () => json(200, { sessions: [] }),
       'GET /api/report/latest': () => json(200, { report: null }),
-      'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
     });
     render(<App />);
 
@@ -152,7 +149,6 @@ describe('MyScoreLine in the app', () => {
       'GET /api/records?limit=50': () => json(200, { records: [] }),
       'GET /api/me': () => json(200, { user: null, pending: { statements: 0, appeals: 0 } }),
       'GET /api/report/latest': () => json(200, { report: null }),
-      'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
     });
     render(<App />);
     await screen.findByRole('heading', { name: '最近案件' });

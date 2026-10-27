@@ -1136,23 +1136,18 @@ describe('POST /api/admin/report/:week/regenerate', () => {
     expect(res.json.report).toEqual({
       week_start: '2026-10-19',
       source: 'fallback',
-      narrative: '这周没有已结算的约局。没有人被记一笔，大家都挺靠谱。',
+      narrative: '没有人被记一笔，大家都挺靠谱。',
       stats: {
         basis: 'verdict',
         weekStart: '2026-10-19',
         weekEnd: '2026-10-25',
-        sessionsPlayed: 0,
-        sessionsCollapsed: 0,
         casesFiled: 0,
         totalPenalty: 0,
         absentVerdicts: 0,
-        attendanceRate: null,
-        upcomingNextWeek: 0,
         star: null,
         pigeon: null,
         bestTalker: null,
         harshest: null,
-        topOrganizer: null,
       },
       created_at: expect.stringMatching(SQLITE_DATETIME),
     });
@@ -1169,7 +1164,7 @@ describe('POST /api/admin/report/:week/regenerate', () => {
     expect(first.status).toBe(200);
     expect(first.json.report).toMatchObject({
       source: 'fallback',
-      narrative: '这周没有已结算的约局。没有人被记一笔，大家都挺靠谱。',
+      narrative: '没有人被记一笔，大家都挺靠谱。',
       stats: { casesFiled: 0 },
     });
     expect((first.json.report as { created_at: string }).created_at).not.toBe('2026-10-20 00:00:00');
@@ -1188,7 +1183,7 @@ describe('POST /api/admin/report/:week/regenerate', () => {
     expect(report).toMatchObject({
       week_start: '2026-10-19',
       source: 'fallback',
-      narrative: '这周没有已结算的约局。一共立案 1 起，合计扣了 15 分。有 1 起是缺席判决。',
+      narrative: '一共立案 1 起，合计扣了 15 分。有 1 起是缺席判决。',
       stats: {
         casesFiled: 1,
         totalPenalty: -15,
@@ -1203,7 +1198,7 @@ describe('POST /api/admin/report/:week/regenerate', () => {
       "SELECT stats_json, narrative, source, created_at FROM weekly_reports WHERE week_start = '2026-10-19'",
     ).first<{ stats_json: string; narrative: string; source: string; created_at: string }>();
     expect(JSON.parse(row?.stats_json ?? 'null')).toEqual(report.stats);
-    expect(row?.narrative).toBe('这周没有已结算的约局。一共立案 1 起，合计扣了 15 分。有 1 起是缺席判决。');
+    expect(row?.narrative).toBe('一共立案 1 起，合计扣了 15 分。有 1 起是缺席判决。');
     expect(row?.source).toBe('fallback');
     expect(row?.created_at).toBe(report.created_at);
 

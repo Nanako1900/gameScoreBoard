@@ -14,7 +14,7 @@ interface NotFoundProps {
   description?: string;
   /** Default 'notfound-title'; the detail views pass their own labelledBy id. */
   headingId?: string;
-  /** Default: 回大厅. 看约局历史 / 看信誉榜 arrive with their pages (P3-6, contract §8 #3). */
+  /** Default: 回大厅. Detail views may provide their own actions. */
   actions?: readonly NotFoundAction[];
   /** Default true: focus moves to the heading on mount. */
   autoFocus?: boolean;

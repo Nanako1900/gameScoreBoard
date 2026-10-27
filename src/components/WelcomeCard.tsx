@@ -36,8 +36,7 @@ function remember(): void {
 
 /**
  * First thing a signed-out visitor sees (spec §3.1, M23): what this board is,
- * what it costs to flake, and the way back. Its heading must never contain
- * 约局 — the page keeps exactly one /约局/ heading (SessionsPanel's).
+ * what it costs to flake, and the way back.
  */
 export function WelcomeCard({
   loginUrl,
@@ -64,7 +63,7 @@ export function WelcomeCard({
           ✕
         </button>
       </div>
-      <p className="welcome__line">说了来就来；来不了，开局前说一声。</p>
+      <p className="welcome__line">说了来就来；来不了，提前说一声。</p>
       <p className="welcome__line">
         放鸽子会被记一笔，每周一 0 点自动回血 <span className="tabular">+{weeklyHeal}</span>。
       </p>

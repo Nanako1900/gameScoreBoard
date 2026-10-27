@@ -10,7 +10,7 @@ import { useLoginResume } from './useLoginResume';
 import { useToast } from '../components/Toast';
 
 // Old links (spec §2.3, kept forever): the bot's DMs say /?case=N and /?session=N.
-// They are read once, on '/', and translated into the view's own address.
+// Read once on '/': cases open their own address; retired sessions show a toast.
 
 export type EntryTarget =
   /** /?session=N stays home and explains the retirement. */

@@ -11,7 +11,7 @@ import type { Config, User } from '../../src/types';
 
 const ME: User = { id: 'me', username: '小明', oauth_username: '小明', avatar_url: null, score: 100,
   is_participant: true, is_judge: false, is_admin: false, created_at: '2026-10-01 00:00:00' };
-const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5, weeklyBonusCap: 5,
+const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5,
   statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2099-11-01T16:00:00Z' };
 
 describe('header navigation', () => {
@@ -110,7 +110,6 @@ describe('loading skeleton', () => {
   });
 });
 
-
 function homeFetch(signedIn = true): void {
   const participants = Array.from({ length: 12 }, (_, i) => ({ ...ME, id: i === 11 ? ME.id : `p${i}`, username: i === 11 ? ME.username : `玩家${i}`, score: 100 - i }));
   const json = (body: unknown): Response => ({ ok: true, status: 200, text: async () => JSON.stringify(body) }) as Response;
@@ -158,7 +157,11 @@ describe('home layout integration', () => {
     expect(within(recent).getByRole('button', { name: '看更多' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
     expect(screen.queryByRole('link', { name: '组一局' })).not.toBeInTheDocument();
-    if (!desktop) expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('link')).toHaveLength(3);
+    if (!desktop) {
+      const nav = screen.getByRole('navigation', { name: '主导航' });
+      expect(within(nav).getAllByRole('link')).toHaveLength(3);
+      expect(within(nav).getByRole('link', { name: '我的' })).toHaveAttribute('href', '/auth/login');
+    }
   });
   it('first load has a header and three busy skeletons, with no headings or navigation', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {}))); render(<App />);

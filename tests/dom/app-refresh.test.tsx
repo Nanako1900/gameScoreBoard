@@ -76,7 +76,6 @@ function config(nextResetAt: string): unknown {
     violations: [],
     tiers: [],
     weeklyHeal: 5,
-    weeklyBonusCap: 5,
     statementWindowHours: 12,
     aiEnabled: false,
     maxBatchSubjects: 5,

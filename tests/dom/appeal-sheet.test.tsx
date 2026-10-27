@@ -184,7 +184,6 @@ const CONFIG: Config = {
   violations: [],
   tiers: [],
   weeklyHeal: 5,
-  weeklyBonusCap: 6,
   statementWindowHours: 12,
   aiEnabled: false,
   maxBatchSubjects: 5,

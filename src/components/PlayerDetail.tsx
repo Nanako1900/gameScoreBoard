@@ -349,7 +349,7 @@ export function PlayerDetail({
         )}
       </Modal>
 
-      {/* A sibling, like SessionDetailDialog's RollCallDialog: its own layer in the modal stack. */}
+      {/* A sibling with its own layer in the modal stack. */}
       {appealing && (
         <AppealSheet
           key={appealing.id}

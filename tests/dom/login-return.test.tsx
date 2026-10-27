@@ -76,7 +76,6 @@ function stubApi(signedInUser: User = ME): Stub {
         violations: [],
         tiers: [],
         weeklyHeal: 5,
-        weeklyBonusCap: 5,
         statementWindowHours: 12,
         aiEnabled: false,
         maxBatchSubjects: 5,
@@ -85,9 +84,7 @@ function stubApi(signedInUser: User = ME): Stub {
     'GET /api/leaderboard': () => json(200, { participants: [] }),
     'GET /api/records?limit=50': () => json(200, { records: [] }),
     'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
-    'GET /api/me/invites': () => json(200, { sessions: [] }),
     'GET /api/me/discord': () => json(404, { error: 'unsupported' }),
-    'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
     'GET /api/report/latest': () => json(200, { report: null }),
     'GET /api/records/7': () => json(200, { record: CASE }),
     'GET /api/users/q': () =>

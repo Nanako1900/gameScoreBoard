@@ -5,7 +5,7 @@
 // is guarded, and writeDraft tells its caller whether anything was kept, so the
 // UI never claims a draft that does not exist.
 
-export type DraftKind = 'statement' | 'case' | 'appeal' | 'rollcall' | 'session' | 'onboarding';
+export type DraftKind = 'statement' | 'case' | 'appeal' | 'onboarding';
 
 export interface StoredDraft<T> {
   v: 1;
@@ -13,9 +13,11 @@ export interface StoredDraft<T> {
   value: T;
 }
 
+const DRAFT_KINDS: readonly DraftKind[] = ['statement', 'case', 'appeal', 'onboarding'];
 const PREFIX = 'edg.draft.';
 const VERSION = 1;
 const STORAGE_NAMES = ['localStorage', 'sessionStorage'] as const;
+const storageHost = globalThis as typeof globalThis & Record<(typeof STORAGE_NAMES)[number], Storage>;
 
 /** 'edg.draft.<kind>.<id>', or 'edg.draft.<kind>' when there is no id. */
 export function draftKey(kind: DraftKind, id?: number | string): string {
@@ -23,8 +25,9 @@ export function draftKey(kind: DraftKind, id?: number | string): string {
 }
 
 function storageFor(kind: DraftKind): Storage | null {
+  if (!DRAFT_KINDS.includes(kind)) return null;
   try {
-    return kind === 'onboarding' ? window.sessionStorage : window.localStorage;
+    return kind === 'onboarding' ? storageHost.sessionStorage : storageHost.localStorage;
   } catch {
     return null; // merely touching storage throws when the browser blocks it
   }
@@ -94,7 +97,7 @@ export function clearDraft(kind: DraftKind, id?: number | string): void {
 export function clearAllDrafts(): void {
   for (const name of STORAGE_NAMES) {
     try {
-      const storage = window[name];
+      const storage = storageHost[name];
       const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i)).filter(
         (key): key is string => key !== null && key.startsWith(PREFIX),
       );

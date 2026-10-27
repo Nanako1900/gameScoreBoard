@@ -65,7 +65,6 @@ const appRoutes = {
       violations: [],
       tiers: [],
       weeklyHeal: 5,
-      weeklyBonusCap: 5,
       statementWindowHours: 24,
       aiEnabled: false,
       maxBatchSubjects: 5,
@@ -75,7 +74,6 @@ const appRoutes = {
   'GET /api/records?limit=50': () => json(200, { records: [] }),
   'GET /api/me': () => json(200, { user: null, pending: { statements: 0, appeals: 0 } }),
   'GET /api/report/latest': () => json(200, { report: null }),
-  'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
   'GET /api/records/7': () => json(200, { record: CASE }),
   'GET /api/users/p': () =>
     json(200, {

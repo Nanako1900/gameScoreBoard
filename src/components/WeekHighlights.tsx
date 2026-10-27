@@ -29,8 +29,7 @@ function StarName({ star, onSelectUser }: { star: WeekStar; onSelectUser?: (id: 
 /**
  * One line in the board's head that replaced the old top/bottom board (spec §5 #1): it only ever
  * praises, with a threshold, and names nobody when the feed cannot vouch for
- * the whole week. Deliberately not a heading — the page keeps exactly one /约局/
- * heading and the board its own 信誉榜.
+ * the whole week. Deliberately not a heading.
  */
 export function WeekHighlights({
   records,
@@ -44,7 +43,7 @@ export function WeekHighlights({
     case 'all-clean':
       return <p className="wh">本周全员守约 🎉</p>;
     case 'none':
-      return <p className="wh wh--quiet">本周还没人摘星，今晚去约一局？</p>;
+      return <p className="wh wh--quiet">本周还没人摘星。</p>;
     case 'stars':
       return (
         <p className="wh">

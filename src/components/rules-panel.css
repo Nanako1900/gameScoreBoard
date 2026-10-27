@@ -126,9 +126,6 @@
   font-weight: 700;
 }
 
-.rules__delta--up {
-  color: var(--up);
-}
 .rules__delta--down {
   color: var(--down);
 }

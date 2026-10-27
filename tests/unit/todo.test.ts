@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { isFilingJudge } from '../../shared/scoring';
-import { MINUTE_MS } from '../../src/lib/constants';
 import { buildTodo, collectTodo, meNeedsAttention, sortTodo, todoBadgeCount, todoRank,
   type TodoItem, type TodoSources } from '../../src/lib/todo';
 import type { RecordItem, User } from '../../src/types';
 
+const MINUTE_MS = 60_000;
 const HOUR = 3_600_000;
 const NOW = Date.parse('2026-10-28T12:00:00Z');
 const iso = (delta: number): string => new Date(NOW + delta).toISOString();

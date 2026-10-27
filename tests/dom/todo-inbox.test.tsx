@@ -107,12 +107,11 @@ describe('inbox supplemental sources', () => {
   });
 });
 
-
 describe('inbox and lobby integration', () => {
   it('dismisses unbound notices persistently across a new App mount', async () => {
     vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true }); vi.setSystemTime(NOW);
     mock((path) => {
-      if (path === '/api/config') return json(200, { violations: [], tiers: [], weeklyHeal: 5, weeklyBonusCap: 5, statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2026-11-01T16:00:00Z' });
+      if (path === '/api/config') return json(200, { violations: [], tiers: [], weeklyHeal: 5, statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2026-11-01T16:00:00Z' });
       if (path === '/api/me') return json(200, { user: ME, pending: { statements: 0, appeals: 0 } });
       if (path === '/api/me/discord') return json(200, { link: null });
       if (path === '/api/leaderboard') return json(200, { participants: [ME] });

@@ -1,8 +1,6 @@
 // Time formatting helpers: relative timestamps and a countdown formatter.
 // All pure; no side effects.
 
-import { boardTzLabel } from '@shared/quickTime';
-
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -94,17 +92,6 @@ export function isUrgent(targetIso: string, now: number = Date.now()): boolean {
   return done || (days === 0 && hours < 2);
 }
 
-/** Local wall-clock label for a session time, e.g. '7月25日 20:00 周五'. */
-export function formatDateTime(value: string): string {
-  const ms = parseTimestamp(value);
-  if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(
-    d.getMinutes(),
-  )} ${weekday}`;
-}
-
 /** One reading of a wall clock: the browser's (offsetHours omitted) or the board's (UTC + offsetHours). */
 interface WallClock {
   month: number;
@@ -147,17 +134,7 @@ function clockTime(at: WallClock): string {
   return `${pad2(at.hours)}:${pad2(at.minutes)}`;
 }
 
-/**
- * Compact when-label for a scheduled session: '今天 20:00' / '明天 20:00' /
- * '周五 20:00', falling back to a date beyond a week out.
- *
- * `formatDateTime` produces '7月28日 09:48 周二' — 14 characters, which wrapped
- * the invite banner onto three lines on a 375px screen and orphaned a word. For
- * a game that is days away at most, the weekday is the part people actually read.
- *
- * offsetHours omitted → today's output exactly (the browser's zone). Given → the
- * same buckets (今天 / 明天 / 周X / M月D日) read on the board's wall clock (P2-4).
- */
+/** A deadline as 今天 / 明天 / 周X / M月D日, on the browser or board clock. */
 export function formatWhen(value: string, now: number = Date.now(), offsetHours?: number): string {
   const ms = parseTimestamp(value);
   if (Number.isNaN(ms)) return '';
@@ -168,38 +145,6 @@ export function formatWhen(value: string, now: number = Date.now(), offsetHours?
   if (days === 1) return `明天 ${time}`;
   if (days > 1 && days < 7) return `${WEEKDAYS[at.weekday]} ${time}`;
   return `${at.month}月${at.date}日 ${time}`;
-}
-
-/** '周五 10/30 21:00（北京时间）' — the board's wall clock and its zone label (spec §11 #8). '' when unparseable. */
-export function formatBoardDateTime(value: string, offsetHours: number): string {
-  const ms = parseTimestamp(value);
-  if (Number.isNaN(ms)) return '';
-  const at = wallClock(ms, offsetHours);
-  return `${WEEKDAYS[at.weekday]} ${at.month}/${at.date} ${clockTime(at)}（${boardTzLabel(offsetHours)}）`;
-}
-
-/**
- * '你那边 22:00' when the viewer's UTC offset at that instant differs from the
- * board's; '你那边 周六 01:00' when the viewer's date differs too; null when the
- * zones agree or the value is unparseable.
- */
-export function formatViewerAside(value: string, offsetHours: number): string | null {
-  const ms = parseTimestamp(value);
-  if (Number.isNaN(ms)) return null;
-  // getTimezoneOffset is minutes BEHIND UTC, for this instant (daylight saving included).
-  if (-new Date(ms).getTimezoneOffset() === Math.round(offsetHours * 60)) return null;
-  const viewer = wallClock(ms);
-  const board = wallClock(ms, offsetHours);
-  const sameDay = viewer.month === board.month && viewer.date === board.date;
-  return sameDay ? `你那边 ${clockTime(viewer)}` : `你那边 ${WEEKDAYS[viewer.weekday]} ${clockTime(viewer)}`;
-}
-
-/** `datetime-local` input value (local time, minute precision). */
-export function toDateTimeLocalValue(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
-    d.getHours(),
-  )}:${pad2(d.getMinutes())}`;
 }
 
 function pad2(n: number): string {
@@ -246,38 +191,4 @@ export function formatTimeLeft(targetIso: string, now: number = Date.now()): str
   if (remaining < HOUR) return `还有 ${Math.floor(remaining / MINUTE)} 分钟`;
   if (remaining < DAY) return `还有 ${Math.floor(remaining / HOUR)} 小时`;
   return `还有 ${Math.floor(remaining / DAY)} 天`;
-}
-
-// --- P3-1 ---
-/** Midnight on the board's clock, or the browser's clock when no offset was supplied. */
-export function dayStartOn(ms: number, offsetHours?: number): number {
-  return wallClock(ms, offsetHours).dayStart;
-}
-
-/** Monday midnight of the week containing this instant, on the same clock. */
-export function weekStartOn(ms: number, offsetHours?: number): number {
-  const days = (wallClock(ms, offsetHours).weekday + 6) % 7;
-  if (offsetHours !== undefined) return dayStartOn(ms, offsetHours) - days * DAY;
-  const local = new Date(dayStartOn(ms));
-  local.setDate(local.getDate() - days);
-  return local.getTime();
-}
-
-export function clockOn(ms: number, offsetHours?: number): string {
-  return clockTime(wallClock(ms, offsetHours));
-}
-
-// --- P3-3 ---
-/** A datetime-local value displaying the fixed board clock, not the viewer's. */
-export function toBoardInputValue(ms: number, offsetHours: number): string {
-  const shifted = ms + offsetHours * HOUR;
-  return Number.isFinite(shifted) ? new Date(shifted).toISOString().slice(0, 16) : '';
-}
-
-/** Reject invalid wall-clock dates instead of silently rolling them into another day. */
-export function parseBoardInputValue(value: string, offsetHours: number): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) || !Number.isFinite(offsetHours)) return null;
-  const ms = Date.parse(value + 'Z');
-  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 16) !== value) return null;
-  return ms - offsetHours * HOUR;
 }

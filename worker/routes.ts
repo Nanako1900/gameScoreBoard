@@ -10,7 +10,6 @@ import {
   TIERS,
   VIOLATIONS,
   VIOLATION_MAP,
-  WEEKLY_BONUS_CAP,
   WEEKLY_HEAL,
   isCaseStatus,
 } from '../shared/scoring';
@@ -220,7 +219,6 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       violations: VIOLATIONS,
       tiers: TIERS,
       weeklyHeal: WEEKLY_HEAL,
-      weeklyBonusCap: WEEKLY_BONUS_CAP,
       statementWindowHours: statementWindowHours(c.env),
       aiEnabled: cfg.enabled,
       maxBatchSubjects: MAX_BATCH_SUBJECTS,
