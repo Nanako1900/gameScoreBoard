@@ -23,7 +23,7 @@ import type { User } from '../../worker/types';
 import { expireDeadline, noAiEnv, OFFSET_HOURS, seedUser } from '../worker/helpers';
 import { env, pool } from './cloudflare-test';
 
-const OPTS = { offsetHours: OFFSET_HOURS, skipRateLimit: true };
+const OPTS = { offsetHours: OFFSET_HOURS };
 const FRONTEND = 'https://score.example';
 const ctx = { db: env.DB, appUrl: 'https://api.example', frontendUrl: FRONTEND };
 const JUDGE_DC = { id: '410000000000000001', username: 'judge_dc' };
@@ -101,27 +101,26 @@ describe('escalation events', () => {
     expect(rows).toEqual([{ kind: 'dm.escalation', entity_id: 'judge', due: true }]);
   });
 
-  it('every way of settling it closes it, exactly once', async () => {
+  it.each(['confirm', 'dismiss', 'reclassify', 'withdraw', 'statement', 'deadline'] as const)
+  ('settling by %s closes escalation exactly once', async (action) => {
     const { judge, subject, admin } = await cast();
-    const settle: Array<(id: number) => Promise<unknown>> = [
-      (id) => confirmEscalation(env.DB, judge, id),
-      (id) => dismissEscalation(env.DB, judge, id),
-      (id) => reclassifyCase(env.DB, judge, id, 'late_major'),
-      (id) => withdrawCase(env.DB, judge, id),
-      (id) => submitStatement(env.DB, subject, id, '临时加班实在走不开', noAiEnv()),
-      async (id) => {
+    // Each transition gets an isolated case, within the ordinary filing caps.
+    const settle: Record<typeof action, (id: number) => Promise<unknown>> = {
+      confirm: (id) => confirmEscalation(env.DB, judge, id),
+      dismiss: (id) => dismissEscalation(env.DB, judge, id),
+      reclassify: (id) => reclassifyCase(env.DB, judge, id, 'late_major'),
+      withdraw: (id) => withdrawCase(env.DB, judge, id),
+      statement: (id) => submitStatement(env.DB, subject, id, '临时加班实在走不开', noAiEnv()),
+      deadline: async (id) => {
         await expireDeadline(id);
         await sweepDueCases(env.DB, noAiEnv());
       },
-    ];
-    for (const run of settle) {
-      await pool.query('DELETE FROM outbox');
-      const filed = await flagged(judge, subject);
-      await run(filed.id);
-      // A second settling (an admin's override after a verdict, say) adds nothing.
-      await dismissEscalation(env.DB, admin, filed.id).catch(() => undefined);
-      expect((await escalationEvents()).map((e) => e.kind)).toEqual(['dm.escalation', 'dm.escalation.closed']);
-    }
+    };
+    const filed = await flagged(judge, subject);
+    await settle[action](filed.id);
+    // A second settling (an admin's override after a verdict, say) adds nothing.
+    await dismissEscalation(env.DB, admin, filed.id).catch(() => undefined);
+    expect((await escalationEvents()).map((event) => event.kind)).toEqual(['dm.escalation', 'dm.escalation.closed']);
   });
 
   it('the D1 import asks nobody', async () => {
@@ -178,7 +177,13 @@ describe('the escalation DM', () => {
 
   it(`has its own daily allowance (${ESCALATION_DM_BUDGET}), apart from the judge’s statement reminders`, async () => {
     const { judge, subject } = await cast();
-    for (let i = 0; i < ESCALATION_DM_BUDGET + 1; i += 1) await flagged(judge, subject);
+    // Test the dispatcher's allowance without bypassing the API's filing cap.
+    for (let i = 0; i < ESCALATION_DM_BUDGET + 1; i += 1) {
+      await env.DB.prepare(
+        `INSERT INTO records (subject_id, reporter_id, type, claim, escalation_suggested, deadline_at, status)
+         VALUES (?, ?, 'no_show', '说好八点五排，结果全队等他一个', 1, datetime('now', '+1 day'), 'awaiting_statement')`,
+      ).bind(subject.id, judge.id).run();
+    }
     // The judge is also accused of something today.
     await fileCase(env.DB, await seedUser({ id: 'j2', judge: true }), { subject_id: 'judge', type: 'late_minor', claim: '开会迟到了一刻钟也没说一声' }, OPTS, noAiEnv());
     await dueNow();

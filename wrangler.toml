@@ -68,7 +68,6 @@ ADMIN_USERNAMES = "Hongyu Qi"
 # AI_BASE_URL = "https://api.openai.com/v1"
 # AI_MODEL    = "gpt-4o-mini"
 # STATEMENT_WINDOW_HOURS     = "12"    # hours the accused has to explain themselves
-# SESSION_ORGANIZER_CAN_FILE = "true"  # "false" = non-judge organizers can only record attendance
 # APP_URL = "https://your-app.edgeone.app"        # set to the EdgeOne origin for the split deploy
 
 # --- P2: SPA on Cloudflare Pages (community.nanako.org), this Worker = capi.nanako.org.

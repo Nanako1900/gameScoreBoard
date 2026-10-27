@@ -6,7 +6,6 @@
 
 import { describe, expect, it } from 'vitest';
 import { appealCase, judgeAndDecide, overrideCase, revokeCase, withdrawCase } from '../../worker/cases';
-import { cancelSession, createSession, MAX_OPEN_SESSIONS, MAX_SESSIONS_PER_DAY, setRsvp, updateSession } from '../../worker/sessions';
 import { fileCase } from '../../worker/case-filing';
 import { scoreMutation, weeklyHeal } from '../../worker/db';
 import { WEEKLY_BONUS_CAP } from '../../shared/scoring';
@@ -195,7 +194,7 @@ describe('concurrent score changes on PostgreSQL', () => {
     await seedUser({ id: 'p', score: 50 });
     await Promise.all(
       Array.from({ length: 3 }, () =>
-        fileCase(env.DB, judge, { subject_id: 'p', type: 'on_time_bonus' }, { offsetHours: OFFSET_HOURS, skipRateLimit: true }, env as never),
+        fileCase(env.DB, judge, { subject_id: 'p', type: 'on_time_bonus' }, { offsetHours: OFFSET_HOURS }, env as never),
       ),
     );
     const { score, events } = await chainOf('p', 50);
@@ -205,30 +204,6 @@ describe('concurrent score changes on PostgreSQL', () => {
     expect(recs.results.map((r) => r.delta)).toEqual([2, 2, 2]);
   });
 
-  it('gives the last seat to exactly one of several players racing for it', async () => {
-    const organizer = await seedUser({ id: 'org' });
-    const players = await Promise.all(['p1', 'p2', 'p3', 'p4'].map((id) => seedUser({ id })));
-    const session = await createSession(
-      env.DB,
-      organizer,
-      { starts_at: new Date(Date.now() + 3_600_000).toISOString(), capacity: 2 },
-      OFFSET_HOURS,
-    );
-    // The organizer holds one seat; one is left. All four read "1 going" first.
-    const settled = await queuedBehind(
-      'UPDATE game_sessions SET status = status WHERE id = $1',
-      [session.id],
-      players.map((p) => () => setRsvp(env.DB, p, session.id, 'going')),
-    );
-    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    const going = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM session_players WHERE session_id = ? AND rsvp = 'going'",
-    )
-      .bind(session.id)
-      .first<{ n: number }>();
-    expect(going?.n).toBe(2);
-  });
-
   it('withdraws a case once — a duplicate concurrent withdraw gets 409', async () => {
     const judge = await seedUser({ id: 'judge', judge: true });
     await seedUser({ id: 'p' });
@@ -236,7 +211,7 @@ describe('concurrent score changes on PostgreSQL', () => {
       env.DB,
       judge,
       { subject_id: 'p', type: 'no_show', claim: '说好八点开黑结果没来也没说' },
-      { offsetHours: OFFSET_HOURS, skipRateLimit: true },
+      { offsetHours: OFFSET_HOURS },
       env as never,
     );
     // Both read 'awaiting_statement' before either writes.
@@ -253,7 +228,7 @@ describe('concurrent score changes on PostgreSQL', () => {
     await seedUser({ id: 'p', score: 50 });
     const settled = await Promise.allSettled(
       Array.from({ length: 6 }, () =>
-        fileCase(env.DB, judge, { subject_id: 'p', type: 'on_time_bonus' }, { offsetHours: OFFSET_HOURS, skipRateLimit: true }, env as never),
+        fileCase(env.DB, judge, { subject_id: 'p', type: 'on_time_bonus' }, { offsetHours: OFFSET_HOURS }, env as never),
       ),
     );
     const won = settled.filter((r) => r.status === 'fulfilled').length;
@@ -284,82 +259,4 @@ describe('concurrent score changes on PostgreSQL', () => {
     expect(audits?.n).toBe(1);
   });
 
-  it('an RSVP that read the session before it was cancelled is refused, not written', async () => {
-    const organizer = await seedUser({ id: 'org' });
-    const player = await seedUser({ id: 'p1' });
-    const session = await createSession(
-      env.DB,
-      organizer,
-      { starts_at: new Date(Date.now() + 3_600_000).toISOString() },
-      OFFSET_HOURS,
-    );
-    const [cancel, rsvp] = await queuedBehind('UPDATE game_sessions SET status = status WHERE id = $1', [session.id], [
-      () => cancelSession(env.DB, organizer, session.id),
-      () => setRsvp(env.DB, player, session.id, 'going'),
-    ]);
-    expect(cancel.status).toBe('fulfilled');
-    expect(rsvp).toMatchObject({ status: 'rejected', reason: { status: 400 } });
-    const row = await env.DB.prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = 'p1'")
-      .bind(session.id)
-      .first();
-    expect(row).toBeNull();
-  });
-
-  it('a yes that read the old time before a move landed is refused, not written for the new time', async () => {
-    const organizer = await seedUser({ id: 'org' });
-    const player = await seedUser({ id: 'p1' });
-    const session = await createSession(
-      env.DB,
-      organizer,
-      { starts_at: new Date(Date.now() + 3_600_000).toISOString(), invite: ['p1'] },
-      OFFSET_HOURS,
-    );
-    const later = new Date(Date.now() + 5 * 3_600_000).toISOString();
-    const [move, rsvp] = await queuedBehind('UPDATE game_sessions SET status = status WHERE id = $1', [session.id], [
-      () => updateSession(env.DB, organizer, session.id, { starts_at: later }),
-      () => setRsvp(env.DB, player, session.id, 'going', session.starts_at),
-    ]);
-    expect(move.status).toBe('fulfilled');
-    expect(rsvp).toMatchObject({ status: 'rejected', reason: { status: 409 } });
-    const row = await env.DB.prepare("SELECT rsvp FROM session_players WHERE session_id = ? AND user_id = 'p1'")
-      .bind(session.id)
-      .first<{ rsvp: string }>();
-    expect(row?.rsvp).toBe('invited');
-  });
-
-  it(`a burst of creates by one organizer stops at ${MAX_OPEN_SESSIONS} open sessions`, async () => {
-    const organizer = await seedUser({ id: 'org' });
-    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
-    // Every create has passed the friendly check (no sessions yet) before any
-    // of them writes. (One more than the cap: the test pool has 8 connections.)
-    const results = await queuedBehind(
-      'UPDATE users SET score = score WHERE id = $1',
-      ['org'],
-      Array.from({ length: MAX_OPEN_SESSIONS + 1 }, () => () => createSession(env.DB, organizer, { starts_at: startsAt }, OFFSET_HOURS)),
-    );
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(MAX_OPEN_SESSIONS);
-    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-    expect(refused.map((r) => r.reason.status)).toEqual([429]);
-    const made = await pool.query("SELECT COUNT(*)::int AS n FROM game_sessions WHERE organizer_id = 'org'");
-    expect(made.rows[0].n).toBe(MAX_OPEN_SESSIONS);
-  });
-
-  it(`a burst of creates stops at ${MAX_SESSIONS_PER_DAY} a day, too`, async () => {
-    const organizer = await seedUser({ id: 'org' });
-    // Sessions made today that have already started: not open, but made today.
-    for (let i = 0; i < MAX_SESSIONS_PER_DAY - 1; i += 1) {
-      await env.DB.prepare("INSERT INTO game_sessions (organizer_id, title, starts_at) VALUES ('org', ?, ?)")
-        .bind(`局${i}`, new Date(Date.now() - 60_000).toISOString())
-        .run();
-    }
-    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
-    const results = await queuedBehind(
-      'UPDATE users SET score = score WHERE id = $1',
-      ['org'],
-      Array.from({ length: 3 }, () => () => createSession(env.DB, organizer, { starts_at: startsAt }, OFFSET_HOURS)),
-    );
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    const made = await pool.query("SELECT COUNT(*)::int AS n FROM game_sessions WHERE organizer_id = 'org'");
-    expect(made.rows[0].n).toBe(MAX_SESSIONS_PER_DAY);
-  });
 });

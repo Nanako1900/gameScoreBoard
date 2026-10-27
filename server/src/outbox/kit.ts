@@ -23,8 +23,6 @@ export interface ChannelApi {
 export interface DispatcherConfig {
   /** null: verdict events are marked skipped, nothing is posted. */
   verdictChannelId: string | null;
-  /** Where session cards go (P7); null or absent: no cards. */
-  sessionChannelId?: string | null;
   frontendUrl: string;
   /** The board's time zone (RESET_TZ_OFFSET): when a week is over. Default UTC+8. */
   offsetHours?: number;

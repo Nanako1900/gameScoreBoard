@@ -16,7 +16,7 @@ import type { Env, User } from '../../worker/types';
 import { noAiEnv, OFFSET_HOURS, seedUser } from '../worker/helpers';
 import { env, pool } from './cloudflare-test';
 
-const OPTS = { offsetHours: OFFSET_HOURS, skipRateLimit: true };
+const OPTS = { offsetHours: OFFSET_HOURS };
 const CLAIM = 'SECRETCLAIM 说好八点五排，等到八点四十还没上线';
 const FRONTEND = 'https://score.example';
 const ctx = { db: env.DB, appUrl: 'https://api.example', frontendUrl: FRONTEND };
@@ -585,14 +585,18 @@ describe('DM delivery', () => {
   });
 
   it(`caps reminders at ${DM_BUDGET} per person per day — but never a verdict`, async () => {
-    const { judge, subject } = await people();
+    const { subject } = await people();
     const cases: number[] = [];
     // Each case is two reminders (filing + deadline): this is past the cap.
     const n = DM_BUDGET / 2 + 2;
     for (let i = 0; i < n; i += 1) {
       await seedUser({ id: `j${i}`, judge: true });
-      const filed = await fileCase(env.DB, { ...judge, id: `j${i}` }, { subject_id: subject.id, type: 'afk', claim: CLAIM }, OPTS, noAiEnv());
-      cases.push(filed.id);
+      // This is a delivery-budget fixture, independent of the API's filing cap.
+      const filed = await env.DB.prepare(
+        `INSERT INTO records (subject_id, reporter_id, type, claim, deadline_at, status)
+         VALUES (?, ?, 'afk', ?, datetime('now', '+1 day'), 'awaiting_statement')`,
+      ).bind(subject.id, `j${i}`, CLAIM).run();
+      cases.push(Number(filed.meta.last_row_id));
     }
     await dueNow();
     const discord = fakeDiscord();

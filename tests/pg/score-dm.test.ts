@@ -75,7 +75,7 @@ describe('a score set by an admin', () => {
     await adminUpdateUser(env.DB, 'p', { is_judge: true });
     await weeklyHeal(env.DB, OFFSET_HOURS);
     const judge = { id: 'judge', username: 'judge', oauth_username: 'judge', avatar_url: null, is_participant: true, is_judge: true, is_admin: false, score: 100, created_at: 'x' };
-    const filed = await fileCase(env.DB, judge, { subject_id: 'p', type: 'no_show', claim: '说好八点五排结果没来' }, { offsetHours: OFFSET_HOURS, skipRateLimit: true }, noAiEnv());
+    const filed = await fileCase(env.DB, judge, { subject_id: 'p', type: 'no_show', claim: '说好八点五排结果没来' }, { offsetHours: OFFSET_HOURS }, noAiEnv());
     await submitStatement(env.DB, { ...judge, id: 'p', is_judge: false }, filed.id, '临时加班实在走不开', noAiEnv());
     expect(await scoreEvents()).toEqual([]);
   });

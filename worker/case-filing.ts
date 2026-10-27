@@ -43,8 +43,8 @@ export interface FileCaseInput {
   subject_id: string;
   /**
    * Omit to let the AI classify from `claim` (the default 记一笔 path). Supply it
-   * when the type is already known deterministically — roll-call settlement, or a
-   * bonus, which the classifier is never allowed to produce.
+   * when a judge already knows the penalty type. The HTTP API rejects bonus
+   * types; their legacy handling stays here for historical scoring compatibility.
    */
   type?: string;
   claim?: string;
@@ -55,18 +55,15 @@ export interface FileCaseInput {
 
 export interface FileCaseOptions {
   offsetHours: number;
-  /** Set when a session organizer files within their own session (see sessions.ts). */
-  skipJudgeCheck?: boolean;
-  /** Skip the per-day limits for organizer roll-call settlement (already bounded). */
-  skipRateLimit?: boolean;
   /** Provenance when `type` is supplied rather than classified. */
   classifiedBy?: ClassifiedBy;
 }
 
 /**
  * Open a case. Penalties enter `awaiting_statement` with delta 0 — no score
- * moves until the subject has had their say (or the window lapses). Bonuses
- * settle on the spot at their base value.
+ * moves until the subject has had their say (or the window lapses). The legacy
+ * bonus path remains compatible with historical scoring; it is no longer exposed
+ * by the HTTP API.
  */
 export async function fileCase(
   db: D1Database,
@@ -75,13 +72,12 @@ export async function fileCase(
   opts: FileCaseOptions,
   env: Env,
 ): Promise<RecordItem> {
-  if (!opts.skipJudgeCheck && !reporter.is_judge) {
+  if (!reporter.is_judge) {
     throw new ApiError(403, '需要裁判权限');
   }
   // v3: `type` is optional. Omitted means "let the AI read the facts and decide",
   // which is the default path from the 记一笔 dialog. Supplied means the caller
-  // already knows the type deterministically — roll-call settlement, or a judge
-  // correcting a misclassification.
+  // already knows the penalty type, such as a judge correcting a classification.
   const explicitType = input.type !== undefined;
   if (explicitType && !isValidViolationType(input.type as string)) {
     throw new ApiError(400, '无效的记录类型');
@@ -97,9 +93,7 @@ export async function fileCase(
   }
   const note = normalizeNote(input.note);
 
-  if (!opts.skipRateLimit) {
-    await assertRateLimits(db, reporter.id, subject.id);
-  }
+  await assertRateLimits(db, reporter.id, subject.id);
 
   // Bonuses must always be named explicitly — the AI classifier only ever
   // returns penalties, so points can never be conjured through it.
@@ -278,7 +272,7 @@ export async function fileCases(
   // Check the role ONCE, up front. Letting it fail per-subject would answer 200
   // with an all-failed list, which reads as "some names were bad" rather than
   // "you are not allowed to do this at all".
-  if (!opts.skipJudgeCheck && !reporter.is_judge) {
+  if (!reporter.is_judge) {
     throw new ApiError(403, '需要裁判权限');
   }
   // Same for the shared narrative: it is one input, so reject it once rather than

@@ -16,10 +16,8 @@ import { listRecords, pendingCounts } from '../../../worker/case-reads';
 import { getLeaderboard, getUserById, toUser } from '../../../worker/db';
 import { ApiError } from '../../../worker/errors';
 import { getLatestReport } from '../../../worker/report';
-import { listMyInvites } from '../../../worker/sessions';
-import type { RecordItem, SessionItem, User } from '../../../worker/types';
+import type { RecordItem, User } from '../../../worker/types';
 import { boundUser, setNotifyDm, unlinkAccounts } from './links';
-import { handleYue, YUE_SLOTS } from './sessions';
 import { reportEmbed } from './report';
 
 export { boundUser };
@@ -59,11 +57,7 @@ interface CommandOption {
   description: string;
   required?: boolean;
   choices?: Array<{ name: string; value: string }>;
-  min_value?: number;
-  max_value?: number;
 }
-
-const INTEGER_OPTION = 4;
 
 export interface CommandDefinition {
   type: number;
@@ -93,12 +87,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     description: '最近 5 次判决（只有你自己看得到）',
     options: [userOption('要查谁，不填就是自己')],
   },
-  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述、待回应的约局（管理员还有待复核的申诉）' },
+  { type: CHAT_INPUT, name: 'todo', description: '我的待办：待写陈述（管理员还有待复核的申诉）' },
   { type: CHAT_INPUT, name: 'report', description: '最新一期周报' },
   {
     type: CHAT_INPUT,
     name: 'notify',
-    description: '私信提醒开关：被立案、快截止、出判决、分数被调整、约局时私信你',
+    description: '私信提醒开关：被立案、快截止、出判决、分数被调整时私信你',
     options: [
       {
         type: STRING_OPTION,
@@ -112,21 +106,6 @@ export const COMMANDS: readonly CommandDefinition[] = [
       },
     ],
   },
-  {
-    type: CHAT_INPUT,
-    name: 'yue',
-    description: '约一局：卡片发到约局频道，大家点按钮报名',
-    options: [
-      {
-        type: STRING_OPTION,
-        name: 'when',
-        description: '什么时候',
-        required: true,
-        choices: YUE_SLOTS.map((s) => ({ name: s.name, value: s.value })),
-      },
-      { type: INTEGER_OPTION, name: 'capacity', description: '最多几个人（不填就不限）', min_value: 2, max_value: 50 },
-    ],
-  },
 ];
 
 // --- Shared pieces -----------------------------------------------------------
@@ -137,14 +116,13 @@ const RECENT_VERDICTS = 5;
 /** Tiers from 基本靠谱 up count as good news (gold); below that, red. */
 const GOOD_TIER_MIN = 70;
 const NAME_MAX = 64;
-const TITLE_MAX = 80;
 const SUMMARY_MAX = 100;
 
 function scoreColor(score: number): number {
   return tierFor(score).min >= GOOD_TIER_MIN ? GOLD : RED;
 }
 
-/** The web app's front page; a case or a session has its own link (webUrl). */
+/** The web app's front page; cases have their own link (webUrl). */
 export function webButton(ctx: BotContext, label = '打开网页'): BotLinkButton {
   return linkButton(label, joinUrl(ctx.frontendUrl, '/'));
 }
@@ -218,7 +196,7 @@ async function handleScore(input: CommandInput, ctx: BotContext): Promise<BotRep
   }
 
   const tier = tierFor(user.score);
-  const [counts, invites] = await Promise.all([pendingCounts(ctx.db, user), listMyInvites(ctx.db, user.id)]);
+  const counts = await pendingCounts(ctx.db, user);
   const lines = [`**${user.score}** 分 · ${tier.emoji} ${tier.name}`, tier.blurb];
   if (!user.is_participant) lines.push('你目前不是上榜选手。');
   const embed: BotEmbed = {
@@ -227,9 +205,8 @@ async function handleScore(input: CommandInput, ctx: BotContext): Promise<BotRep
     color: scoreColor(user.score),
     fields: [
       { name: '待写陈述', value: `${counts.statements} 件`, inline: true },
-      { name: '待回应的约局', value: `${invites.length} 个`, inline: true },
     ],
-    ...(counts.statements + invites.length > 0 ? { footer: { text: '用 /todo 查看待办' } } : {}),
+    ...(counts.statements > 0 ? { footer: { text: '用 /todo 查看待办' } } : {}),
   };
   return ephemeralReply(undefined, { embeds: [embed], buttons: [webButton(ctx)] });
 }
@@ -280,7 +257,7 @@ async function handleVerdicts(input: CommandInput, ctx: BotContext): Promise<Bot
   });
 }
 
-/** A link the bot writes itself (never from user text): straight to the case or session. */
+/** A link the bot writes itself (never from user text): straight to the case. */
 function goTo(label: string, url: string): string {
   return `[${label}](${url})`;
 }
@@ -292,15 +269,6 @@ function statementLine(r: RecordItem, frontendUrl: string): string {
   // description of what they are accused of is shown — it is what they must answer.
   const about = r.claim_summary ?? r.claim;
   return about ? `${head}\n${safeLine(about, SUMMARY_MAX)}` : head;
-}
-
-function inviteLine(s: SessionItem, frontendUrl: string): string {
-  return [
-    `📅 **${safeLine(s.title, TITLE_MAX)}**`,
-    discordTime(s.starts_at, 'f'),
-    `${safeLine(s.organizer.username, NAME_MAX)} 组织`,
-    goTo('查看', webUrl(frontendUrl, { session: s.id })),
-  ].join(' · ');
 }
 
 /** An appeal for an admin to review: who, what, and the way there — not the reason. */
@@ -322,21 +290,17 @@ async function oldestAppeals(ctx: BotContext): Promise<RecordItem[]> {
 async function handleTodo(input: CommandInput, ctx: BotContext): Promise<BotReply> {
   const user = await boundUser(ctx.db, input.caller.id);
   if (!user) return ephemeralReply(NOT_LINKED);
-  const [pending, invites, appeals, counts] = await Promise.all([
+  const [pending, appeals, counts] = await Promise.all([
     listRecords(ctx.db, { pendingFor: user.id }),
-    listMyInvites(ctx.db, user.id),
     user.is_admin ? oldestAppeals(ctx) : Promise.resolve([]),
     pendingCounts(ctx.db, user),
   ]);
-  if (pending.length === 0 && invites.length === 0 && appeals.length === 0) return ephemeralReply('没有待办，清清爽爽 ✨');
+  if (pending.length === 0 && appeals.length === 0) return ephemeralReply('没有待办，清清爽爽 ✨');
 
   const url = ctx.frontendUrl;
   const fields: BotEmbedField[] = [
     ...(pending.length > 0
       ? [{ name: `待写陈述（${pending.length}）`, value: fitLines(pending.map((r) => statementLine(r, url)), LIMITS.fieldValue) }]
-      : []),
-    ...(invites.length > 0
-      ? [{ name: `待回应的约局（${invites.length}）`, value: fitLines(invites.map((s) => inviteLine(s, url)), LIMITS.fieldValue) }]
       : []),
     ...(appeals.length > 0
       ? [{ name: `待复核的申诉（${counts.appeals}）`, value: fitLines(appeals.map((r) => appealLine(r, url)), LIMITS.fieldValue) }]
@@ -365,7 +329,7 @@ async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotRe
   if (!link) return ephemeralReply(NOT_LINKED);
   return ephemeralReply(
     on
-      ? '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
+      ? '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'
       : '已关闭私信提醒。网页上仍能看到一切；想重新打开用 /notify 开。',
   );
 }
@@ -381,7 +345,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   todo: handleTodo,
   report: handleReport,
   notify: handleNotify,
-  yue: (input, ctx) => handleYue(input, { ...ctx, offsetHours: ctx.offsetHours ?? 8 }),
 };
 
 /**

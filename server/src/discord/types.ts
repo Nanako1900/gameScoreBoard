@@ -17,9 +17,6 @@ export interface CommandInput {
   targetUser: DiscordUserRef | null;
   /** The `state` option of /notify ('on' | 'off'); null for every other command. */
   state?: string | null;
-  /** /yue's options: one of YUE_SLOTS' values, and an optional seat cap. */
-  when?: string | null;
-  capacity?: number | null;
 }
 
 /** Everything handlers may touch. */
@@ -32,10 +29,8 @@ export interface BotContext {
   frontendUrl: string;
   /** READ_ONLY maintenance: commands that write answer with a notice instead. */
   readOnly?: boolean;
-  /** The board's time zone (RESET_TZ_OFFSET), for /yue's "今晚 20:00". */
+  /** The board's time zone (RESET_TZ_OFFSET). */
   offsetHours?: number;
-  /** A session channel is configured, so new sessions get a card there. */
-  sessionCards?: boolean;
 }
 
 export interface BotEmbedField {

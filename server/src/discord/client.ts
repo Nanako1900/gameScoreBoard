@@ -72,18 +72,13 @@ function toUserRef(user: Pick<User, 'id' | 'username'>): DiscordUserRef {
 export function toCommandInput(interaction: ChatInputCommandInteraction): CommandInput {
   // null when the command has no `user` option or it was left out.
   const target = interaction.options.getUser('user');
-  // Only /notify and /yue have these.
+  // Only /notify has a state choice.
   const state = interaction.commandName === 'notify' ? interaction.options.getString('state') : null;
-  const yue = interaction.commandName === 'yue';
-  const when = yue ? interaction.options.getString('when') : null;
-  const capacity = yue ? interaction.options.getInteger('capacity') : null;
   return {
     commandName: interaction.commandName,
     caller: toUserRef(interaction.user),
     targetUser: target ? toUserRef(target) : null,
     ...(state !== null ? { state } : {}),
-    ...(when !== null ? { when } : {}),
-    ...(capacity !== null ? { capacity } : {}),
   };
 }
 
@@ -296,8 +291,6 @@ export interface BotConfig {
   frontendUrl: string;
   /** Where verdicts are posted (P5); null leaves the broadcast off. */
   verdictChannelId: string | null;
-  /** Where session cards are posted (P7); null: no cards. */
-  sessionChannelId: string | null;
 }
 
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -346,11 +339,6 @@ export function readBotConfig(env: Record<string, string | undefined>): BotConfi
     problems.push(`DISCORD_VERDICT_CHANNEL_ID must be a channel id (17–20 digits) or empty, got "${channel}"`);
   }
   const verdictChannelId = channel || null;
-  const sessionChannel = get('DISCORD_SESSION_CHANNEL_ID');
-  if (sessionChannel && !SNOWFLAKE.test(sessionChannel)) {
-    problems.push(`DISCORD_SESSION_CHANNEL_ID must be a channel id (17–20 digits) or empty, got "${sessionChannel}"`);
-  }
-  const sessionChannelId = sessionChannel || null;
 
   if (problems.length > 0) {
     // Bad values are echoed to help fixing them, so a token pasted into the
@@ -358,7 +346,7 @@ export function readBotConfig(env: Record<string, string | undefined>): BotConfi
     const message = `invalid bot configuration: ${problems.join('; ')}`;
     throw new Error((token ? message.split(token).join('[redacted]') : message).replace(BOT_TOKEN, '[redacted]'));
   }
-  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl, verdictChannelId, sessionChannelId };
+  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl, verdictChannelId };
 }
 
 export const GATEWAY_BOT_URL = 'https://discord.com/api/v10/gateway/bot';

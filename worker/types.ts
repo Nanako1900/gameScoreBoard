@@ -3,7 +3,6 @@
 
 import type { CaseStatus, VerdictSource, ViolationType } from '../shared/scoring';
 import type { ClassifiedBy } from './ai/classify';
-import type { Attendance, Rsvp, SelfRsvp, SessionStatus } from '../shared/attendance';
 
 /** Worker runtime bindings (see docs/CONTRACT.md → Env). */
 export interface Env {
@@ -33,8 +32,6 @@ export interface Env {
   AI_TEMPERATURE?: string;
   /** Hours a subject gets to file a statement; default STATEMENT_WINDOW_HOURS. */
   STATEMENT_WINDOW_HOURS?: string;
-  /** 'false' = a non-judge organizer's roll call only produces drafts. */
-  SESSION_ORGANIZER_CAN_FILE?: string;
 
   // --- Split-deployment (frontend on a different origin, e.g. EdgeOne) ---------
   // All optional; unset = single-origin behavior (unified Worker, or EdgeOne
@@ -129,40 +126,6 @@ export interface RecordJoinRow {
   p_id: string;
   p_username: string;
   p_avatar: string | null;
-}
-
-export interface SessionRow {
-  id: number;
-  organizer_id: string;
-  title: string;
-  game: string | null;
-  starts_at: string;
-  duration_min: number | null;
-  capacity: number | null;
-  note: string | null;
-  status: string;
-  settled_at: string | null;
-  settled_by: string | null;
-  created_at: string;
-  cancel_reason: string | null;
-  cancelled_at: string | null;
-}
-
-export interface SessionPlayerJoinRow {
-  session_id: number;
-  user_id: string;
-  rsvp: string;
-  rsvp_at: string;
-  attendance: string | null;
-  late_minutes: number | null;
-  attendance_note: string | null;
-  record_id: number | null;
-  prev_rsvp: string | null;
-  prev_starts_at: string | null;
-  u_username: string;
-  u_avatar: string | null;
-  u_score: number;
-  u_is_participant: number;
 }
 
 // --- JSON output shapes (booleans are real booleans) -------------------------
@@ -276,101 +239,6 @@ export interface PendingHiddenRecordView extends Omit<RecordItem, PendingHiddenF
 export interface HistoryPoint {
   at: string;
   score: number;
-}
-
-// --- Sessions ----------------------------------------------------------------
-
-export interface SessionPlayer {
-  user: RecordActor;
-  rsvp: Rsvp;
-  rsvp_at: string;
-  attendance: Attendance | null;
-  late_minutes: number | null;
-  attendance_note: string | null;
-  record_id: number | null;
-  is_participant: boolean;
-}
-
-export interface SessionItem {
-  id: number;
-  organizer: RecordActor;
-  title: string;
-  game: string | null;
-  starts_at: string;
-  duration_min: number | null;
-  capacity: number | null;
-  note: string | null;
-  status: SessionStatus;
-  settled_at: string | null;
-  created_at: string;
-  counts: { invited: number; going: number; maybe: number; out: number };
-  /** The caller's own RSVP, when authenticated. */
-  my_rsvp: Rsvp | null;
-  /** P2-6: up to GOING_PREVIEW_MAX people whose answer is 来, earliest answer first. Names and avatars only. */
-  going_preview: RecordActor[];
-  /** P2-3: the organizer's reason, trimmed and cut to SESSION_CANCEL_REASON_MAX; null when none (or not cancelled). */
-  cancel_reason: string | null;
-  /** P2-3: when it was cancelled, datetime('now') shape; null when not cancelled, or cancelled before P2-3. */
-  cancelled_at: string | null;
-}
-
-export interface SessionDetail extends SessionItem {
-  players: SessionPlayer[];
-}
-
-// --- P2-3 ---
-/** Roll-call outcomes of one session, by kind: all five keys, zeros included. */
-export type AttendanceSummary = Record<Attendance, number>;
-
-/** One row of GET /api/sessions?scope=history. */
-export interface HistorySessionItem extends SessionItem {
-  attendance_summary: AttendanceSummary;
-}
-
-export type InviteReason = 'new' | 'moved';
-
-/** One row of GET /api/me/invites. The context is the caller's own: never shown to anyone else. */
-export interface InvitedSessionItem extends SessionItem {
-  /** 'moved' when prev_starts_at is set: they had answered, then the time changed. */
-  invite_reason: InviteReason;
-  /** What they had said to the old time. */
-  prev_rsvp: SelfRsvp | null;
-  /** The old time (ISO), as they answered it. */
-  prev_starts_at: string | null;
-}
-
-/** A proposed case produced by roll call — nothing is filed until settle. */
-export interface CaseDraft {
-  user_id: string;
-  username: string;
-  type: ViolationType;
-  kind: 'penalty' | 'bonus';
-  range: { min: number; max: number; base: number };
-  suggested_claim: string;
-  /** Already has a filed case from a previous settle attempt. */
-  already_filed: boolean;
-}
-
-// --- P2-2 ---
-/** One row of GET /api/me/invitable. Never a score, never anything about Discord. */
-export interface InvitableUser {
-  id: string;
-  /** COALESCE(display_name, username), like every other name the site shows. */
-  username: string;
-  avatar_url: string | null;
-  is_participant: boolean;
-  /** starts_at (ISO) of the latest session, already started and not cancelled, where both said 来 and neither was marked 没来 / 请假; else null. */
-  last_played_with_me_at: string | null;
-}
-
-// --- P2-1 ---
-/** What POST /api/sessions/:id/invite answers. */
-export interface InviteResult {
-  session: SessionDetail;
-  /** Rows actually inserted (each one an invitation; on PostgreSQL each queues a DM). */
-  added: number;
-  /** Distinct requested ids, minus the organizer, minus `added`: already in it, or unknown. */
-  skipped: number;
 }
 
 /** Hono generics for the app: bindings + per-request variables. */
