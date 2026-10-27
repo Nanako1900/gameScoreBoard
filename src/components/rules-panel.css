@@ -1,5 +1,7 @@
 .rules {
   overflow: hidden;
+  /* 30 秒看懂 scrolls here: keep the heading clear of the sticky header. */
+  scroll-margin-top: 5.5rem;
 }
 
 .rules__heading {

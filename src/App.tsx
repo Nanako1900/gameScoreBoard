@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { affectsScore } from '@shared/scoring';
 import type { RecordItem, User } from './types';
-import { ApiError, getRecord, logout as apiLogout, regenerateReport } from './api';
-import { lastWeekStartOf, parseTimestamp } from './lib/time';
+import { ApiError, AUTH_LOGIN_URL, getRecord, logout as apiLogout, regenerateReport } from './api';
+import { lastWeekStartOf } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
+import { computeCounts, computeTrends } from './lib/feedStats';
+import { FEED_PREVIEW_COUNT } from './lib/constants';
+import { DISCORD_INVITE_URL } from './lib/env';
+import { revealSection } from './lib/revealSection';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -14,8 +17,9 @@ import { useTabTitle } from './lib/useTabTitle';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
-import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
+import { WeekHighlights } from './components/WeekHighlights';
+import { WelcomeCard } from './components/WelcomeCard';
 import { RecordsFeed } from './components/RecordsFeed';
 import { RulesPanel } from './components/RulesPanel';
 import { CaseDialog } from './components/CaseDialog';
@@ -32,33 +36,6 @@ import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import './app.css';
-
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** Sum of scored deltas per subject within the current heal week. */
-function computeTrends(records: RecordItem[], nextResetAt: string): Record<string, number> {
-  const weekStart = parseTimestamp(nextResetAt) - WEEK_MS;
-  const trends: Record<string, number> = {};
-  for (const r of records) {
-    if (!affectsScore(r.status)) {
-      continue;
-    }
-    const at = parseTimestamp(r.created_at);
-    if (!Number.isNaN(at) && at >= weekStart) {
-      trends[r.subject.id] = (trends[r.subject.id] ?? 0) + r.delta;
-    }
-  }
-  return trends;
-}
-
-/** Count of records involving each subject (from the loaded feed). */
-function computeCounts(records: RecordItem[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const r of records) {
-    counts[r.subject.id] = (counts[r.subject.id] ?? 0) + 1;
-  }
-  return counts;
-}
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
 export function App(): JSX.Element {
@@ -81,6 +58,8 @@ function AppMain(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
+  // Controlled so the welcome card's 30 秒看懂 can open it.
+  const [rulesOpen, setRulesOpen] = useState(false);
   // ?linked=discord is where the API lands the browser after a successful bind.
   // Read once at mount; the effect below strips it so a reload doesn't repeat it.
   const [discordLinked, setDiscordLinked] = useState(
@@ -255,9 +234,11 @@ function AppMain(): JSX.Element {
   }
 
   const { config, participants, records, me, myPending, invites, report } = state.data;
-  const top = participants.length > 0 ? participants[0] : null;
-  const bottom = participants.length > 1 ? participants[participants.length - 1] : null;
   const canRecord = me?.is_judge === true;
+  const showRules = (): void => {
+    setRulesOpen(true);
+    revealSection('rules');
+  };
 
   return (
     <div className="app">
@@ -291,6 +272,15 @@ function AppMain(): JSX.Element {
 
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
 
+        {!me && (
+          <WelcomeCard
+            loginUrl={AUTH_LOGIN_URL}
+            discordInviteUrl={DISCORD_INVITE_URL}
+            onShowRules={showRules}
+            weeklyHeal={config.weeklyHeal}
+          />
+        )}
+
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
@@ -305,11 +295,10 @@ function AppMain(): JSX.Element {
           onCreate={() => setSessionFormOpen(true)}
         />
 
-        <RedBlackBoard top={top} bottom={bottom} onSelect={setSelectedUserId} />
-
         {report && (
           <WeeklyReportCard
             report={report}
+            compact
             stale={(() => {
               const lastWeek = lastWeekStartOf(config.nextResetAt);
               return lastWeek !== null && report.week_start < lastWeek;
@@ -330,8 +319,16 @@ function AppMain(): JSX.Element {
               trends={trends}
               counts={counts}
               onSelect={setSelectedUserId}
+              meId={me?.id ?? null}
+              highlights={
+                <WeekHighlights
+                  records={records}
+                  nextResetAt={config.nextResetAt}
+                  onSelectUser={setSelectedUserId}
+                />
+              }
             />
-            <RulesPanel config={config} />
+            <RulesPanel config={config} open={rulesOpen} onOpenChange={setRulesOpen} />
           </div>
 
           <aside className="app__col app__col--side">
@@ -340,6 +337,7 @@ function AppMain(): JSX.Element {
               title="最新动态"
               onSelectUser={setSelectedUserId}
               emptyHint="还没有任何记录，等待第一笔。"
+              previewCount={FEED_PREVIEW_COUNT}
             />
           </aside>
         </div>

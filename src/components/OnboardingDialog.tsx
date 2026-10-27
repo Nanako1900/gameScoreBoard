@@ -26,7 +26,7 @@ const ROLE_CARDS: RoleCard[] = [
     choice: 'participant',
     emoji: '🎮',
     title: '上榜选手',
-    desc: '拥有信誉分，出现在红黑榜上，接受裁判记录。',
+    desc: '拥有信誉分，出现在信誉榜上，接受裁判记录。',
   },
   {
     choice: 'judge',

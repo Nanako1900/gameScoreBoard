@@ -1,0 +1,42 @@
+/* 本周之星 — one ~40px line in the board's head (spec §5 #1). Plain inline flow,
+   not flex: the names and 「（准时 N 次）」 must wrap like prose. */
+.wh {
+  min-height: 40px;
+  line-height: 1.6;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.wh--quiet {
+  color: var(--muted);
+}
+
+.wh__link {
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+}
+
+.wh__name {
+  font-weight: 700;
+  color: var(--ok);
+}
+
+@media (hover: hover) {
+  .wh__link:hover .wh__name {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+@media (pointer: coarse) {
+  /* Inline name buttons: grow the hit area to --tap-min without moving the line.
+     The button inherits .wh's 1.6 line-height, so its text box is 1.6em tall. */
+  .wh__link {
+    --wh-tap-pad: calc((var(--tap-min) - 1.6em) / 2);
+    padding-block: var(--wh-tap-pad);
+    margin-block: calc(-1 * var(--wh-tap-pad));
+  }
+}

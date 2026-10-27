@@ -23,3 +23,9 @@ export const PENDING_STATEMENTS_LIMIT = 20;
 export const RESCHEDULE_DM_DELAY_MIN = 3;
 /** 其他时间 first shows an hour from now — shared by 改时间 (RescheduleSheet) and 发起约局 (SessionFormDialog). */
 export const CUSTOM_TIME_LEAD_MS = 60 * 60 * 1000;
+
+// --- P0-4 ---
+/** 本周之星: at least this many 守约守时 bonuses this week (spec §5 #1). */
+export const WEEK_STAR_MIN_ON_TIME = 2;
+/** The home feed shows this many rows before 看更多. */
+export const FEED_PREVIEW_COUNT = 10;

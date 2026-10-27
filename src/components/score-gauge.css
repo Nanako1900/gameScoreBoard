@@ -45,3 +45,18 @@
     transition: none;
   }
 }
+
+/* Public views (tone="neutral"): one colour for everybody, no glow — the ring
+   must not hint at a 段位 (spec §6.2). */
+.gauge--neutral .gauge__svg {
+  filter: none;
+}
+
+.gauge--neutral .gauge__arc {
+  stroke: var(--score-chip-fg);
+}
+
+.gauge--neutral .gauge__value {
+  color: var(--score-chip-fg);
+  text-shadow: none;
+}
