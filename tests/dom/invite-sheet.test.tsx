@@ -4,8 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { INVITES_PER_ORGANIZER, MAX_INVITES, type Rsvp } from '@shared/attendance';
 import { InviteSheet } from '../../src/components/InviteSheet';
+import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
+import { ToastProvider } from '../../src/components/Toast';
+import { bootRouter } from '../../src/lib/router';
 import type { Invitable, InvitableState } from '../../src/lib/useInvitable';
-import type { InvitableUser, SessionDetail, SessionPlayer } from '../../src/types';
+import type { InvitableUser, SessionDetail, SessionPlayer, User } from '../../src/types';
+import { drainHistoryTraversals, overlayMarks } from './history';
 
 // P2-1: 再叫几个人 — the minimal InviteSheet (P2 contract 4.6). Only Date is
 // faked, as in organizer-actions; timers stay real.
@@ -209,5 +213,171 @@ describe('InviteSheet', () => {
       screen.getByText('还没有别的朋友登录过。把链接发到群里，他们登录后就能在这里叫到。'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('group')).toBeNull();
+  });
+});
+
+describe('再叫几个人 in the session dialog', () => {
+  function makeUser(id: string, username: string, isAdmin = false): User {
+    return {
+      id,
+      username,
+      oauth_username: username,
+      avatar_url: null,
+      is_participant: true,
+      is_judge: false,
+      is_admin: isAdmin,
+      score: 100,
+      created_at: '2026-10-01 00:00:00',
+    };
+  }
+
+  const ORGANIZER = makeUser('org', '组织者');
+  const PLAYER = makeUser('p', '选手');
+  const ADMIN = makeUser('admin', '管理员', true);
+  const detail = (s: SessionDetail): Response => json(200, { session: s, records: [] });
+  const friends = (): Response => json(200, { users: FRIENDS });
+  const listRequests = (calls: Call[]): Call[] => calls.filter((c) => c.path === '/api/me/invitable');
+
+  /** The dialog inside a ToastProvider, as App renders it. */
+  function renderDialog(me: User | null): Mock {
+    const onChanged = vi.fn();
+    render(
+      <ToastProvider>
+        <SessionDetailDialog sessionId={1} me={me} onClose={() => {}} onChanged={onChanged} />
+      </ToastProvider>,
+    );
+    return onChanged;
+  }
+
+  /** Let a response already on its way land (inside act: it sets state). */
+  async function settle(): Promise<void> {
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+  }
+
+  it('the organizer gets ＋ 再叫几个人, first, before 改时间', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession()), 'GET /api/me/invitable': friends });
+    renderDialog(ORGANIZER);
+    const entry = await screen.findByRole('button', { name: '再叫几个人' });
+    expect(entry).toHaveTextContent('＋ 再叫几个人');
+    const reschedule = screen.getByRole('button', { name: '改时间' });
+    expect(entry.compareDocumentPosition(reschedule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('an API without /api/me/invitable (404): no entry, and nothing said about it', async () => {
+    const calls = mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'GET /api/me/invitable': () => json(404, { error: 'Not Found' }),
+    });
+    renderDialog(ORGANIZER);
+    expect(await screen.findByRole('button', { name: '改时间' })).toBeInTheDocument();
+    await waitFor(() => expect(listRequests(calls)).toHaveLength(1));
+    await settle();
+    expect(screen.queryByRole('button', { name: '再叫几个人' })).toBeNull();
+    expect(screen.queryByText(/名单/)).toBeNull();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it.each([
+    ['a player', PLAYER, { my_rsvp: 'invited' as const }],
+    ['a visitor', null, {}],
+    ['the organizer, once it has started', ORGANIZER, { starts_at: at(28, 9) }],
+    ['the organizer of a cancelled session', ORGANIZER, { status: 'cancelled' as const }],
+  ])('%s: no list request, no entry', async (_who, me, overrides) => {
+    const calls = mockFetch({ 'GET /api/sessions/1': () => detail(makeSession(overrides)), 'GET /api/me/invitable': friends });
+    renderDialog(me);
+    expect(await screen.findByRole('heading', { name: '周五五排' })).toBeInTheDocument();
+    await settle();
+    expect(listRequests(calls)).toEqual([]);
+    expect(screen.queryByRole('button', { name: '再叫几个人' })).toBeNull();
+  });
+
+  it('inviting closes the sheet, shows who was asked, tells the lists and says so', async () => {
+    const after = makeSession({
+      counts: { invited: 3, going: 2, maybe: 1, out: 1 },
+      players: [...makeSession().players, player('e', 'invited'), player('f', 'invited')],
+    });
+    const calls = mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'GET /api/me/invitable': friends,
+      'POST /api/sessions/1/invite': () => json(200, { session: after, added: 2, skipped: 0 }),
+    });
+    const user = userEvent.setup();
+    const onChanged = renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '再叫几个人' }));
+    const sheet = screen.getByRole('dialog', { name: '再叫几个人' });
+    await user.click(within(sheet).getByRole('checkbox', { name: '玩家e' }));
+    await user.click(within(sheet).getByRole('checkbox', { name: '玩家f' }));
+    await user.click(within(sheet).getByRole('button', { name: '叫 2 人' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '再叫几个人' })).toBeNull());
+    expect(await screen.findByText('已叫 2 人。没绑 Discord 的朋友，记得在群里喊一声。')).toBeInTheDocument();
+    expect(screen.getByText('玩家e')).toBeInTheDocument();
+    expect(screen.getByText('玩家f')).toBeInTheDocument();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '再叫几个人' })).toHaveFocus();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    expect(writes(calls)).toEqual([
+      { method: 'POST', path: '/api/sessions/1/invite', body: { user_ids: ['e', 'f'] } },
+    ]);
+    expect(listRequests(calls)).toHaveLength(1);
+  });
+
+  it('nobody new: says so', async () => {
+    mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'GET /api/me/invitable': friends,
+      'POST /api/sessions/1/invite': () => json(200, { session: makeSession(), added: 0, skipped: 1 }),
+    });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '再叫几个人' }));
+    await user.click(screen.getByRole('checkbox', { name: '玩家e' }));
+    await user.click(screen.getByRole('button', { name: '叫 1 人' }));
+    expect(await screen.findByText('没有叫到新的人：选的人已经在局里了。')).toBeInTheDocument();
+  });
+
+  it('a list that failed to load keeps the entry; 重试 in the sheet asks again', async () => {
+    let failing = true;
+    const calls = mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession()),
+      'GET /api/me/invitable': () => (failing ? json(500, { error: '服务器开小差了' }) : friends()),
+    });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '再叫几个人' }));
+    const sheet = screen.getByRole('dialog', { name: '再叫几个人' });
+    expect(within(sheet).getByRole('status')).toHaveTextContent('名单没加载出来，稍后再试。');
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    failing = false;
+    await user.click(within(sheet).getByRole('button', { name: '重试' }));
+    expect(await within(sheet).findByRole('checkbox', { name: '玩家e' })).toBeEnabled();
+    expect(listRequests(calls)).toHaveLength(2);
+  });
+
+  it('the back button closes only the sheet', async () => {
+    window.history.replaceState(null, '', '/');
+    bootRouter();
+    const calls = mockFetch({ 'GET /api/sessions/1': () => detail(makeSession()), 'GET /api/me/invitable': friends });
+    const user = userEvent.setup();
+    renderDialog(ORGANIZER);
+    await user.click(await screen.findByRole('button', { name: '再叫几个人' }));
+    expect(overlayMarks().sheet).toBe('invite');
+    await act(async () => {
+      window.history.back();
+      await drainHistoryTraversals();
+    });
+    expect(screen.queryByRole('dialog', { name: '再叫几个人' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: '周五五排' })).toBeInTheDocument();
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it('an admin who was invited still has exactly one 来, and none in the sheet', async () => {
+    mockFetch({ 'GET /api/sessions/1': () => detail(makeSession({ my_rsvp: 'invited' })), 'GET /api/me/invitable': friends });
+    const user = userEvent.setup();
+    renderDialog(ADMIN);
+    await user.click(await screen.findByRole('button', { name: '再叫几个人' }));
+    const sheet = screen.getByRole('dialog', { name: '再叫几个人' });
+    expect(within(sheet).queryByRole('button', { name: '来' })).toBeNull();
+    // The panel behind is inert while the sheet is up: count it too.
+    expect(screen.getAllByRole('button', { name: '来', hidden: true })).toHaveLength(1);
   });
 });
