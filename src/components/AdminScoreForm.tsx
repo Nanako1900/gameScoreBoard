@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MAX_SCORE, MIN_SCORE } from '@shared/scoring';
+import './admin-score-form.css';
 
 interface AdminScoreFormProps {
   username: string;

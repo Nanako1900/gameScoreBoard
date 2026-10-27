@@ -15,7 +15,7 @@ export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'welcome' }
   | { readonly name: 'guide' }
-  | { readonly name: 'admin'; readonly tab: 'voice' | 'ai' }
+  | { readonly name: 'admin'; readonly tab: 'voice' | 'ai' | 'members' }
   | { readonly name: 'sessionGone' }
   | { readonly name: 'player'; readonly userId: string }
   | { readonly name: 'playerCase'; readonly userId: string; readonly caseId: number }
@@ -101,7 +101,7 @@ function matchSegments(segments: readonly string[]): Route {
   if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
   if (segments.length === 1 && head === 'guide') return { name: 'guide' };
   if (head === 'admin' && (segments.length === 1 || (segments.length === 2 && first === 'voice'))) return { name: 'admin', tab: 'voice' };
-  if (head === 'admin' && segments.length === 2 && first === 'ai') return { name: 'admin', tab: 'ai' };
+  if (head === 'admin' && segments.length === 2 && (first === 'ai' || first === 'members')) return { name: 'admin', tab: first };
   if (head === 'sessions') return { name: 'sessionGone' };
   if (segments.length === 2 && head === 'cases') return idRoute(first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
@@ -152,7 +152,7 @@ export function formatRoute(route: LinkableRoute): string {
     case 'guide':
       return GUIDE_PATH;
     case 'admin':
-      return route.tab === 'ai' ? '/admin/ai' : adminVoicePath();
+      return route.tab === 'voice' ? adminVoicePath() : `/admin/${route.tab}`;
     case 'sessionGone':
       return '/sessions';
     case 'player':
