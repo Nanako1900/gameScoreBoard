@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { FILED_DM_GRACE_MS } from '../../shared/scoring';
 import { COMMANDS } from '../../server/src/discord/commands';
 import { BACK_HOME } from '../../src/lib/routeCopy';
+import { VOICE_RANGE_MAX_DAYS, VOICE_RETENTION_DAYS } from '../../shared/voice';
 
 const ROOT = path.resolve(__dirname, '../..');
 const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations'];
@@ -180,5 +181,84 @@ describe('welcome and guide documentation', () => {
     expect(contract).toContain('7 days');
     expect(contract).toContain('step IDs');
     expect(contract).toMatch(/onboarding card[^\n]*badge[^\n]*dot/);
+  });
+});
+
+
+// S3: readers must be able to distinguish private evidence from missing coverage.
+describe('voice evidence documentation', () => {
+  it('documents both private APIs, their public DTOs and authorization order', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const voice = contract.split('### Voice evidence (D1 and PostgreSQL)')[1]?.split('\n### ')[0] ?? '';
+    expect(voice).toContain('`GET /api/voice?user=&from=&to=`');
+    expect(voice).toContain('`GET /api/voice/day?date=`');
+    expect(voice).toContain('401');
+    expect(voice).toContain('404');
+    expect(voice).toContain('before date validation or target lookup');
+    expect(voice).toContain('private, no-store');
+    expect(voice).toContain('`shared/voiceApi.ts`');
+    for (const field of ['user', 'days', 'gaps', 'retention_days', 'first_join', 'total_min', 'in_voice_now', 'has_open_segment']) {
+      expect(voice).toContain('`' + field + '`');
+    }
+    expect(voice).toContain('no Discord account IDs or channel IDs');
+  });
+
+  it('explains daily arithmetic, retention rejection and strictly persisted coverage', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const voice = contract.split('### Voice evidence (D1 and PostgreSQL)')[1]?.split('\n### ')[0] ?? '';
+    expect(voice).toContain('default last 7 days');
+    expect(voice).toContain(`at most ${VOICE_RANGE_MAX_DAYS} inclusive board dates`);
+    expect(voice).toContain(`rolling ${VOICE_RETENTION_DAYS}-day cutoff`);
+    expect(voice).toContain('400');
+    expect(voice).toContain('`firstAvailableVoiceDate`');
+    expect(voice).toContain('sum seconds for each day, then floor once to minutes');
+    expect(voice).toContain('`continued`');
+    expect(voice).toContain('persisted `[started_at, last_seen_at]`');
+    expect(voice).toContain('never extend coverage to the query time');
+    expect(voice).toContain('second-resolution UTC');
+    expect(voice).toContain('尚未记录离开');
+    expect(voice).toContain('没有保存的语音记录，不代表没来');
+  });
+
+  it('documents the two evidence tables and the implemented admin routes', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    for (const table of ['voice_sessions', 'voice_coverage']) expect(contract).toContain('`' + table + '`');
+    expect(contract).toContain('partial unique index');
+    expect(contract).toContain('`ON DELETE CASCADE`');
+    expect(contract).toContain('`worker/voice.ts`');
+    expect(contract).toMatch(/\| `\/admin`, `\/admin\/voice` \|[^\n]*full page[^\n]*same full page/);
+    expect(contract).toContain('`/admin/ai` and `/admin/members` still render NotFound');
+    expect(contract).toContain('`target="_blank" rel="noopener"`');
+    expect(contract).toContain('`voiceNotice()`');
+    expect(contract).not.toContain('S2 does not yet add voice recording');
+  });
+
+  it('describes voice intents, visibility and sanitized operational status', () => {
+    const deploy = readFileSync(path.join(ROOT, 'docs/DEPLOY-DISCORD.md'), 'utf8');
+    expect(deploy).toContain('Guilds + GuildVoiceStates');
+    expect(deploy).toContain('非特权');
+    expect(deploy).toContain('看不见的频道不会被记录');
+    expect(deploy).toContain('包括私密频道');
+    for (const field of ['coverage_since', 'degraded', 'open_segments', 'last_error']) expect(deploy).toContain('`' + field + '`');
+    expect(deploy).toContain('HTTP 200');
+    expect(deploy).toContain('不代表语音记录健康');
+    expect(deploy).toContain('`open_segments: null`');
+    expect(deploy).toContain('语音记录暂不可用，请查看机器人日志');
+    expect(deploy).toContain('`0010_voice.sql`');
+    expect(deploy).toContain('机主在服务器里发一条公告');
+    expect(deploy).not.toContain('本期没有 `/voice`');
+    expect(deploy).not.toContain('S2 尚不含语音记录');
+  });
+
+  it('documents local and owner-run D1 migrations without advertising future voice work', () => {
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    for (const suffix of ['local', 'remote']) {
+      expect(readme).toContain('`npm run db:migrate5:' + suffix + '`');
+    }
+    expect(readme).toContain('`migrations/005_voice.sql`');
+    expect(readme).toContain('已有 D1');
+    expect(readme).toContain('由机主');
+    expect(readme).toContain('| `/admin`、`/admin/voice` | 手机、桌面均为整页 |');
+    expect(readme).not.toContain('后续语音、信息板与管理路由');
   });
 });

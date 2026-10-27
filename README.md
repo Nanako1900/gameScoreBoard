@@ -122,7 +122,8 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 |---|---|---|
 | `/` | 页面 | 待办 / 欢迎卡 → 我的分数（已上榜）→ 紧凑信誉榜 → 最近案件 → 紧凑战报 |
 | `/welcome` | 手机、桌面均为整页 | 五步入户，也可编辑名字、身份、Discord 绑定与私信设置 |
-| `/guide` | 手机、桌面均为整页 | 机器人指南，与 `/help`、欢迎私信和入户第 5 步共用文案 |
+| `/guide` | 手机、桌面均为整页 | 机器人指南，与 `/help`、欢迎私信和入户第 5 步共用文案，包含语音记录告知 |
+| `/admin`、`/admin/voice` | 手机、桌面均为整页 | 裁判和管理员查看当天语音名单或个人 7 / 14 / 31 天明细 |
 | `/sessions`、`/sessions/*` | 页面 | 「约局功能已下线」，正文「约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。」，附「回首页」 |
 | `/players/:id` | 页面 / 右侧抽屉 | 选手页：分数、走势、记录 |
 | `/players/:id/cases/:caseId` | 同选手页 | 这一起案件移到最上方（移动，不是复制）并获得焦点 |
@@ -135,7 +136,9 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 S2 已用 `/welcome` 取代首登身份弹窗：首页访客点「开始」，头像菜单的「编辑身份」「通知与 Discord」也到这里。
 入户是登录 → 加入服务器并绑定 → 开启私信 → 名字与身份 → 指南，完成状态来自服务器；旧 Worker 不支持 Discord 时隐藏控件，不会跳过绑定与私信步骤。
 服务器状态已知、步骤 2–4 仍有缺项的已登录用户在待办最前看到「还差 N 步完成入户」，可关闭 7 天；出现新的未完成步骤时重新显示，不计入待办数字或提示圆点。
-新绑、换绑自动发送欢迎私信，开启私信的人还可手动重发（滚动 24 小时最多 3 次，自动欢迎不占次数）。后续语音、信息板与管理路由按 [v6 分期](./docs/redesign-v6/spec.md#9-分期) 实施；v5 P4、P5 规划已经作废。
+新绑、换绑自动发送欢迎私信，开启私信的人还可手动重发（滚动 24 小时最多 3 次，自动欢迎不占次数）。
+
+S3 已支持私密语音记录：本人用 `/voice` 查近 7 天（最多 14 天），裁判和管理员还可指定他人或在管理页查明细。只认已持久化覆盖，缺口不代表缺席；记录保存 90 天。后续信息板与 AI / 成员管理路由按 [v6 分期](./docs/redesign-v6/spec.md#9-分期) 实施；v5 P4、P5 规划已经作废。
 
 - **id**：案件数字 id 只认 `^[1-9]\d{0,14}$`（所以 `/cases/07` 无效）；选手 id 是 OAuth 的 subject，路径里一律 `encodeURIComponent`，最长 128 个字符。`/players/A/cases/7` 里第 7 起的当事人不是 A 时，地址直接换成正确的选手，不报错。`/sessions` 的任意子路径都落到下线页。
 - **后端前缀**：路由不以 `/api`、`/auth`、`/link` 开头，这些归 API。托管必须对其他所有路径返回 `index.html`（SPA 回退），构建产物里不能有 `404.html`（`npm run build:pages` 发现就失败）。
@@ -197,7 +200,7 @@ npm run dev:web
 ├── shared/attendance.ts   # 历史案件的改案由校验（纯模块）
 ├── shared/boardTime.ts    # 榜单时区标签（纯模块）
 ├── schema.sql             # D1 表结构（全新部署用）
-├── migrations/            # v1 → v2 增量迁移（已有数据的库用）
+├── migrations/            # D1 增量迁移（已有数据的库用）
 ├── wrangler.toml          # Cloudflare Worker 配置（D1 绑定、静态资源、变量）
 ├── worker/                # Hono Worker 源码
 │   ├── cases.ts           #   案件生命周期：立案 → 陈述 → 裁决 → 申诉 / 撤销
@@ -245,7 +248,14 @@ npm run dev:web
 | `npm run db:migrate:remote` | 在远程 D1 上执行 v1 → v2 迁移 |
 | `npm run db:migrate3:local` | 在本地 D1 上执行 v2 → v3 迁移 |
 | `npm run db:migrate3:remote` | 在远程 D1 上执行 v2 → v3 迁移 |
+| `npm run db:migrate5:local` | 在本地 D1 上执行 `migrations/005_voice.sql`，添加语音记录与覆盖表 |
+| `npm run db:migrate5:remote` | 由机主在备份后执行远程 D1 的 `migrations/005_voice.sql`；不会启动语音写入器 |
 | `npm run cf-typegen` | 由 `wrangler.toml` 生成 Cloudflare 绑定的 TypeScript 类型 |
+
+S3 的全新 D1 用 `schema.sql` 建表即可；已有 D1 由机主先备份，再执行 `npm run db:migrate5:remote`，
+本地验证用 `npm run db:migrate5:local`。`migrations/005_voice.sql` 可重复执行，不删除约局表或历史数据。
+PG 由机主按 [Discord 部署说明](./docs/DEPLOY-DISCORD.md#s3-语音记录) 备份并 Redeploy，迁移服务执行 `0010_voice.sql`。
+语音记录由 Node bot 写入；D1 提供同样的读取接口，空表按未覆盖处理。
 
 ## 环境变量
 
