@@ -113,6 +113,7 @@ describe('links into the app', () => {
     window.history.replaceState(null, '', '/?case=7');
     render(<App />);
     expect(await screen.findByText('打不开链接里的案件，稍后再试。')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
   });
 
   it('opens once — not again on every refresh after an action', async () => {
@@ -128,6 +129,7 @@ describe('links into the app', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/records?limit=50').length).toBeGreaterThan(1));
     await settle();
     expect(calls.filter((c) => c.path === '/api/records/7')).toHaveLength(1);
+    expect(window.location.pathname).toBe('/players/p/cases/7');
   });
 
   it('waits for the first-run dialog, then opens the case', async () => {
@@ -141,6 +143,7 @@ describe('links into the app', () => {
     expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/players/p/cases/7');
   });
 
   it('scrolls the linked case into view', async () => {
@@ -151,6 +154,8 @@ describe('links into the app', () => {
       render(<PlayerDetail userId="p" me={null} onClose={() => {}} focusRecordId={7} />);
       await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
       expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
+      // P1-1: the focused case is moved to the top, so the page still holds exactly one #case-7.
+      expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
     } finally {
       delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     }

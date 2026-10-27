@@ -188,3 +188,26 @@
     transform: none;
   }
 }
+
+/* --- Routes (P1-1) ------------------------------------------------------------ */
+
+/* A page-form route hides the lobby, which stays mounted. Without this the
+   components' own `display` would beat the UA's [hidden] rule. */
+.app__main[hidden],
+.app__footer[hidden] {
+  display: none;
+}
+
+.app__page {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--space-page) clamp(2rem, 1.5rem + 3vw, 4rem);
+}
+
+.app__page-status {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--muted);
+}

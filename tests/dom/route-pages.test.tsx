@@ -275,3 +275,175 @@ describe('PlayerDetail — page, drawer and the focused case', () => {
     expect(await screen.findByText('unrouted GET /api/users/ghost')).toBeInTheDocument();
   });
 });
+
+describe('unknown addresses', () => {
+  it('render NotFound in place of the lobby; 回大厅 goes home without a reload', async () => {
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/xyz');
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
+    expect(lobbyHidden()).toBe(true);
+    expect(screen.queryByRole('heading', { name: /约局/ })).not.toBeInTheDocument();
+    const home = screen.getByRole('link', { name: '回大厅' });
+    expect(home).toHaveAttribute('href', '/');
+    await user.click(home);
+    expect(window.location.pathname).toBe('/');
+    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+  });
+
+  it('say which thing is missing on a session or player that does not exist', async () => {
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/sessions/999');
+    const first = render(<App />);
+    expect(await screen.findByRole('heading', { name: '找不到这局，链接可能写错了。' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '回大厅' })).toHaveAttribute('href', '/');
+    first.unmount();
+
+    window.history.replaceState(null, '', '/players/ghost');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '找不到这位选手。' })).toBeInTheDocument();
+  });
+
+  it('keep the old sentences for a case that is gone, or cannot be read right now', async () => {
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/players/p/cases/8');
+    const first = render(<App />);
+    expect(await screen.findByRole('heading', { name: '链接里的案件不存在了。' })).toBeInTheDocument();
+    first.unmount();
+
+    window.history.replaceState(null, '', '/cases/9');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '打不开链接里的案件，稍后再试。' })).toBeInTheDocument();
+  });
+});
+
+describe('/sessions/:id', () => {
+  it('on a phone is a page: PageBar, no dialog, the lobby hidden, the title focused', async () => {
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/sessions/5');
+    const user = userEvent.setup();
+    render(<App />);
+    const title = await screen.findByRole('heading', { name: '周五五排' });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(lobbyHidden()).toBe(true);
+    // Opened straight from outside: 返回 has nothing of ours behind it, so it replaces with '/'.
+    const before = window.history.length;
+    await user.click(screen.getByRole('button', { name: '返回' }));
+    expect(window.location.pathname).toBe('/');
+    expect(window.history.length).toBe(before);
+    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+  });
+
+  it('on a desktop is a drawer over the lobby; ✕ closes it', async () => {
+    useDesktopViewport();
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/sessions/5');
+    const user = userEvent.setup();
+    render(<App />);
+    const drawer = await screen.findByRole('dialog');
+    expect(drawer.className).toContain('modal__panel--drawer');
+    expect(await screen.findByRole('heading', { name: '周五五排' })).toBeInTheDocument();
+    expect(lobbyHidden()).toBe(false);
+    expect(screen.queryByRole('button', { name: '返回' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    expect(window.location.pathname).toBe('/');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
+
+describe('/players/:id', () => {
+  it('opens from the board as its own address; 返回 goes back to the lobby', async () => {
+    mockFetch(routes());
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: ROW }));
+    expect(window.location.pathname).toBe('/players/p');
+    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(lobbyHidden()).toBe(true);
+    await user.click(screen.getByRole('button', { name: '返回' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(await screen.findByRole('button', { name: ROW })).toBeInTheDocument();
+  });
+
+  it('the brand link goes home in place', async () => {
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/players/p');
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: '选手' });
+    await user.click(screen.getByRole('link', { name: 'EDG 信誉分 首页' }));
+    expect(window.location.pathname).toBe('/');
+    expect(await screen.findByRole('button', { name: ROW })).toBeInTheDocument();
+  });
+});
+
+describe('/players/:id/cases/:caseId', () => {
+  it('moves the case to the top — one #case-7 on the page, focused, the rest below', async () => {
+    const calls = mockFetch(routes());
+    window.history.replaceState(null, '', '/players/p/cases/7');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    const card = document.getElementById('case-7');
+    await waitFor(() => expect(document.activeElement).toBe(card));
+    expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
+    expect(card?.closest('.pd__pinned')).not.toBeNull();
+    expect(card?.className).toContain('vc--focus');
+    expect(screen.getByRole('region', { name: '你点开的这一起' })).toHaveTextContent('案件 #7 · 放鸽子');
+    expect(document.getElementById('case-6')?.closest('.pd__cases')).not.toBeNull();
+    expect(document.querySelector('.pd__count')).toHaveTextContent('2');
+    expect(count(calls, '/api/records/7')).toBe(1);
+  });
+
+  it('when the two ids disagree, the case’s subject wins — in place, no error', async () => {
+    const calls = mockFetch(routes());
+    window.history.replaceState(null, '', '/players/wrong/cases/7?utm=dc');
+    const before = window.history.length;
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
+    expect(window.location.search).toBe('?utm=dc');
+    expect(window.history.length).toBe(before);
+    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(count(calls, '/api/users/wrong')).toBe(0);
+    expect(count(calls, '/api/records/7')).toBe(1);
+  });
+
+  it('/cases/:id is an alias: looked up once, then replaced with the player address', async () => {
+    const calls = mockFetch(routes());
+    window.history.replaceState(null, '', '/cases/7');
+    const before = window.history.length;
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
+    expect(window.history.length).toBe(before);
+    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
+    expect(count(calls, '/api/records/7')).toBe(1);
+  });
+
+  it('on a desktop opens as a drawer with the case pinned', async () => {
+    useDesktopViewport();
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/players/p/cases/7');
+    render(<App />);
+    const drawer = await screen.findByRole('dialog');
+    expect(drawer.className).toContain('modal__panel--drawer');
+    await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
+    expect(lobbyHidden()).toBe(false);
+  });
+
+  it('on a desktop, a case that is gone says so in a drawer over the lobby; ✕ goes home', async () => {
+    useDesktopViewport();
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/players/p/cases/8');
+    const user = userEvent.setup();
+    render(<App />);
+    const drawer = await screen.findByRole('dialog', { name: '链接里的案件不存在了。' });
+    expect(drawer.className).toContain('modal__panel--drawer');
+    expect(lobbyHidden()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: '链接里的案件不存在了。' }));
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    expect(window.location.pathname).toBe('/');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});

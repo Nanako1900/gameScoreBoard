@@ -59,3 +59,23 @@ describe('shared constants that SQL repeats', () => {
     expect(Number(filed?.[1]) * MINUTE_MS).toBe(FILED_DM_GRACE_MS);
   });
 });
+
+// P1-1 (contract §6.5): src/lib/router.ts is the only module that drives
+// window.history — anything else writing an entry would break 返回 and the idx marks.
+describe('history API', () => {
+  const HISTORY_USE = /history\.(?:pushState|replaceState|back\(|go\(|forward\(|state\b)/;
+  const ROUTER = path.join('src', 'lib', 'router.ts');
+
+  it('is used only by src/lib/router.ts', () => {
+    const offenders = sourceFiles(path.join(ROOT, 'src'))
+      .filter((file) => /\.tsx?$/.test(file))
+      .map((file) => path.relative(ROOT, file))
+      .filter((file) => file !== ROUTER)
+      .filter((file) => HISTORY_USE.test(readFileSync(path.join(ROOT, file), 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+
+  it('still sees the router itself (the scan is not vacuous)', () => {
+    expect(HISTORY_USE.test(readFileSync(path.join(ROOT, ROUTER), 'utf8'))).toBe(true);
+  });
+});

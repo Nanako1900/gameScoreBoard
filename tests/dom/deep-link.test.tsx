@@ -102,6 +102,9 @@ describe('App — links into the app', () => {
     expect(document.getElementById('case-6')?.className).not.toContain('vc--focus');
     expect(window.location.search).toBe('?utm=dc');
     expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+    // P1-1: the link became the case's own address, and the case was moved — not copied — to the top.
+    expect(window.location.pathname).toBe('/players/p/cases/7');
+    expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
   });
 
   it('ignores anything but a positive id, and strips it', async () => {
@@ -114,6 +117,7 @@ describe('App — links into the app', () => {
       expect(calls.some((c) => c.path.startsWith('/api/records/')), bad).toBe(false);
       expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
       expect(window.location.search, bad).toBe('');
+      expect(window.location.pathname, bad).toBe('/');
       unmount();
     }
   });
@@ -124,6 +128,7 @@ describe('App — links into the app', () => {
     render(<App />);
     expect(await screen.findByText('链接里的案件不存在了。')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
   });
 
   it('?session= opens the session', async () => {
@@ -132,5 +137,6 @@ describe('App — links into the app', () => {
     render(<App />);
     await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.path === '/api/sessions/3')).toBe(true));
     expect(window.location.search).toBe('');
+    expect(window.location.pathname).toBe('/sessions/3');
   });
 });
