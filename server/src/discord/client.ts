@@ -293,6 +293,8 @@ export interface BotConfig {
   frontendUrl: string;
   /** Where verdicts are posted (P5); null leaves the broadcast off. */
   verdictChannelId: string | null;
+  /** Public information board; null leaves it disabled. */
+  boardChannelId: string | null;
 }
 
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -341,6 +343,11 @@ export function readBotConfig(env: Record<string, string | undefined>): BotConfi
     problems.push(`DISCORD_VERDICT_CHANNEL_ID must be a channel id (17–20 digits) or empty, got "${channel}"`);
   }
   const verdictChannelId = channel || null;
+  const boardChannel = get('DISCORD_BOARD_CHANNEL_ID');
+  if (boardChannel && !SNOWFLAKE.test(boardChannel)) {
+    problems.push(`DISCORD_BOARD_CHANNEL_ID must be a channel id (17–20 digits) or empty, got "${boardChannel}"`);
+  }
+  const boardChannelId = boardChannel || null;
 
   if (problems.length > 0) {
     // Bad values are echoed to help fixing them, so a token pasted into the
@@ -348,7 +355,7 @@ export function readBotConfig(env: Record<string, string | undefined>): BotConfi
     const message = `invalid bot configuration: ${problems.join('; ')}`;
     throw new Error((token ? message.split(token).join('[redacted]') : message).replace(BOT_TOKEN, '[redacted]'));
   }
-  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl, verdictChannelId };
+  return { token, appId, guildId, databaseUrl, appUrl, frontendUrl, verdictChannelId, boardChannelId };
 }
 
 export const GATEWAY_BOT_URL = 'https://discord.com/api/v10/gateway/bot';

@@ -75,6 +75,7 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
 | `DISCORD_CLIENT_SECRET` | app | 第 1 步 OAuth2 页的 secret |
 | `GUILD_ID` / `APP_URL` / `FRONTEND_URL` | app + bot | 默认值就是线上配置，一般不用改。bot 只把命令注册到 `GUILD_ID` 这一个服务器。`FRONTEND_URL` 是网页的根地址：私信和回复里的按钮会直接打开某个案件（`?case=<id>`） |
 | `DISCORD_VERDICT_CHANNEL_ID` | bot | 可选：判决播报的私有频道 id，见第 5 节。留空就不播报 |
+| `DISCORD_BOARD_CHANNEL_ID` | bot | 可选：信息板所在的文字频道 id；留空就不发送信息板 |
 | `AI_API_KEY` | app + bot | 和网页同一个 key：在 Discord 里写的陈述当场由 AI 裁决（P6） |
 
 `DATABASE_URL` 由 `compose.yaml` 拼好，不用填。`DISCORD_TOKEN` 留空时 bot 只是空闲；填了之后

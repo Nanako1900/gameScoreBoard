@@ -32,6 +32,21 @@ export function createClient(): Client {
 }
 
 
+/** A startup refresh is admitted once, after readiness, without delaying voice
+ * timers or the dispatcher. The scheduler is injected so Gateway tests need no DB. */
+export function wireBoardRefresh(client: Client, schedule: () => Promise<void>,
+  isStopping: () => boolean = () => false, onError: (error: unknown) => void = console.error): () => void {
+  let active = true;
+  const ready = (): void => {
+    if (!active || isStopping()) return;
+    void Promise.resolve().then(() => {
+      if (active && !isStopping()) return schedule();
+    }).catch(onError);
+  };
+  client.once(Events.ClientReady, ready);
+  return () => { active = false; client.off(Events.ClientReady, ready); };
+}
+
 /** null is an unavailable snapshot, not evidence that nobody is in voice. */
 export function readVoicePresence(client: Client, guildId: string): readonly VoicePresent[] | null {
   const guild = client.guilds.cache.get(guildId);

@@ -18,7 +18,7 @@ import {
   type BotConfig,
 } from './discord/client';
 import { COMMANDS, handleCommand } from './discord/commands';
-import { createClient, readVoicePresence, wireVoice } from './discord/gateway';
+import { createClient, readVoicePresence, wireBoardRefresh, wireVoice } from './discord/gateway';
 import { createHealthServer, type GatewayState } from './discord/health';
 import { createVoiceRecorder } from './voice/recorder';
 import type { BotContext } from './discord/types';
@@ -37,6 +37,7 @@ import {
 import type { Env } from '../../worker/types';
 import { envFlag, envInt } from './env';
 import { createDispatcher, type Dispatcher } from './outbox/dispatcher';
+import { scheduleBoardRefresh } from './outbox/board-delivery';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -124,6 +125,8 @@ function main(): void {
       && client.guilds.cache.get(config.guildId)?.available === true,
   });
   const unwireVoice = wireVoice(client, recorder, config.guildId);
+  const unwireBoard = wireBoardRefresh(client, () => scheduleBoardRefresh(pool), () => stopping,
+    (error) => console.error('could not schedule information board refresh', describeError(error)));
   const health = createHealthServer(() => gateway, () => recorder.status());
   health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
   // Verdict posts (P5). Started once the client is logged in, since it sends
@@ -140,6 +143,7 @@ function main(): void {
       api: restChannelApi(ready.rest),
       config: {
         verdictChannelId: config.verdictChannelId,
+        boardChannelId: config.boardChannelId,
         frontendUrl: config.frontendUrl,
         offsetHours: ctx.offsetHours,
       },
@@ -269,6 +273,7 @@ function main(): void {
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
     gateway = 'connecting';
     unwireVoice();
+    unwireBoard();
     // The dispatcher first: it sends through the client's REST, which
     // destroy() takes the token from, so an event in flight would fail.
     await Promise.race([

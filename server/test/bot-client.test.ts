@@ -404,6 +404,7 @@ describe('readBotConfig', () => {
       appUrl: 'https://api.nanako.org',
       frontendUrl: 'https://score.nanako.org',
       verdictChannelId: null,
+      boardChannelId: null,
     });
   });
 
@@ -412,6 +413,20 @@ describe('readBotConfig', () => {
       '1234567890123456780',
     );
     expect(() => readBotConfig({ ...valid, DISCORD_VERDICT_CHANNEL_ID: '#edg' })).toThrow(/DISCORD_VERDICT_CHANNEL_ID/);
+  });
+
+  it('takes an optional board channel, trims it and keeps an empty value disabled', () => {
+    for (const id of ['1'.repeat(17), '2'.repeat(20)]) {
+      expect(readBotConfig({ ...valid, DISCORD_BOARD_CHANNEL_ID: ` ${id} ` }).boardChannelId).toBe(id);
+    }
+    expect(readBotConfig({ ...valid, DISCORD_BOARD_CHANNEL_ID: '  ' }).boardChannelId).toBeNull();
+  });
+  it.each(['#board', '1'.repeat(16), '1'.repeat(21), '12345678901234567x'])('rejects an invalid board channel: %s', (value) => {
+    expect(() => readBotConfig({ ...valid, DISCORD_BOARD_CHANNEL_ID: value })).toThrow(/DISCORD_BOARD_CHANNEL_ID/);
+  });
+  it('redacts a token mistakenly pasted as the board channel', () => {
+    const run = () => readBotConfig({ ...valid, DISCORD_BOARD_CHANNEL_ID: BOT_TOKEN });
+    expect(run).toThrow(/DISCORD_BOARD_CHANNEL_ID/); expect(run).not.toThrow(BOT_TOKEN);
   });
 
   it('ignores the retired session channel variable, including an old invalid value', () => {
