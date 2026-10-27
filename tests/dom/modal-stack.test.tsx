@@ -259,3 +259,42 @@ describe('Modal — nested layers', () => {
     expect(document.body.style.overflow).toBe('');
   });
 });
+
+describe('Modal — dismissible', () => {
+  function Draft({ onClose }: { onClose: () => void }) {
+    return (
+      <Modal open onClose={onClose} labelledBy="draft-title" dismissible={false}>
+        <h2 id="draft-title">写说明</h2>
+        <textarea aria-label="说明" />
+      </Modal>
+    );
+  }
+
+  it('dismissible={false}: a backdrop press does nothing, Escape and ✕ still call onClose', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<Draft onClose={onClose} />);
+    const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+
+    await user.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('by default a backdrop press still closes (today’s behaviour)', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Modal open onClose={onClose} labelledBy="plain-title">
+        <h2 id="plain-title">普通弹窗</h2>
+      </Modal>,
+    );
+    await user.click(screen.getByRole('dialog').parentElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

@@ -18,6 +18,8 @@ interface ModalProps {
   labelledBy: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg';
+  /** Default true. false: a backdrop press does nothing; Escape and ✕ still call onClose (the caller decides, e.g. shows a leave confirm). */
+  dismissible?: boolean;
 }
 
 const FOCUSABLE_SELECTOR =
@@ -138,6 +140,7 @@ export function Modal({
   labelledBy,
   children,
   size = 'md',
+  dismissible = true,
 }: ModalProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -152,7 +155,7 @@ export function Modal({
   }
 
   return createPortal(
-    <div className="modal" onMouseDown={onClose}>
+    <div className="modal" onMouseDown={dismissible ? onClose : undefined}>
       <div
         ref={panelRef}
         className={`modal__panel panel modal__panel--${size}`}
