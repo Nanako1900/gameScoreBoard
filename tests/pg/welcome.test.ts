@@ -5,12 +5,14 @@ import { handleCommand } from '../../server/src/discord/commands';
 import { linkAccounts, unlinkAccounts } from '../../server/src/discord/links';
 import { createDispatcher, DM_BUDGET, type ChannelApi } from '../../server/src/outbox/dispatcher';
 import { seedUser } from '../worker/helpers';
+import { adminUpdateUser } from '../../worker/db';
 import { env, pool } from './cloudflare-test';
 
 const USER = 'welcome-user';
 const DISCORD = '100000000000000001';
 const OTHER_DISCORD = '100000000000000002';
 const FRONTEND = 'https://score.example';
+const BOARD_CHANNEL = '200000000000000009';
 const migration = () => readFileSync(new URL('../../server/migrations/0009_welcome.sql', import.meta.url), 'utf8');
 
 async function bind(discordUserId = DISCORD) {
@@ -28,8 +30,8 @@ function discord() {
   };
   return api;
 }
-function dispatcher(api: ChannelApi) {
-  return createDispatcher({ pool, db: env.DB, api, config: { verdictChannelId: null, frontendUrl: FRONTEND },
+function dispatcher(api: ChannelApi, boardChannelId?: string | null) {
+  return createDispatcher({ pool, db: env.DB, api, config: { verdictChannelId: null, boardChannelId, frontendUrl: FRONTEND },
     log: { log() {}, warn() {}, error() {} } });
 }
 
@@ -108,14 +110,37 @@ describe('welcome delivery', () => {
     const message = vi.mocked(api.send).mock.calls[0][1];
     expect(JSON.stringify(message)).toContain('/score');
     expect(JSON.stringify(message)).toContain(FRONTEND);
+    expect(JSON.stringify(message)).not.toContain('<#');
     expect((await events())[0].result).toBe('sent');
+  });
+
+  it('passes the configured information board link into the private welcome only', async () => {
+    await person(); await bind(); const api = discord();
+    await dispatcher(api, BOARD_CHANNEL).runOnce();
+    const message = vi.mocked(api.send).mock.calls[0][1];
+    const text = JSON.stringify(message);
+    expect(text).toContain(`<#${BOARD_CHANNEL}>`); expect(text.match(/<#/g)).toHaveLength(1);
+    expect(text).toContain('信息板频道'); expect(text).not.toContain(DISCORD);
+    expect(message.allowed_mentions).toEqual({ parse: [] });
+    expect((await events())[0].result).toBe('sent');
+    const help = await handleCommand({ commandName: 'help', caller: { id: DISCORD, username: '本人' }, targetUser: null },
+      { db: env.DB, appUrl: 'https://api.example', frontendUrl: FRONTEND });
+    expect(JSON.stringify(help)).not.toContain(BOARD_CHANNEL); expect(JSON.stringify(help)).not.toContain('<#');
+  });
+  it('does not add the board channel to an ordinary score-adjustment DM', async () => {
+    await person(); await bind(); const api = discord(); const d = dispatcher(api, BOARD_CHANNEL);
+    await d.runOnce(); await adminUpdateUser(env.DB, USER, { score: 90 }); await d.runOnce();
+    const messages = vi.mocked(api.send).mock.calls.map(([, message]) => JSON.stringify(message));
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toContain(`<#${BOARD_CHANNEL}>`);
+    expect(messages[1]).not.toContain(BOARD_CHANNEL); expect(messages[1]).not.toContain('<#');
   });
 
   it.each(['notify_dm', 'dm_ok'])('skips a recipient whose %s is off', async (column) => {
     await person(); await bind();
     await pool.query(`UPDATE discord_links SET ${column} = 0 WHERE user_id = $1`, [USER]);
     const api = discord();
-    await dispatcher(api).runOnce();
+    await dispatcher(api, BOARD_CHANNEL).runOnce();
     expect((await events())[0].result).toBe('skipped');
     expect(api.openDm).not.toHaveBeenCalled(); expect(api.send).not.toHaveBeenCalled();
   });
@@ -132,14 +157,14 @@ describe('welcome delivery', () => {
     for (let i = 0; i < DM_BUDGET; i += 1) {
       await pool.query("INSERT INTO outbox (kind, entity, entity_id, dedupe_key, processed_at, result) VALUES ('dm.filed', 'user', $1, $2, now(), 'sent')", [USER, `used:${i}`]);
     }
-    const api = discord(); await dispatcher(api).runOnce();
+    const api = discord(); await dispatcher(api, BOARD_CHANNEL).runOnce();
     expect(api.send).toHaveBeenCalledOnce(); expect((await events())[0].result).toBe('sent');
   });
 
   it('marks DMs closed on Discord 50007', async () => {
     await person(); await bind();
     const api = discord(); vi.mocked(api.openDm).mockRejectedValueOnce(Object.assign(new Error('DM closed'), { status: 403, code: 50007 }));
-    await dispatcher(api).runOnce();
+    await dispatcher(api, BOARD_CHANNEL).runOnce();
     expect((await pool.query('SELECT dm_ok FROM discord_links WHERE user_id = $1', [USER])).rows[0].dm_ok).toBe(0);
     expect((await events())[0]).toMatchObject({ result: 'skipped', last_error: 'DMs closed (50007)' });
   });

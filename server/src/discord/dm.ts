@@ -85,9 +85,16 @@ export function dmMessage(embed: BotEmbed, buttons: DmButton[]): ChannelMessage 
 
 const message = dmMessage;
 
-/** Shared onboarding guide, sent privately without any account details. */
-export function renderWelcomeDm(frontendUrl: string): ChannelMessage {
-  return dmMessage({ ...renderGuideEmbed(), title: '欢迎加入 EDG' }, [linkButton('打开网页', webUrl(frontendUrl))]);
+/** Shared onboarding guide; only this welcome may include the configured channel link. */
+export function renderWelcomeDm(frontendUrl: string, boardChannelId?: string | null): ChannelMessage {
+  const guide = renderGuideEmbed();
+  const validChannel = boardChannelId != null && boardChannelId.length >= 17 && boardChannelId.length <= 20
+    && !/\D/.test(boardChannelId);
+  // Configuration supplies digits only. Keep Discord's channel markup intact;
+  // all user/AI text still uses the normal escaping path and mentions stay off.
+  const boardFields = validChannel ? [{ name: '信息板', value: `<#${boardChannelId}>` }] : [];
+  return dmMessage({ ...guide, title: '欢迎加入 EDG', fields: [...(guide.fields ?? []), ...boardFields] },
+    [linkButton('打开网页', webUrl(frontendUrl))]);
 }
 
 export function web(frontendUrl: string, recordId: number): Button {

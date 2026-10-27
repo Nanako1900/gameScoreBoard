@@ -431,7 +431,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     if (row.kind === 'dm.welcome') {
       const to = await recipient(row.entity_id);
       if (isOutcome(to)) return to;
-      const sent = await sendDm(row, to, renderWelcomeDm(config.frontendUrl));
+      const sent = await sendDm(row, to, renderWelcomeDm(config.frontendUrl, config.boardChannelId));
       return isOutcome(sent) ? sent : { result: 'sent', note: null };
     }
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);

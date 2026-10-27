@@ -462,6 +462,57 @@ Any cleanup failure rolls back both deletion and withdrawal and degrades the rec
 whose open row expired starts a new `bot_online` row at reconciliation time, without backdating evidence.
 See the owner-run deployment checklist in `docs/DEPLOY-DISCORD.md`.
 
+## Discord information board (S4)
+
+`0011_board.sql` expands the PostgreSQL `outbox.entity` and `discord_messages.entity` CHECK lists
+with `board`, retaining all previous entities including `session`. D1 needs no S4 migration;
+the optional penalty-only record query is shared and tested on both backends.
+
+`board.refresh` has entity `board`, entity ID `main`, payload `{}`, and dedupe key `board:main:refresh`.
+`discord_messages` stores its sole mapping at `(board, main, board)`.
+`score_events` inserts, `records` inserts/deletes/status updates, `users` inserts/deletes or
+username/display_name/is_participant/score updates, and `weekly_reports` inserts/updates queue refreshes.
+BEFORE STATEMENT guards acquire the board scheduling lock before source row locks; AFTER STATEMENT
+triggers call `schedule_board_refresh()`. This preserves case/score lock order and avoids deadlocks.
+Import mode (`edg.importing = on`) takes no board lock and emits nothing. The bot calls the same helper
+once after ClientReady; a scheduling failure is logged without blocking voice recording or the dispatcher.
+
+Scheduling uses the existing ten-second coalesce behavior: keep the earliest due time, preserve backoff,
+and queue another event if the old one is claimed or processed. With the dispatcher's polling, normal changes
+appear in about 10–40 seconds; no periodic board refresh is added. A deleted board is restored at the next
+source-triggered or startup refresh, rather than by an additional message-deletion listener. Each delivery loads current data, ignoring event payload.
+
+The public message has three embeds, individually clamped and collectively bounded to 6000 characters:
+
+- Top 15 participants, using the same competition ranking as the website (`shared/rank.ts`), with effective Nanako names and scores; no tiers.
+- Latest 5 decided penalties, excluding bonus types in SQL before LIMIT; zero-delta penalties remain.
+  Ordering and timestamp match `/verdicts`: created_at descending, then ID descending. Links use permanent `?case=` URLs.
+- Pending `awaiting_statement`/`judging` count only, an optional existing report title/link, and a Discord relative update time.
+
+There are no Discord account IDs or channel IDs, pre-verdict names, accusations, statements or AI verdict text
+in the board projection. Names are sanitized, and `allowed_mentions.parse` is empty.
+The one-row buttons are `v1:board:me` (own score plus todo), `v1:board:voice` (own default seven-day history),
+and a web link. Interactive replies are always ephemeral; only the configured guild is accepted, in any of its channels.
+Other-guild and DM presses are rejected before private handlers; unbound callers get the existing binding prompt once.
+
+`DISCORD_BOARD_CHANNEL_ID` is optional, empty disables posting, otherwise it must be 17–20 digits.
+Delivery holds a separate advisory transaction lock and rechecks its claim after waiting; source transactions never wait
+on an outbox row lock held across a Discord request. A successful in-flight send retains its physical message mapping
+even if another claim has taken over; only the owning token can acknowledge the outbox event. The next owner edits that mapping.
+
+Recovery does not rely solely on Discord's short nonce deduplication window. The production finder refreshes the
+channel, bot member and roles, verifies ViewChannel and ReadMessageHistory before and after scanning, and inspects
+only author IDs and the bot's own two-button marker. Ordinary chat bodies/embeds are not read or retained.
+Missing mappings, deleted messages and channel changes use a complete paginated scan to find the oldest surviving
+own board and delete duplicate own boards; a valid mapping bounds routine scans to newer messages. A failed or incomplete
+scan, missing capability or missing permission cannot be treated as an empty channel and cannot trigger a new send.
+Current-channel duplicate deletion failures retry; old-channel deletion ignores missing message/channel and 403 as planned.
+New sends retain `nonceFor(row)` for short retry protection. A disappeared recovery candidate retries instead of blindly sending.
+
+Only the welcome DM may add the configured board link `<#channelId>`.
+Shared guide copy, the website, `/help`, other DMs and the public board do not acquire raw channel identifiers.
+The welcome renderer's optional parameter is omitted for invalid/unconfigured channel IDs; notify preferences and DM refusal rules stay unchanged.
+
 ## Frontend expectations
 
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
@@ -503,7 +554,7 @@ See the owner-run deployment checklist in `docs/DEPLOY-DISCORD.md`.
   Both pages are full pages at every viewport size. `GuideContent`, `/help` and `dm.welcome`
   share `shared/guide.ts`. `GUIDE_TIPS` includes `voiceNotice()` from `shared/voice.ts`, so the guide,
   `/help`, welcome DM and welcome step 5 show the same recording notice and retention period.
-  The rules also state that the bot records voice entry and exit times as reference. An information-board channel is deferred to S4.
+  The rules also state that the bot records voice entry and exit times as reference. The S4 information-board hint is shared with the same guide; its channel link is added only to welcome DMs.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
