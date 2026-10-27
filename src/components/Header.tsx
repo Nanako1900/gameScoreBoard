@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Config, User } from '../types';
 import { AUTH_LOGIN_URL } from '../api';
-import { formatCountdown } from '../lib/time';
+import { COUNTDOWN_TICK_MS } from '../lib/constants';
+import { formatResetCountdown } from '../lib/time';
+import { useNow } from '../lib/useNow';
 import { Avatar } from './Avatar';
 import './header.css';
 
@@ -14,15 +16,6 @@ interface HeaderProps {
   onOpenAiPanel?: () => void;
 }
 
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
 export function Header({
   config,
   me,
@@ -30,7 +23,7 @@ export function Header({
   onOpenOnboarding,
   onOpenAiPanel,
 }: HeaderProps): JSX.Element {
-  const now = useNow(1000);
+  const now = useNow(COUNTDOWN_TICK_MS);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -58,7 +51,7 @@ export function Header({
     };
   }, [menuOpen]);
 
-  const countdown = config ? formatCountdown(config.nextResetAt, now) : '—';
+  const countdown = config ? formatResetCountdown(config.nextResetAt, now) : '—';
 
   return (
     <header className="hdr">
