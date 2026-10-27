@@ -5,7 +5,9 @@ import type { SessionItem, User } from '../types';
 import type { SelfRsvp } from '@shared/attendance';
 import { ApiError, getSessions, setRsvp } from '../api';
 import { formatWhen, parseTimestamp } from '../lib/time';
+import { sessionPath } from '../lib/routes';
 import { Avatar } from './Avatar';
+import { LoginLink } from './LoginLink';
 import './sessions-panel.css';
 
 interface SessionsPanelProps {
@@ -144,6 +146,8 @@ function SessionRow({ session, me, busy, onOpen, onRsvp }: SessionRowProps): JSX
   const started = parseTimestamp(session.starts_at) <= Date.now();
   const canRsvp =
     me !== null && session.status === 'open' && !started && session.organizer.id !== me.id;
+  // P1-3: a visitor signs in first and comes back to this session's page.
+  const canAskLogin = me === null && session.status === 'open' && !started;
   const full =
     session.capacity !== null &&
     session.counts.going >= session.capacity &&
@@ -191,6 +195,16 @@ function SessionRow({ session, me, busy, onOpen, onRsvp }: SessionRowProps): JSX
             </button>
           ))}
         </div>
+      )}
+
+      {canAskLogin && (
+        <LoginLink
+          className="srow__login"
+          returnTo={sessionPath(session.id)}
+          ariaLabel={`登录后报名 ${session.title}`}
+        >
+          登录后报名
+        </LoginLink>
       )}
     </li>
   );

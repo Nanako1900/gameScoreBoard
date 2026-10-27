@@ -293,3 +293,16 @@ describe('the session page — ResumeHint and the visitor prompt', () => {
     });
   });
 });
+
+describe('a lobby row for a visitor', () => {
+  it('登录后报名 comes back to that session', async () => {
+    stubApi({ listed: [session(5, null)] });
+    const user = userEvent.setup();
+    render(<App />);
+    const link = await screen.findByRole('link', { name: '登录后报名 周五五排' });
+    expect(link).toHaveAttribute('href', '/auth/login');
+    await user.click(link);
+    expect(stored()).toEqual({ v: 1, path: '/sessions/5', savedAt: expect.any(Number) });
+    expect(window.location.pathname).toBe('/');
+  });
+});
