@@ -7,7 +7,7 @@ import type { User } from '../types';
 import { takeLoginReturn } from './loginReturn';
 import { hasLegacyTarget } from './loginReturnShape';
 import { currentPath, navigate, useLocation } from './router';
-import { WELCOME_PATH } from './routes';
+import { parseRoute } from './routes';
 
 interface LoginResumeInput {
   /** Core data is in. */
@@ -44,7 +44,7 @@ export function useLoginResume({ ready, me, isBlocked, ignoreWelcomeReturn = fal
     taken.current = true;
     const saved = takeLoginReturn();
     if (superseded) return;
-    const path = saved === null || (ignoreWelcomeReturn && saved.path.split('?')[0] === WELCOME_PATH)
+    const path = saved === null || (ignoreWelcomeReturn && parseRoute(saved.path.split('?')[0]).name === 'welcome')
       ? fallbackReturn : saved.path;
     if (path !== undefined && path !== currentPath()) navigate(path);
   }, [ready, me, pending, isBlocked, superseded, ignoreWelcomeReturn, fallbackReturn]);

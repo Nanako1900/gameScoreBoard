@@ -276,9 +276,9 @@ describe('登录回跳 — back from the login page', () => {
     expect(writes(stub.calls)).toEqual([]);
   });
 
-  it('does not reopen welcome after login from its own login link', async () => {
+  it.each(['/welcome', '/welcome/', '/welcome/?utm=login'])('does not reopen welcome after login from its own address %s', async (path) => {
     const stub = stubApi();
-    backFromLogin(stub, serializeLoginReturn('/welcome', Date.now()), '/?onboarding=1');
+    backFromLogin(stub, serializeLoginReturn(path, Date.now()), '/?onboarding=1');
     await screen.findByRole('heading', { name: '入户' });
     await finishWelcome();
     await waitFor(() => expect(stored()).toBeNull());
