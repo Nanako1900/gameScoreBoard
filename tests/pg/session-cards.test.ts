@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { cancelSession, createSession, rollCall, setRsvp, settleSession, updateSession } from '../../worker/sessions';
+import { inviteToSession } from '../../worker/session-invites';
+import { INVITES_PER_ORGANIZER as SHARED_INVITES_PER_ORGANIZER } from '../../shared/attendance';
 import { adminUpdateUser } from '../../worker/db';
 import { noAiEnv } from '../worker/helpers';
 import { importD1 } from '../../server/src/import-d1';
@@ -898,3 +900,54 @@ describe('coalescing that cannot be gamed', () => {
   });
 });
 
+describe('invites after creation', () => {
+  /** Invitation DMs that reached bound user `n` (see cast: org 1, a 2, b 3). */
+  const invitationsTo = (sent: ReturnType<typeof fakeDiscord>['sent'], n: number) =>
+    sent.filter((m) => m.channelId === `dm-${dc(n).id}` && text(m.message).includes('约你'));
+
+  it('someone invited after creation gets one invitation DM; asking again sends nothing', async () => {
+    const { org } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    expect(await inviteToSession(env.DB, org, session.id, ['a', 'b'])).toMatchObject({ added: 2, skipped: 0 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(1);
+    expect(invitationsTo(discord.sent, 3)).toHaveLength(1);
+
+    expect(await inviteToSession(env.DB, org, session.id, ['a'])).toMatchObject({ added: 0, skipped: 1 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(1);
+    const queued = await pool.query("SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' ORDER BY entity_id");
+    expect(queued.rows.map((r) => r.entity_id)).toEqual(['a', 'b']);
+  });
+
+  it('someone who said no is not asked again', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'out');
+    expect(await inviteToSession(env.DB, org, session.id, ['a', 'b'])).toMatchObject({ added: 1, skipped: 1 });
+    const queued = await pool.query("SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' ORDER BY entity_id");
+    expect(queued.rows.map((r) => r.entity_id)).toEqual(['a', 'b']); // a's is the one from creation
+  });
+
+  it(`shares the organizer's ${INVITES_PER_ORGANIZER} invitations a day with invitations made at creation`, async () => {
+    expect(INVITES_PER_ORGANIZER).toBe(SHARED_INVITES_PER_ORGANIZER);
+    const { org } = await cast();
+    for (let i = 0; i < INVITES_PER_ORGANIZER; i += 1) {
+      await createSession(env.DB, org, { starts_at: IN_2H(), invite: ['a'] }, OFFSET_HOURS);
+    }
+    const later = await createSession(env.DB, org, { starts_at: IN_3H() }, OFFSET_HOURS);
+    const discord = fakeDiscord();
+    const d = dispatcher(discord.api, null);
+    await d.runOnce();
+    expect(await inviteToSession(env.DB, org, later.id, ['a'])).toMatchObject({ added: 1 });
+    await d.runOnce();
+    expect(invitationsTo(discord.sent, 2)).toHaveLength(INVITES_PER_ORGANIZER);
+    const held = await pool.query(
+      "SELECT entity_id FROM outbox WHERE kind = 'dm.session.invited' AND result = 'skipped' AND last_error LIKE 'enough invitations%'",
+    );
+    expect(held.rows.map((r) => r.entity_id)).toEqual(['a']);
+  });
+});
