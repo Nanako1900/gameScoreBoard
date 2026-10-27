@@ -29,6 +29,18 @@ export const MAX_NARRATIVE_LEN = 1000;
 /** Min characters a judge must write when filing a penalty case. */
 export const MIN_CLAIM_LEN = 10;
 
+/** A reporter may revoke a decided record within this long of filing it (created_at). Admins: any time. */
+export const REVOKE_WINDOW_MS = 15 * 60 * 1000;
+
+/** Appeal reason cap — the bot's modal, the web's maxLength and appealCase's truncation. */
+export const APPEAL_MAX = 500;
+
+/**
+ * The filing DM waits this long, so an instant withdrawal never DMs.
+ * MUST equal `interval '3 minutes'` in server/migrations/0004_dm.sql (asserted in source-hygiene).
+ */
+export const FILED_DM_GRACE_MS = 3 * 60 * 1000;
+
 export type ViolationType =
   | 'late_minor'
   | 'late_major'
@@ -148,7 +160,7 @@ export function isCaseStatus(v: string): v is CaseStatus {
 export type VerdictSource = 'ai' | 'fallback' | 'manual' | 'admin_override';
 
 export const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
-  awaiting_statement: '待陈述',
+  awaiting_statement: '待说明',
   judging: '裁决中',
   decided: '',
   appealed: '申诉中',

@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import type { User } from '../types';
 import { ApiError, updateDisplayName, updateRoles } from '../api';
+import { clearDraft, readDraft, writeDraft } from '../lib/drafts';
+import {
+  DISPLAY_NAME_MAX,
+  validateOnboardingDraft,
+  type OnboardingChoice,
+  type OnboardingDraftValue,
+} from '../lib/draftShapes';
 import { DiscordLinkCard } from './DiscordLinkCard';
 import { Modal } from './Modal';
 import './onboarding-dialog.css';
@@ -12,7 +19,7 @@ interface OnboardingDialogProps {
   onSaved: (user: User) => void;
 }
 
-type Choice = 'participant' | 'judge' | 'both';
+type Choice = OnboardingChoice;
 
 interface RoleCard {
   choice: Choice;
@@ -60,14 +67,34 @@ export function OnboardingDialog({
 }: OnboardingDialogProps): JSX.Element {
   // The effective name equals the OAuth name until the user picks a custom one.
   const usingOauthName = me.username === me.oauth_username;
-  const [useNanako, setUseNanako] = useState(usingOauthName);
-  const [customName, setCustomName] = useState(usingOauthName ? '' : me.username);
-  const [choice, setChoice] = useState<Choice>(() => initialChoice(me));
   // Judges are appointed by an admin (the API refuses a self-grant); someone
   // who already is one, or an admin, may keep or pick the judge cards.
   const canJudge = me.is_judge || me.is_admin;
+  // Back from binding Discord (a full page load): what was picked before the
+  // jump, if anything. Still unsaved — the user confirms it as usual.
+  const [restored] = useState(() =>
+    readDraft('onboarding', undefined, (raw) => validateOnboardingDraft(raw, canJudge)),
+  );
+  const [useNanako, setUseNanako] = useState(restored?.value.useNanako ?? usingOauthName);
+  const [customName, setCustomName] = useState(
+    restored?.value.customName ?? (usingOauthName ? '' : me.username),
+  );
+  const [choice, setChoice] = useState<Choice>(() => restored?.value.choice ?? initialChoice(me));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Only at the moment of leaving for Discord (spec §4.4 #2) — no request, the
+  // jump is not held up. If storage refuses, the choice is lost as it was before.
+  const saveBeforeBind = (): void => {
+    const value: OnboardingDraftValue = { choice, useNanako, customName };
+    writeDraft('onboarding', undefined, value);
+  };
+
+  // 稍后再说 / Esc / ✕: no leave confirm here (p8-app closes it with Esc), the draft just goes.
+  const dismiss = (): void => {
+    clearDraft('onboarding');
+    onClose();
+  };
 
   const handleSave = async (): Promise<void> => {
     setError(null);
@@ -84,6 +111,7 @@ export function OnboardingDialog({
     try {
       await updateDisplayName(displayName);
       const { user } = await updateRoles(roles);
+      clearDraft('onboarding');
       onSaved(user);
       onClose();
     } catch (err) {
@@ -93,7 +121,7 @@ export function OnboardingDialog({
   };
 
   return (
-    <Modal open={open} onClose={onClose} labelledBy="onboarding-title" size="md">
+    <Modal open={open} onClose={dismiss} labelledBy="onboarding-title" size="md">
       <span className="ob__eyebrow eyebrow">欢迎，{me.oauth_username}</span>
       <h2 id="onboarding-title" className="ob__title">
         设置你的显示名字与身份
@@ -131,7 +159,7 @@ export function OnboardingDialog({
             type="text"
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
-            maxLength={24}
+            maxLength={DISPLAY_NAME_MAX}
             placeholder="输入你想显示的名字（最多 24 字）"
             aria-label="自定义显示名字"
           />
@@ -171,7 +199,7 @@ export function OnboardingDialog({
       )}
 
       {/* Renders nothing on a backend without Discord support. */}
-      <DiscordLinkCard />
+      <DiscordLinkCard onBeforeBind={saveBeforeBind} />
 
       {error && (
         <p className="ob__error" role="alert">
@@ -180,7 +208,7 @@ export function OnboardingDialog({
       )}
 
       <div className="ob__actions">
-        <button type="button" className="btn btn--ghost" onClick={onClose}>
+        <button type="button" className="btn btn--ghost" onClick={dismiss}>
           稍后再说
         </button>
         <button type="button" className="btn btn--gold" onClick={handleSave} disabled={saving}>

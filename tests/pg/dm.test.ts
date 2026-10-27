@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { adminUpdateUser } from '../../worker/db';
 import { appealCase, fileCase, overrideCase, revokeCase, submitStatement, withdrawCase } from '../../worker/cases';
 import { importD1 } from '../../server/src/import-d1';
+import { APPEAL_MAX } from '../../shared/scoring';
 import { linkAccounts } from '../../server/src/discord/links';
 import { handleCommand } from '../../server/src/discord/commands';
 import { openCaseAction, submitCaseAction } from '../../server/src/discord/case-actions';
@@ -821,7 +822,11 @@ describe('写陈述 and 申诉 from a DM', () => {
     const { judge, subject } = await people();
     const filed = await file(judge, subject);
     await submitStatement(env.DB, subject, filed.id, '临时加班', noAiEnv());
-    expect(await openCaseAction('appeal', filed.id, SUBJECT_DC, ctx)).toMatchObject({ kind: 'modal' });
+    // Same cap as the web's maxLength and appealCase's cut (shared APPEAL_MAX, spec §3.10).
+    expect(await openCaseAction('appeal', filed.id, SUBJECT_DC, ctx)).toMatchObject({
+      kind: 'modal',
+      modal: { field: { required: false, maxLength: APPEAL_MAX } },
+    });
     const reply = await submitCaseAction('appeal', filed.id, '我那天在医院', SUBJECT_DC, actionCtx);
     expect(reply.content).toContain('已提交申诉');
     const rec = await env.DB.prepare('SELECT status, appeal_reason FROM records WHERE id = ?').bind(filed.id).first();

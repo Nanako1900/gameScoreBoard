@@ -103,12 +103,6 @@
   color: var(--faint);
 }
 
-.sd__notice {
-  font-size: var(--text-xs);
-  line-height: 1.6;
-  color: var(--muted);
-}
-
 .sd__error {
   font-size: var(--text-sm);
   color: var(--danger-text);
@@ -134,4 +128,13 @@
   .sd__actions .btn {
     width: 100%;
   }
+}
+
+/* 谁能看到 (spec §3.10, M18): three plain sentences — readable, not fine print. */
+.sd__privacy {
+  display: grid;
+  gap: 0.3rem;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--muted);
 }

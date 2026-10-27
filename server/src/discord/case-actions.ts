@@ -9,7 +9,7 @@
 // a modal is opened for nothing.
 
 import { ComponentType, TextInputStyle, type APIModalInteractionResponseCallbackData } from 'discord.js';
-import { MAX_NARRATIVE_LEN } from '../../../shared/scoring';
+import { APPEAL_MAX, MAX_NARRATIVE_LEN } from '../../../shared/scoring';
 import { getRecordItemById } from '../../../worker/case-reads';
 import { appealCase, submitStatement } from '../../../worker/cases';
 import { ApiError } from '../../../worker/errors';
@@ -37,7 +37,6 @@ const STATEMENT_MODAL = 'v1:stmtm:';
 const APPEAL_MODAL = 'v1:appealm:';
 const NOT_LINKED = '你还没有绑定 Nanako 账号，先用 /link 绑定。';
 const READ_ONLY_TEXT = '系统维护中（只读），请稍后再试。';
-const APPEAL_MAX = 500;
 const GONE = '这个案件不存在了。';
 
 const ID = '(\\d{1,15})';

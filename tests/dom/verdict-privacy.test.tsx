@@ -94,3 +94,19 @@ describe('VerdictCard, a bonus', () => {
     expect(screen.queryByText(/按缺席裁决/)).not.toBeInTheDocument();
   });
 });
+
+describe('VerdictCard, a withdrawn case', () => {
+  it('never says it was judged in absence — nobody was judged (M17)', () => {
+    const withdrawn = record({
+      status: 'withdrawn',
+      delta: 0,
+      statement: null,
+      statement_at: null,
+      verdict: null,
+      redacted: false,
+    });
+    render(<VerdictCard record={withdrawn} />);
+    expect(screen.queryByText(/按缺席裁决/)).not.toBeInTheDocument();
+    expect(screen.getByText(/裁判已撤案/)).toBeInTheDocument();
+  });
+});

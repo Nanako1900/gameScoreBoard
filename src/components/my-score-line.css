@@ -1,0 +1,51 @@
+/* 我的分数一行 — score, rank, and what Monday's heal does (spec §3.2). */
+
+.msl {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+}
+
+.msl__standing {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  text-align: left;
+}
+
+button.msl__standing {
+  cursor: pointer;
+}
+
+.msl__chev {
+  color: var(--muted);
+}
+
+.msl__heal {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.msl__heal--heal {
+  color: var(--ok);
+}
+
+@media (hover: hover) {
+  button.msl__standing:hover .msl__chev {
+    color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  button.msl__standing {
+    min-height: var(--tap-min);
+  }
+}

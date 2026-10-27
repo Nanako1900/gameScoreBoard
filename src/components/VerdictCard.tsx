@@ -21,6 +21,11 @@ const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
   admin_override: { label: '管理员改判', tone: 'override' },
 };
 
+/** 'AI 裁决' / '管理员改判' …, for places that name a verdict's source outside the card. */
+export function verdictSourceLabel(source: VerdictSource): string {
+  return SOURCE_BADGE[source].label;
+}
+
 const PRIVATE_TO = '只有当事人、立案人、裁判和管理员能看';
 
 /**
@@ -83,7 +88,7 @@ export function VerdictCard({
 
       {record.claim && (
         <blockquote className="vc__quote vc__quote--claim">
-          <span className="vc__quote-who">裁判陈述</span>
+          <span className="vc__quote-who">立案经过</span>
           <p>{record.claim}</p>
         </blockquote>
       )}
@@ -98,7 +103,8 @@ export function VerdictCard({
           <span aria-hidden="true">🔒</span> {record.subject.username} 写了说明 · {PRIVATE_TO}
         </p>
       ) : (
-        !pending && trial && (
+        // A withdrawn case was never judged at all (M17): no "absent" either.
+        !pending && status !== 'withdrawn' && trial && (
           <p className="vc__absent">该选手没有在期限内说明情况，按缺席裁决。</p>
         )
       )}

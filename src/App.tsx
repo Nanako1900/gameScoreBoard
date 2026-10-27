@@ -14,6 +14,8 @@ import { useVisibleRefresh } from './lib/useVisibleRefresh';
 import { useResetWatch } from './lib/useResetWatch';
 import { todoCount } from './lib/tabTitle';
 import { useTabTitle } from './lib/useTabTitle';
+import { clearAllDrafts } from './lib/drafts';
+import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
@@ -25,6 +27,7 @@ import { RulesPanel } from './components/RulesPanel';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
 import { PendingBanner } from './components/PendingBanner';
+import { MyScoreLine } from './components/MyScoreLine';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { PlayerDetail } from './components/PlayerDetail';
 import { SessionsPanel } from './components/SessionsPanel';
@@ -149,6 +152,8 @@ function AppMain(): JSX.Element {
     } catch {
       // Even if the request fails, reloading clears client state.
     }
+    // Drafts are this person's: whoever signs in next on this device must not find them.
+    clearAllDrafts();
     window.location.reload();
   }, []);
 
@@ -240,6 +245,10 @@ function AppMain(): JSX.Element {
     revealSection('rules');
   };
 
+  // MyScoreLine's 第 N 名: the board's own competition ranking (P0-4's rank.ts).
+  const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
+  const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
+
   return (
     <div className="app">
       <Header
@@ -250,7 +259,7 @@ function AppMain(): JSX.Element {
         onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
-      {/* Stack order = 待办 → 约局 → 榜单 → 周报 → 详表.
+      {/* Stack order = 待办 → 我的分数 → 约局 → 榜单 → 周报 → 详表.
        *
        * Ordered by what the visitor can ACT on, most actionable first. It is set
        * in the DOM rather than with CSS `order` on purpose: `order` would leave
@@ -284,6 +293,9 @@ function AppMain(): JSX.Element {
         <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
+
+        {/* Your score and Monday's heal, right after what you have to do (spec §2.4). */}
+        {me && <MyScoreLine me={me} rank={myRank} config={config} onOpen={() => setSelectedUserId(me.id)} />}
 
         {/* Above the board: this is the only block on the page that leads to a new
             game happening, and it used to sit under a 520px leaderboard where
@@ -374,9 +386,11 @@ function AppMain(): JSX.Element {
 
       {statementCase && (
         <StatementDialog
+          key={statementCase.id}
           open
           record={statementCase}
           config={config}
+          score={me?.score}
           onClose={() => setStatementCase(null)}
           onDecided={handleChanged}
         />
@@ -422,6 +436,7 @@ function AppMain(): JSX.Element {
         <PlayerDetail
           userId={selectedUserId}
           me={me}
+          config={config}
           focusRecordId={focusCaseId}
           onClose={() => {
             setSelectedUserId(null);

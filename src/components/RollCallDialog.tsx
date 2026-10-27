@@ -1,24 +1,34 @@
 import { useMemo, useState } from 'react';
 import { ATTENDANCE_DEFS } from '@shared/attendance';
-import type { Attendance } from '@shared/attendance';
 import { VIOLATION_MAP } from '@shared/scoring';
 import type { CaseDraft, RollCallEntry, SessionDetail, SettleEntry } from '../types';
 import { ApiError, rollCall, settleSession } from '../api';
+import {
+  LATE_MINUTES_MAX,
+  isRollCallDraftEmpty,
+  mergeMarks,
+  toStoredMark,
+  validateRollCallDraft,
+  type MarkInput,
+  type RollCallDraftValue,
+} from '../lib/draftShapes';
+import { useDraft } from '../lib/useDraft';
+import { useLeaveGuard } from '../lib/useLeaveGuard';
+import { ConfirmInline } from './ConfirmInline';
+import { DraftNote } from './DraftNote';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { SentencingScale } from './SentencingScale';
 import './roll-call.css';
+
+/** A person nobody has marked yet. */
+const NO_MARK: MarkInput = { attendance: null, lateMinutes: '' };
 
 interface RollCallDialogProps {
   open: boolean;
   session: SessionDetail;
   onClose: () => void;
   onSettled: (session: SessionDetail, created: number) => void;
-}
-
-interface Draftable {
-  attendance: Attendance | null;
-  lateMinutes: string;
 }
 
 /**
@@ -40,30 +50,38 @@ export function RollCallDialog({
     [session.players],
   );
 
-  const [marks, setMarks] = useState<Record<string, Draftable>>(() =>
-    Object.fromEntries(
-      roster.map((p) => [
-        p.user.id,
-        { attendance: p.attendance, lateMinutes: p.late_minutes?.toString() ?? '' },
-      ]),
-    ),
-  );
+  const rosterIds = useMemo(() => roster.map((p) => p.user.id), [roster]);
+  // Step 1's marks are a local draft (spec §3.7, §5 #4): only what was marked
+  // on this device is stored; the server's own attendance shows underneath.
+  const draft = useDraft<RollCallDraftValue>('rollcall', session.id, {}, {
+    validate: (raw) => validateRollCallDraft(raw, rosterIds),
+    isEmpty: isRollCallDraftEmpty,
+  });
+  // What step 1 shows and edits, minutes as typed; starts as the server's marks
+  // with this device's draft on top.
+  const [marks, setMarks] = useState<Record<string, MarkInput>>(() => mergeMarks(roster, draft.value));
   const [drafts, setDrafts] = useState<CaseDraft[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [claims, setClaims] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const leave = useLeaveGuard(draft.dirty, onClose);
+  const requestClose = (): void => {
+    if (!busy) leave.requestClose();
+  };
 
   const markedCount = Object.values(marks).filter((m) => m.attendance !== null).length;
 
-  const setMark = (userId: string, patch: Partial<Draftable>): void => {
-    setMarks((prev) => {
-      // The fallback matters: without it, marking someone who is not yet in the
-      // map would leave lateMinutes undefined and flip the minutes field from
-      // controlled to uncontrolled.
-      const current: Draftable = prev[userId] ?? { attendance: null, lateMinutes: '' };
-      return { ...prev, [userId]: { ...current, ...patch } };
-    });
+  const setMark = (userId: string, patch: Partial<MarkInput>): void => {
+    // The fallback matters: without it, marking someone who is not yet in the
+    // map would leave lateMinutes undefined and flip the minutes field from
+    // controlled to uncontrolled.
+    const next: MarkInput = { ...(marks[userId] ?? NO_MARK), ...patch };
+    setMarks((prev) => ({ ...prev, [userId]: { ...(prev[userId] ?? NO_MARK), ...patch } }));
+    // The draft keeps what can be restored as is: the attendance, and the
+    // minutes only once they are a whole number in range (the field keeps the typing).
+    const stored = toStoredMark(next);
+    if (stored) draft.setValue((prev) => ({ ...prev, [userId]: stored }));
   };
 
   const handleRollCall = async (): Promise<void> => {
@@ -112,6 +130,7 @@ export function RollCallDialog({
     setBusy(true);
     try {
       const res = await settleSession(session.id, file, skipAll);
+      draft.clear();
       onSettled(res.session, res.created);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '结算失败');
@@ -128,8 +147,20 @@ export function RollCallDialog({
     });
   };
 
+  const leaveConfirm = (
+    <ConfirmInline
+      question="点名还没提交，标记会留在这台设备上。"
+      cancelLabel="继续点名"
+      confirmLabel="先离开"
+      onCancel={leave.stay}
+      onConfirm={leave.confirmLeave}
+      tone="primary"
+      focus="cancel"
+    />
+  );
+
   return (
-    <Modal open={open} onClose={onClose} labelledBy="rollcall-title" size="lg">
+    <Modal open={open} onClose={requestClose} labelledBy="rollcall-title" size="lg" dismissible={!draft.dirty}>
       <h2 id="rollcall-title" className="rc__title">
         {drafts ? '结算' : '点名'}
       </h2>
@@ -182,7 +213,7 @@ export function RollCallDialog({
                         className="rc-row__late-input tabular"
                         type="number"
                         min={0}
-                        max={1440}
+                        max={LATE_MINUTES_MAX}
                         value={mark.lateMinutes}
                         onChange={(e) => setMark(p.user.id, { lateMinutes: e.target.value })}
                         placeholder="0"
@@ -195,19 +226,25 @@ export function RollCallDialog({
             })}
           </ul>
 
-          <div className="rc__actions">
-            <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn btn--gold"
-              onClick={() => void handleRollCall()}
-              disabled={busy || markedCount === 0}
-            >
-              {busy ? '保存中…' : `保存点名（${markedCount} 人）`}
-            </button>
-          </div>
+          <DraftNote savedAt={draft.savedAt} />
+
+          {leave.confirmingLeave ? (
+            leaveConfirm
+          ) : (
+            <div className="rc__actions">
+              <button ref={leave.triggerRef} type="button" className="btn btn--ghost" onClick={requestClose} disabled={busy}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn--gold"
+                onClick={() => void handleRollCall()}
+                disabled={busy || markedCount === 0}
+              >
+                {busy ? '保存中…' : `保存点名（${markedCount} 人）`}
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -271,24 +308,28 @@ export function RollCallDialog({
             </ul>
           )}
 
-          <div className="rc__actions rc__actions--settle">
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() => void handleSettle(true)}
-              disabled={busy}
-            >
-              跳过全部，仅记录出勤
-            </button>
-            <button
-              type="button"
-              className="btn btn--gold"
-              onClick={() => void handleSettle(false)}
-              disabled={busy || picked.size === 0}
-            >
-              {busy ? '结算中…' : `确认立案（${picked.size}）`}
-            </button>
-          </div>
+          {leave.confirmingLeave ? (
+            leaveConfirm
+          ) : (
+            <div className="rc__actions rc__actions--settle">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => void handleSettle(true)}
+                disabled={busy}
+              >
+                跳过全部，仅记录出勤
+              </button>
+              <button
+                type="button"
+                className="btn btn--gold"
+                onClick={() => void handleSettle(false)}
+                disabled={busy || picked.size === 0}
+              >
+                {busy ? '结算中…' : `确认立案（${picked.size}）`}
+              </button>
+            </div>
+          )}
         </>
       )}
     </Modal>

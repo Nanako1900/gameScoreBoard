@@ -1,7 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MAX_NARRATIVE_LEN, MIN_CLAIM_LEN } from '@shared/scoring';
 import type { BatchFailure, Config, PublicUser, RecordItem } from '../types';
 import { ApiError, createCases } from '../api';
+import { CASE_EXTRA_MAX, isCaseDraftEmpty, validateCaseDraft, type CaseDraftValue } from '../lib/draftShapes';
+import { useDraft } from '../lib/useDraft';
+import { useLeaveGuard } from '../lib/useLeaveGuard';
+import { ConfirmInline } from './ConfirmInline';
+import { DraftNote } from './DraftNote';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import './case-dialog.css';
@@ -14,6 +19,8 @@ interface CaseDialogProps {
   config: Config;
   onCreated: (records: RecordItem[]) => void;
 }
+
+const EMPTY_CASE: CaseDraftValue = { picked: [], claim: '', extras: {} };
 
 /**
  * 记一笔 — v3: pick people, describe what happened, done.
@@ -36,9 +43,13 @@ export function CaseDialog({
     [participants, selfId],
   );
 
-  const [picked, setPicked] = useState<string[]>([]);
-  const [claim, setClaim] = useState('');
-  const [extras, setExtras] = useState<Record<string, string>>({});
+  const candidateIds = useMemo(() => candidates.map((c) => c.id), [candidates]);
+  // Who and what is a local draft (spec §5 #4) until every case is filed.
+  const draft = useDraft<CaseDraftValue>('case', undefined, EMPTY_CASE, {
+    validate: (raw) => validateCaseDraft(raw, candidateIds, config.maxBatchSubjects),
+    isEmpty: isCaseDraftEmpty,
+  });
+  const { picked, claim, extras } = draft.value;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [failed, setFailed] = useState<BatchFailure[]>([]);
@@ -46,26 +57,31 @@ export function CaseDialog({
 
   const atLimit = picked.length >= config.maxBatchSubjects;
 
-  const reset = (): void => {
-    setPicked([]);
-    setClaim('');
-    setExtras({});
+  // Only the transient bits: what was typed is the draft and stays until a submit succeeds.
+  const close = (): void => {
     setExpanded(null);
     setError(null);
     setFailed([]);
     setSubmitting(false);
-  };
-
-  const close = (): void => {
-    reset();
     onClose();
   };
+  const guard = useLeaveGuard(draft.dirty, close);
+
+  const claimRef = useRef<HTMLTextAreaElement>(null);
+  // 清空 takes itself away with the note: hand the keyboard to the empty field.
+  const clearAll = (): void => {
+    draft.clear();
+    claimRef.current?.focus();
+  };
+  const setClaim = (next: string): void => draft.setValue((prev) => ({ ...prev, claim: next }));
+  const setExtra = (id: string, text: string): void =>
+    draft.setValue((prev) => ({ ...prev, extras: { ...prev.extras, [id]: text } }));
 
   const toggle = (id: string): void => {
-    setPicked((prev) => {
-      if (prev.includes(id)) return prev.filter((p) => p !== id);
-      if (prev.length >= config.maxBatchSubjects) return prev;
-      return [...prev, id];
+    draft.setValue((prev) => {
+      if (prev.picked.includes(id)) return { ...prev, picked: prev.picked.filter((p) => p !== id) };
+      if (prev.picked.length >= config.maxBatchSubjects) return prev;
+      return { ...prev, picked: [...prev.picked, id] };
     });
   };
 
@@ -95,13 +111,20 @@ export function CaseDialog({
       });
       if (res.failed.length > 0) {
         // Partial success is the designed behaviour, not an error state: keep the
-        // dialog open so the judge can see exactly who was skipped.
+        // dialog open so the judge can see exactly who was skipped — and keep
+        // only them in the draft.
+        const failedIds = res.failed.map((f) => f.subject_id);
         setFailed(res.failed);
-        setPicked(res.failed.map((f) => f.subject_id));
+        draft.setValue((prev) => ({
+          ...prev,
+          picked: failedIds,
+          extras: Object.fromEntries(Object.entries(prev.extras).filter(([id]) => failedIds.includes(id))),
+        }));
         setSubmitting(false);
         if (res.records.length > 0) onCreated(res.records);
         return;
       }
+      draft.clear();
       onCreated(res.records);
       close();
     } catch (err) {
@@ -111,7 +134,7 @@ export function CaseDialog({
   };
 
   return (
-    <Modal open={open} onClose={close} labelledBy="case-dialog-title" size="md">
+    <Modal open={open} onClose={guard.requestClose} labelledBy="case-dialog-title" size="md" dismissible={!draft.dirty}>
       <h2 id="case-dialog-title" className="cd__title">
         记一笔
       </h2>
@@ -160,6 +183,7 @@ export function CaseDialog({
         <label className="cd__field">
           <span className="cd__label">发生了什么？</span>
           <textarea
+            ref={claimRef}
             className="cd__textarea"
             value={claim}
             onChange={(e) => setClaim(e.target.value)}
@@ -172,6 +196,8 @@ export function CaseDialog({
             {claim.trim().length} / {MAX_NARRATIVE_LEN}
           </span>
         </label>
+
+        <DraftNote savedAt={draft.savedAt} onClear={submitting ? undefined : clearAll} />
 
         {picked.length > 1 && (
           <div className="cd__extras">
@@ -195,11 +221,9 @@ export function CaseDialog({
                     <textarea
                       className="cd-extra__input"
                       rows={2}
-                      maxLength={300}
+                      maxLength={CASE_EXTRA_MAX}
                       value={extras[id] ?? ''}
-                      onChange={(e) =>
-                        setExtras((prev) => ({ ...prev, [id]: e.target.value }))
-                      }
+                      onChange={(e) => setExtra(id, e.target.value)}
                       placeholder="而且你还把我拉黑了"
                       aria-label={`针对 ${nameOf(id)} 的补充说明`}
                     />
@@ -235,22 +259,34 @@ export function CaseDialog({
           </p>
         )}
 
-        <div className="cd__actions">
-          <button type="button" className="btn btn--ghost" onClick={close}>
-            取消
-          </button>
-          <button
-            type="submit"
-            className="btn btn--gold"
-            disabled={submitting || candidates.length === 0}
-          >
-            {submitting
-              ? 'AI 归类中…'
-              : picked.length > 1
-                ? `记下（${picked.length} 人）`
-                : '记下'}
-          </button>
-        </div>
+        {guard.confirmingLeave ? (
+          <ConfirmInline
+            question="这笔还没提交，写的内容会留在这台设备上。"
+            cancelLabel="继续写"
+            confirmLabel="先离开"
+            onCancel={guard.stay}
+            onConfirm={guard.confirmLeave}
+            tone="primary"
+            focus="cancel"
+          />
+        ) : (
+          <div className="cd__actions">
+            <button ref={guard.triggerRef} type="button" className="btn btn--ghost" onClick={guard.requestClose}>
+              取消
+            </button>
+            <button
+              type="submit"
+              className="btn btn--gold"
+              disabled={submitting || candidates.length === 0}
+            >
+              {submitting
+                ? 'AI 归类中…'
+                : picked.length > 1
+                  ? `记下（${picked.length} 人）`
+                  : '记下'}
+            </button>
+          </div>
+        )}
       </form>
     </Modal>
   );
