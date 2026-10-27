@@ -1,27 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { affectsScore } from '@shared/scoring';
-import type {
-  Config,
-  PublicUser,
-  RecordItem,
-  SessionItem,
-  User,
-  WeeklyReport,
-} from './types';
-import {
-  ApiError,
-  getConfig,
-  getLatestReport,
-  getLeaderboard,
-  getMe,
-  getMyInvites,
-  getRecord,
-  getRecords,
-  logout as apiLogout,
-  regenerateReport,
-} from './api';
+import type { RecordItem, User } from './types';
+import { ApiError, getRecord, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf, parseTimestamp } from './lib/time';
 import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
+import { CHANGE_KEYS } from './lib/coreData';
+import { useCoreData } from './lib/useCoreData';
+import { visibleRefreshKeys } from './lib/refreshPolicy';
+import { useVisibleRefresh } from './lib/useVisibleRefresh';
+import { useResetWatch } from './lib/useResetWatch';
+import { todoCount } from './lib/tabTitle';
+import { useTabTitle } from './lib/useTabTitle';
+import { ToastProvider, useToast } from './components/Toast';
+import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
 import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
@@ -43,55 +34,6 @@ import { LinkMissingNotice } from './components/LinkMissingNotice';
 import './app.css';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-interface CoreData {
-  config: Config;
-  participants: PublicUser[];
-  records: RecordItem[];
-  me: User | null;
-  /** Cases where the signed-in user still owes a statement. */
-  myPending: RecordItem[];
-  /** Sessions the user was invited to and has not answered. */
-  invites: SessionItem[];
-  report: WeeklyReport | null;
-}
-
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: CoreData };
-
-async function loadCore(): Promise<CoreData> {
-  const [config, leaderboard, records, me, report] = await Promise.all([
-    getConfig(),
-    getLeaderboard(),
-    getRecords({ limit: 50 }),
-    getMe(),
-    // A missing report is normal (first week, or nothing happened) — never fatal.
-    getLatestReport().catch(() => ({ report: null })),
-  ]);
-  // Only fetch the follow-ups that can possibly be non-empty: /api/me already
-  // tells us whether anything is pending, and invites need a session at all.
-  const [myPending, invites] = await Promise.all([
-    me.user && me.pending.statements > 0
-      ? getRecords({ mine: 'pending', limit: 20 }).then((r) => r.records)
-      : Promise.resolve<RecordItem[]>([]),
-    me.user
-      ? getMyInvites()
-          .then((r) => r.sessions)
-          .catch(() => [])
-      : Promise.resolve<SessionItem[]>([]),
-  ]);
-  return {
-    config,
-    participants: leaderboard.participants,
-    records: records.records,
-    me: me.user,
-    myPending,
-    invites,
-    report: report.report,
-  };
-}
 
 /** Sum of scored deltas per subject within the current heal week. */
 function computeTrends(records: RecordItem[], nextResetAt: string): Record<string, number> {
@@ -118,8 +60,18 @@ function computeCounts(records: RecordItem[]): Record<string, number> {
   return counts;
 }
 
+/** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
 export function App(): JSX.Element {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  return (
+    <ToastProvider>
+      <AppMain />
+    </ToastProvider>
+  );
+}
+
+function AppMain(): JSX.Element {
+  const { state, refresh, setMe } = useCoreData();
+  const toast = useToast();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [caseOpen, setCaseOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -142,22 +94,6 @@ export function App(): JSX.Element {
   const onboardingAsked = useRef(false);
   const [focusCaseId, setFocusCaseId] = useState<number | null>(null);
   const [linkMissing, setLinkMissing] = useState<string | null>(null);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const data = await loadCore();
-      setState({ status: 'ready', data });
-    } catch (err) {
-      setState({
-        status: 'error',
-        message: err instanceof ApiError ? err.message : '加载失败，请稍后重试',
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   useEffect(() => {
     // One-off parameters: stripped at once, so a reload does not repeat them.
@@ -238,16 +174,54 @@ export function App(): JSX.Element {
   }, []);
 
   const handleMeUpdated = useCallback((user: User): void => {
-    setState((prev) =>
-      prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, me: user } } : prev,
-    );
-    void refresh();
-  }, [refresh]);
+    setMe(user);
+    void refresh(CHANGE_KEYS);
+  }, [setMe, refresh]);
 
+  // Every write a child reports — incl. the admin's 改分/设裁判/改判/撤销 —
+  // invalidates the board, the feed and me; config and the report stay.
   const handleChanged = useCallback((): void => {
-    void refresh();
+    void refresh(CHANGE_KEYS);
     setSessionsKey((n) => n + 1);
   }, [refresh]);
+
+  const handleVisible = useCallback((): void => {
+    if (!ready) return;
+    void refresh(visibleRefreshKeys(ready.config.nextResetAt, Date.now()));
+    setSessionsKey((n) => n + 1);
+  }, [ready, refresh]);
+  useVisibleRefresh(handleVisible);
+
+  // Past nextResetAt: GET /api/config runs the weekly heal and returns next
+  // week's reset, so it goes first; refresh runs one at a time, so the board
+  // and my score are read after it.
+  const handleResetCrossed = useCallback((): void => {
+    void refresh(['config']);
+    void refresh(['leaderboard', 'me']);
+  }, [refresh]);
+  useResetWatch(ready?.config.nextResetAt ?? null, handleResetCrossed);
+
+  useTabTitle(ready ? todoCount(ready) : 0);
+
+  // The admin re-rolls the weekly report's prose: nothing but the report changes.
+  // It used to reject unhandled on failure; now the admin is told.
+  const handleRegenerate = useCallback(
+    (week: string): void => {
+      setRegenerating(true);
+      void regenerateReport(week)
+        .then(
+          () => refresh(['report']),
+          (err: unknown) => {
+            toast.show({
+              tone: 'error',
+              message: err instanceof ApiError ? `战报没换成新说法：${err.message}` : '战报没换成新说法，请稍后重试',
+            });
+          },
+        )
+        .finally(() => setRegenerating(false));
+    },
+    [refresh, toast],
+  );
 
   const trends = useMemo(
     () => (ready ? computeTrends(ready.records, ready.config.nextResetAt) : {}),
@@ -306,6 +280,13 @@ export function App(): JSX.Element {
        * The two banners self-hide when empty, so a quiet day collapses straight
        * to 约局 without leaving gaps. */}
       <main className="app__main">
+        {state.stale && (
+          <StaleNotice
+            message={state.stale.message}
+            onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))}
+          />
+        )}
+
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
 
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
@@ -336,12 +317,7 @@ export function App(): JSX.Element {
             regenerating={regenerating}
             onRegenerate={
               me?.is_admin === true
-                ? () => {
-                    setRegenerating(true);
-                    void regenerateReport(report.week_start)
-                      .then(handleChanged)
-                      .finally(() => setRegenerating(false));
-                  }
+                ? () => handleRegenerate(report.week_start)
                 : undefined
             }
           />

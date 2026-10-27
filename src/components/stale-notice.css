@@ -1,0 +1,46 @@
+/* A refresh failed; the page still shows the older data (P0-3). */
+
+.stale {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.75rem 0.6rem 1.1rem;
+  border: 1px solid color-mix(in oklab, var(--attn) 45%, transparent);
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--attn) 8%, transparent);
+}
+
+.stale__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: var(--r-pill);
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--attn);
+}
+
+.stale__msg {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.stale__retry {
+  flex: none;
+  min-height: var(--tap-min);
+}
+
+@media (forced-colors: active) {
+  .stale {
+    border-color: CanvasText;
+  }
+
+  .stale__icon {
+    border: 1px solid CanvasText;
+  }
+}

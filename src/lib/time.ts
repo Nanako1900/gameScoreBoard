@@ -151,3 +151,34 @@ export function lastWeekStartOf(nextResetAt: string): string | null {
   if (Number.isNaN(ms)) return null;
   return new Date(ms + 12 * 3_600_000 - 14 * 86_400_000).toISOString().slice(0, 10);
 }
+
+/** Shown in place of the reset countdown once nextResetAt has passed and config is being refetched. */
+export const RESET_PENDING_LABEL = '回血中…';
+
+/**
+ * Header countdown to the weekly reset: '2天 06:14' | '06:14' | '回血中…' (passed).
+ * Minute precision, rounded UP so the last minute reads '00:01', never '00:00'
+ * or a negative number. An unparsable target reads '—', like a missing config.
+ */
+export function formatResetCountdown(targetIso: string, now: number = Date.now()): string {
+  const target = parseTimestamp(targetIso);
+  if (Number.isNaN(target)) return '—';
+  const remaining = target - now;
+  if (remaining <= 0) return RESET_PENDING_LABEL;
+  const totalMinutes = Math.ceil(remaining / MINUTE);
+  const days = Math.floor(totalMinutes / (DAY / MINUTE));
+  const hours = Math.floor((totalMinutes % (DAY / MINUTE)) / (HOUR / MINUTE));
+  const clock = `${pad2(hours)}:${pad2(totalMinutes % (HOUR / MINUTE))}`;
+  return days > 0 ? `${days}天 ${clock}` : clock;
+}
+
+/** Prose time left: '还有 2 天' | '还有 5 小时' | '还有 12 分钟' | '还有不到 1 分钟' | '' (passed). */
+export function formatTimeLeft(targetIso: string, now: number = Date.now()): string {
+  const target = parseTimestamp(targetIso);
+  const remaining = Number.isNaN(target) ? 0 : target - now;
+  if (remaining <= 0) return '';
+  if (remaining < MINUTE) return '还有不到 1 分钟';
+  if (remaining < HOUR) return `还有 ${Math.floor(remaining / MINUTE)} 分钟`;
+  if (remaining < DAY) return `还有 ${Math.floor(remaining / HOUR)} 小时`;
+  return `还有 ${Math.floor(remaining / DAY)} 天`;
+}
