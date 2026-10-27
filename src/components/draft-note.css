@@ -1,0 +1,33 @@
+/* 草稿提示 — tells the writer their text is kept on this device (spec §5 #4). */
+
+.draft-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.draft-note__clear {
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .draft-note__clear:hover {
+    color: var(--text);
+    border-color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  .draft-note__clear {
+    min-height: var(--tap-min);
+  }
+}
