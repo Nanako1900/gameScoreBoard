@@ -49,7 +49,7 @@ describe('roll call page', () => {
     writeDraft('rollcall', 1, { a: { attendance: 'late', late_minutes: 12 } });
     render(<RollCallPage sessionId={1} me={{ ...ME, id: 'admin', is_admin: true }} onChanged={vi.fn()} />);
     expect(await screen.findByRole('spinbutton', { name: /阿飞 迟到分钟数/ })).toHaveValue(12);
-    expect(screen.getByText('1/2')).toBeInTheDocument();
+    expect(await screen.findByText('1/2')).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: /点名/ })).toHaveLength(1);
     const back = screen.getByRole('button', { name: '返回' });
     await userEvent.setup().click(back);
