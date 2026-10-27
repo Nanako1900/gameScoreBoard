@@ -1,0 +1,36 @@
+/* ConfirmInline: takes the trigger's place inside the card/dialog, so it reads
+ * as part of the flow rather than a layer. Cancel comes first in the DOM and on
+ * screen; the row is right-aligned without reversing anything. */
+.ci {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+}
+
+.ci__q {
+  font-weight: 600;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.ci__detail {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ci__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+@media (max-width: 600px) {
+  .ci__actions > .btn {
+    flex: 1 1 0;
+    min-height: var(--tap-min);
+  }
+}

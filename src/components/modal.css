@@ -1,10 +1,12 @@
 .modal {
+  /* Shared by the backdrop padding and the sticky bar's offset below. */
+  --modal-top: clamp(1rem, 4vh, 4rem);
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-modal);
   display: grid;
   place-items: start center;
-  padding: clamp(1rem, 4vh, 4rem) 1rem 3rem;
+  padding: var(--modal-top) 1rem 3rem;
   overflow-y: auto;
   background: rgba(4, 7, 12, 0.72);
   backdrop-filter: blur(6px);
@@ -12,9 +14,11 @@
 }
 
 .modal__panel {
+  /* Shared by the panel padding and the bar that bleeds over it. */
+  --modal-pad: clamp(1.25rem, 1rem + 2vw, 2rem);
   position: relative;
   width: 100%;
-  padding: clamp(1.25rem, 1rem + 2vw, 2rem);
+  padding: var(--modal-pad);
   animation: modal-rise var(--dur) var(--ease);
   box-shadow: var(--shadow-pop), var(--inner-glow);
 }
@@ -52,6 +56,128 @@
   }
 }
 
+/* Moved from theme.css's coarse-pointer block: the ✕ is Modal's own business. */
+@media (pointer: coarse) {
+  .modal__close {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+  }
+}
+
+/* --- Bar layout (sheet / drawer / any titled dialog) ------------------------
+ * The bar sticks to the top of whatever scrolls — the backdrop for a centred
+ * dialog, the panel itself for a bottom sheet — so the title and ✕ never scroll
+ * off screen (H2: the ✕ of a 3729px-tall panel sat at top=-17). It bleeds over
+ * the panel padding so content scrolls underneath an opaque strip. Sticky
+ * offsets are measured inside the scroller's padding, hence the negative top:
+ * without it content shows through the backdrop's top padding above the bar. */
+.modal__bar {
+  position: sticky;
+  top: calc(-1 * var(--modal-top));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: calc(-1 * var(--modal-pad)) calc(-1 * var(--modal-pad)) 0;
+  padding: 0.5rem 0.5rem 0.5rem var(--modal-pad);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.modal__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.3;
+}
+
+.modal__bar .modal__close {
+  position: static;
+  flex: none;
+  margin-left: auto;
+  width: var(--tap-min);
+  height: var(--tap-min);
+}
+
+.modal__body {
+  padding-top: var(--modal-pad);
+}
+
+/* Only the sheet renders a grabber, and it only shows while the sheet is pinned
+ * to the bottom (≤600px). Decoration (aria-hidden), not a drag handle. */
+.modal__grabber {
+  display: none;
+  position: absolute;
+  top: 0.35rem;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--border-strong);
+  transform: translateX(-50%);
+}
+
+/* --- Sheet: pinned to the bottom on phones, centred like a dialog above 600px.
+ * Drawer falls back to the same sheet below 1024px. */
+@media (max-width: 600px) {
+  .modal--sheet,
+  .modal--drawer {
+    place-items: end stretch;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .modal__panel--sheet,
+  .modal__panel--drawer {
+    max-width: none;
+    max-height: var(--sheet-max-h);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 0;
+    padding-bottom: calc(var(--modal-pad) + var(--safe-bottom));
+    border-bottom: 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    animation-name: modal-sheet-up;
+  }
+
+  .modal__grabber {
+    display: block;
+  }
+
+  /* The panel is the scroller here and has no top padding to cancel. */
+  .modal__panel--sheet .modal__bar,
+  .modal__panel--drawer .modal__bar {
+    top: 0;
+    margin-top: 0;
+    padding-top: 1rem;
+  }
+}
+
+/* --- Drawer: a 480px panel on the right on desktop (first used in P1-1). */
+@media (min-width: 1024px) {
+  .modal--drawer {
+    place-items: stretch end;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .modal__panel--drawer {
+    max-width: 480px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 0;
+    border-radius: var(--r-lg) 0 0 var(--r-lg);
+    animation-name: modal-drawer-in;
+  }
+
+  .modal__panel--drawer .modal__bar {
+    top: 0;
+    margin-top: 0;
+    border-radius: var(--r-lg) 0 0 0;
+  }
+}
+
 @keyframes modal-fade {
   from {
     opacity: 0;
@@ -62,6 +188,18 @@
   from {
     opacity: 0;
     transform: translateY(12px) scale(0.985);
+  }
+}
+
+@keyframes modal-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes modal-drawer-in {
+  from {
+    transform: translateX(100%);
   }
 }
 
