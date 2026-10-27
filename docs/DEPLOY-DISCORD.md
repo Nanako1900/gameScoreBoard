@@ -18,6 +18,7 @@
 | `/todo` | 待写陈述（可直接点开）；管理员还能看到等得最久的待复核申诉 | 只有自己 |
 | `/report` | 最新一期周报 | 频道里所有人 |
 | `/notify 开/关` | 私信提醒开关（默认开）；网页 Discord 卡片也能开关（`POST /api/me/discord/notify`，和 bot 是同一个开关） | 只有自己 |
+| `/help` | 机器人指南，无需绑定 | 只有自己 |
 
 Discord 里**没有任何管理操作**，改判、撤销、改分都只在网页上做。
 
@@ -172,15 +173,15 @@ PG 迁移 `0008_sessions_off.sql` 删除约局触发器和未处理的约局 out
 部署前备份、迁移和 Coolify Redeploy 由机主按 [v6 HANDOFF §6](redesign-v6/HANDOFF.md#6-部署提醒) 执行。
 
 新周报不再统计开局、出勤或组局。旧周报的历史统计字段仍可显示，缺失或为 0 时隐藏对应行。
-本期命令为上表 8 个；指南和语音记录命令在后续分期加入。
+本期命令为上表 9 个；语音记录命令在后续分期加入。
 
 ## 8. 验证
 
 1. Coolify → `bot` 的日志里依次看到：
    - `gateway session starts left today: 9xx/1000`
    - `gateway ready as <bot 名字>`
-   - `registered 8 slash commands in guild 1114391825336250432`
-2. 在服务器里输入 `/`，能看到上面 8 个命令（服务器命令是即时生效的）。
+   - `registered 9 slash commands in guild 1114391825336250432`
+2. 在服务器里输入 `/`，能看到上面 9 个命令（服务器命令是即时生效的）。
 3. `/link` → 点按钮 → 网页登录 Nanako → Discord 授权页 → 确认页点「确认绑定」→ 跳回
    `https://community.nanako.org/?linked=discord`。
 4. `/score`：只有自己看得到的分数卡片；`/top`：频道里所有人都看得到的榜，没有人被 @。

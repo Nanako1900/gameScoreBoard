@@ -19,6 +19,7 @@ import { getLatestReport } from '../../../worker/report';
 import type { RecordItem, User } from '../../../worker/types';
 import { boundUser, setNotifyDm, unlinkAccounts } from './links';
 import { reportEmbed } from './report';
+import { renderGuideEmbed } from './guide';
 
 export { boundUser };
 import {
@@ -106,6 +107,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
       },
     ],
   },
+  { type: CHAT_INPUT, name: 'help', description: '机器人指南（只有你自己看得到）' },
 ];
 
 // --- Shared pieces -----------------------------------------------------------
@@ -334,9 +336,14 @@ async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotRe
   );
 }
 
+async function handleHelp(_input: CommandInput, ctx: BotContext): Promise<BotReply> {
+  return ephemeralReply(undefined, { embeds: [renderGuideEmbed()], buttons: [webButton(ctx)] });
+}
+
 type Handler = (input: CommandInput, ctx: BotContext) => Promise<BotReply>;
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  help: handleHelp,
   link: handleLink,
   unlink: handleUnlink,
   score: handleScore,
