@@ -30,7 +30,9 @@
     "db:migrate4:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/004_lobby.sql",
     "test:dom": "vitest run --config vitest.dom.config.ts",
     "test:server": "vitest run --config vitest.server.config.ts",
-    "test:pg": "vitest run --config vitest.pg.config.ts"
+    "test:pg": "vitest run --config vitest.pg.config.ts",
+    "db:migrate5:local": "wrangler d1 execute edg-credit --local --file=./migrations/005_voice.sql",
+    "db:migrate5:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/005_voice.sql"
   },
   "dependencies": {
     "hono": "^4.6.14",

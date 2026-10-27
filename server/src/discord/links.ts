@@ -91,6 +91,10 @@ export async function linkAccounts(db: D1Database, input: LinkInput): Promise<Li
   if (byUser) {
     statements.push(
       db.prepare('DELETE FROM discord_links WHERE user_id = ? AND discord_user_id = ?').bind(input.userId, byUser.discord_user_id),
+      // DELETE holds the binding-row lock. A recorder that opened first must
+      // commit before this closes it; a later recorder sees no old binding.
+      db.prepare("UPDATE voice_sessions SET left_at = CASE WHEN joined_at > datetime('now') THEN joined_at ELSE datetime('now') END, end_reason = 'unlinked' WHERE discord_user_id = ? AND user_id = ? AND left_at IS NULL")
+        .bind(byUser.discord_user_id, input.userId),
       db
         .prepare("INSERT INTO link_audit (action, via, user_id, discord_user_id) VALUES ('unlink', ?, ?, ?)")
         .bind(input.via, input.userId, byUser.discord_user_id),
@@ -128,6 +132,8 @@ export async function unlinkAccounts(
   const results = await db.batch([
     db
       .prepare('DELETE FROM discord_links WHERE discord_user_id = ? AND user_id = ?')
+      .bind(current.discord_user_id, current.user_id),
+    db.prepare("UPDATE voice_sessions SET left_at = CASE WHEN joined_at > datetime('now') THEN joined_at ELSE datetime('now') END, end_reason = 'unlinked' WHERE discord_user_id = ? AND user_id = ? AND left_at IS NULL")
       .bind(current.discord_user_id, current.user_id),
     db
       .prepare(

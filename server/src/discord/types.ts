@@ -13,10 +13,12 @@ export interface CommandInput {
   commandName: string;
   /** Who used the command. */
   caller: DiscordUserRef;
-  /** The `user` option, for commands that take one (/score, /verdicts). */
+  /** The `user` option, for commands that take one (/score, /verdicts, /voice). */
   targetUser: DiscordUserRef | null;
   /** The `state` option of /notify ('on' | 'off'); null for every other command. */
   state?: string | null;
+  /** Optional integer days for /voice; omitted uses the command default. */
+  days?: number;
 }
 
 /** Everything handlers may touch. */

@@ -74,11 +74,13 @@ export function toCommandInput(interaction: ChatInputCommandInteraction): Comman
   const target = interaction.options.getUser('user');
   // Only /notify has a state choice.
   const state = interaction.commandName === 'notify' ? interaction.options.getString('state') : null;
+  const days = interaction.commandName === 'voice' ? interaction.options.getInteger('days') : null;
   return {
     commandName: interaction.commandName,
     caller: toUserRef(interaction.user),
     targetUser: target ? toUserRef(target) : null,
     ...(state !== null ? { state } : {}),
+    ...(days !== null ? { days } : {}),
   };
 }
 

@@ -19,6 +19,7 @@
 | `/report` | 最新一期周报 | 频道里所有人 |
 | `/notify 开/关` | 私信提醒开关（默认开）；网页 `/welcome` 第 3 步也能开关（`POST /api/me/discord/notify`，和 bot 是同一个开关） | 只有自己 |
 | `/help` | 机器人指南，无需绑定；与网页 `/guide`、入户第 5 步和欢迎私信共用文案，附「打开网页」按钮 | 只有自己 |
+| `/voice [days] [user]` | 语音进出记录，默认 7 天、最多 14 天；指定他人仅限裁判和管理员 | 只有自己 |
 
 Discord 里**没有任何管理操作**，改判、撤销、改分都只在网页上做。
 
@@ -41,7 +42,7 @@ Discord 里**没有任何管理操作**，改判、撤销、改分都只在网�
    - **Public Bot 关掉**（只有你能把它拉进服务器）；
    - Requires OAuth2 Code Grant 关掉；
    - Privileged Gateway Intents（Presence / Server Members / Message Content）**全部不开**。
-     bot 只用 `Guilds` intent，不读任何消息。
+     bot 使用 Guilds + GuildVoiceStates（非特权），开发者后台不用为语音记录再开开关；不读任何消息。
 4. **OAuth2**：
    - Reset Secret → 复制，就是 `DISCORD_CLIENT_SECRET`；
    - Redirects 加 `https://capi.nanako.org/link/discord/callback`。必须和 `APP_URL` 加
@@ -59,6 +60,8 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
 - `permissions=19456` = View Channels + Send Messages + Embed Links。**不要给 Administrator**，
   也不要在授权页上多勾别的权限。
 - 如果 `#edg-信誉分` 是私有频道，在频道权限里给 bot 的角色加上「查看频道」。
+- 所有需要留证的语音频道（包括私密频道），机器人也必须有「查看频道」权限；看不见的频道不会被记录。
+  不需要连接语音、说话、Presence 或 Server Members 权限，也不要为此增加邀请权限。
 
 ## 3. Coolify 环境变量
 
@@ -133,7 +136,7 @@ bot 启动时会检查其余变量，缺了或格式不对就直接退出，日�
 
 | 什么时候 | 内容 |
 |---|---|
-| 新绑或换绑成功（`dm.welcome`） | 机器人指南和网页链接，正文来自 `shared/guide.ts`，与 `/help`、`/guide` 和入户第 5 步共用；S2 尚不含语音记录或信息板频道 |
+| 新绑或换绑成功（`dm.welcome`） | 机器人指南和网页链接，正文来自 `shared/guide.ts`，与 `/help`、`/guide` 和入户第 5 步共用，包含语音记录告知；信息板频道在 S4 加入 |
 | 被立案后 3 分钟 | 事实描述、截止时间、立案人，附 **[写陈述]** 按钮：点开填写，提交后当场裁决（和网页一样，只能写一次）。3 分钟内撤回或已在网页写完的，不发 |
 | 截止前 2 小时 | 还没写陈述时提醒一次；截止时间被顺延，提醒也跟着顺延 |
 | 出判决 / 管理员改判 | 完整判词，附 **[申诉]** 按钮（填理由后交管理员复核） |
@@ -186,8 +189,8 @@ PG 迁移 `0008_sessions_off.sql` 删除约局触发器和未处理的约局 out
 
 ## S2 入户与欢迎私信上线
 
-本期命令为上表 9 个，新增 `/help`；它无需绑定，回复为 ephemeral，仍只在配置的服务器里使用。
-语音记录与信息板在后续分期加入，本期没有 `/voice` 或信息板频道配置。
+S2 新增 `/help`：无需绑定，回复为 ephemeral，仍只在配置的服务器里使用。
+S3 新增 `/voice` 后，当前共上表 10 个命令；信息板频道配置在 S4 加入。
 
 PG 迁移 `0009_welcome.sql` 添加 `discord_links` 的插入触发器与 `queue_welcome_resend` 函数，
 分别排自动欢迎和受限的手动重发，都会通知 dispatcher；SQL 可重复执行。
@@ -200,18 +203,71 @@ PG 迁移 `0009_welcome.sql` 添加 `discord_links` 的插入触发器与 `queue
 若原来有案件、旧 session 提示或登录回跳目标，完成入户回首页后才继续，目标不含自动业务操作。
 本人可以看自己的绑定昵称，其他公开接口不因此返回 Discord 账号 ID 或频道 ID。
 
+## S3 语音记录
+
+只记录配置服务器内**已绑定成员**的语音进入、离开和换频道时间，以及当时的频道名称；不录音、不读消息。
+解绑或换绑会关掉旧账号尚未闭合的段，标为 `unlinked`，历史继续按原 Nanako 账号保留。
+记录保留 90 天，只有裁判、管理员和本人能看；网页、接口和命令回复不含 Discord 账号 ID、频道 ID。
+私信开关和送达状态不限制语音记录查询。
+
+- `/voice [days] [user]` 只给调用者看：`days` 为 1–14 的整数，默认 7。省略 `user` 查自己；
+  指定 `user` 只允许裁判和管理员（包括显式指定自己）。调用者和指定对象都要绑定。
+  一条 embed 按天列首次进入、累计时长和各段；超长先省略各段，再压缩汇总，仍保留不确定性说明及「完整记录请找裁判在网页查看」。
+- 裁判和管理员从头像菜单「管理」进入 `/admin` 或 `/admin/voice`，看某一天的名单，或某个人最近 7 / 14 / 31 天的明细。
+  普通用户打开管理页只会看到「这页不存在」，仍可通过本人接口和 `/voice` 查自己；「记一笔」选人后可在新标签页打开 TA 的语音记录。
+- 时间按榜单时区显示；跨午夜的段在第二天标「接上一天」。当天总秒数相加后向下取整到分钟。
+  机器人上线时已在语音里、离线后无法确认离开、尚未记录离开，都有明确说明；未闭段的时长按查询时刻估算。
+- 覆盖只认数据库已持久化的 `started_at` 至 `last_seen_at`，即使最后心跳很近，也不会推算覆盖到查询时刻。
+  未覆盖时段保留秒级边界并显示「这段时间机器人不在线，没有记录不代表没来。」；空记录显示「没有保存的语音记录，不代表没来」。
+  另注明「未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。」，并非断言 Gateway 当时必定离线。
+  未闭段只有在查询时刻仍有可信覆盖时才标「在语音里」，否则标「尚未记录离开」。记录与缺口都不能单独作为缺席结论。
+- API 的日期范围最多 31 天；范围起点早于滚动 90 天保留线即返回 400，并提示首个完整可查的榜单日期。
+  部分过期的整日也拒绝，避免把已清理的记录显示成「没有来过」。D1 和 PG 读取规则相同；D1 没有 Gateway 写入器，空表会返回未覆盖时段。
+
+每小时按进入时间清理超过 90 天的整段（包括未闭段）。若被删长段还覆盖保留期内的时间，
+同一事务把保留线至这些长段最晚结束点的覆盖撤销（未闭段取清理时刻）；同一时段所有人的覆盖提示都会变为「未覆盖」，
+其他人已有的进出记录仍保留，之后的可信覆盖也保留。清理与撤销有一项失败就整体回滚并降级。
+旧覆盖游标作废，缓存完整且可用时重新对账，从当前时刻恢复覆盖；仍在频道的绑定成员从当前时刻开新段，不补写过去。
+读取接口在读语音段前后各查一次覆盖，只取交集，防止并发清理造成「旧覆盖完整、记录却已删除」的组合。
+
+`/status` 的 `voice` 是运维状态，不是出勤证据：
+
+| 字段 | 含义 |
+|---|---|
+| `coverage_since` | 当前可信覆盖的 UTC 起点；未建立覆盖或降级时为 null |
+| `degraded` | 记录器失败 / 尚未恢复可信覆盖时为 true；需要看日志排查 |
+| `open_segments` | 数据库内尚未闭合段数；可能含离线遗留段，不能当实时在线人数。未启用或查询失败为 null |
+| `last_error` | 正常为 null；有错只返回「语音记录暂不可用，请查看机器人日志」，不含数据库错误、账号或频道标识 |
+
+HTTP 状态仍只由 Gateway 决定：`gateway: ready` 返回 HTTP 200，其他状态返回 503。
+**HTTP 200 不代表语音记录健康**，还要检查 `degraded` 为 false、`coverage_since` 有值。
+未配置 token 时 `gateway: disabled`，`coverage_since: null`、`degraded: false`、`open_segments: null`、`last_error: null`；
+此时不查数据库。`/healthz` 只检查进程存活，不查数据库，始终保留原有容器存活检查用途。
+
+部署由机主按 [v6 HANDOFF §6](redesign-v6/HANDOFF.md#6-部署提醒) 执行：
+
+1. 先备份，再在 Coolify 里 Redeploy；迁移服务会执行可重复运行的 PG `0010_voice.sql`。
+   D1 已有库要由机主执行 `005_voice.sql`，命令见 [README 的 npm scripts](../README.md#npm-scripts)；新库 `schema.sql` 已包含两张语音表。
+2. 开发者后台不用新增特权 intent。逐个检查需要留证的语音频道，包括私密频道的「查看频道」权限。
+3. 请机主在服务器里发一条公告：从今天起，已绑定成员进出语音频道的时间会被记录，保存 90 天，只有裁判、管理员和本人能看到。
+   指南、入户第 5 步和规则页也已告知，老成员仍需要这条公告。
+4. 部署后查看 `/status`，确认 `voice.coverage_since` 有值且 `voice.degraded` 为 false；自己进出一次语音，再用 `/voice` 和网页核对。
+   测试断线时检查未覆盖提示，不能仅凭容器健康或 Gateway ready 判断记录完整。
+
 ## 8. 验证
 
 1. Coolify → `bot` 的日志里依次看到：
    - `gateway session starts left today: 9xx/1000`
    - `gateway ready as <bot 名字>`
-   - `registered 9 slash commands in guild 1114391825336250432`
-2. 在服务器里输入 `/`，能看到上面 9 个命令（服务器命令是即时生效的）。
+   - `registered 10 slash commands in guild 1114391825336250432`
+2. 在服务器里输入 `/`，能看到上面 10 个命令（服务器命令是即时生效的）。
 3. `/link` → 点按钮 → 网页登录 Nanako → Discord 授权页 → 确认页点「确认绑定」→ 跳回
    `https://community.nanako.org/?linked=discord`，前端进入 `/welcome` 并显示绑定成功提示；开启私信时会收到欢迎指南。
 4. `/score`：只有自己看得到的分数卡片；`/top`：频道里所有人都看得到的榜，没有人被 @；未绑定的人也能用 `/help` 看指南。
 5. 想看 Gateway 状态：Coolify 里打开 `bot` 的终端，执行
-   `wget -qO- http://127.0.0.1:8788/status`，正常是 `{"gateway":"ready"}`（未连上时返回 503）。
+   `wget -qO- http://127.0.0.1:8788/status`，正常示例为
+   `{"gateway":"ready","voice":{"coverage_since":"2026-10-27 10:00:00","degraded":false,"open_segments":0,"last_error":null}}`。
+   未连上时返回 503；字段含义和语音健康判断见上面的 S3 一节。
    容器健康检查只看 `/healthz`（进程活着就是 200），Discord 断线不会让容器被重启。
 
 ## 9. bot 挂了会怎样

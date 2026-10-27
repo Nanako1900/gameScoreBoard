@@ -42,7 +42,8 @@ describe('parseRoute', () => {
       '/me',
       '/me/notify',
       '/review',
-      '/admin',
+      '/admin/ai',
+      '/admin/members',
       '/join',
       '/cases/new',
       '/cases/7/statement',
@@ -251,5 +252,18 @@ describe('welcome and guide pages', () => {
     expect(parseRoute(`/${name}`)).toEqual(route);
     expect(formatRoute(route)).toBe(`/${name}`);
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+});
+
+
+describe('voice administration routes', () => {
+  it.each(['/admin', '/admin/', '/admin/voice', '/admin/voice/'])('keeps %s as one full page alias', (path) => {
+    const route = { name: 'admin', tab: 'voice' } as const;
+    expect(parseRoute(path)).toEqual(route);
+    expect(formatRoute(route)).toBe('/admin/voice');
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+  it.each(['/admin/ai', '/admin/members', '/admin/voice/more', '/admin//'])('does not introduce later admin routes: %s', (path) => {
+    expect(parseRoute(path)).toEqual(NOT_FOUND);
   });
 });

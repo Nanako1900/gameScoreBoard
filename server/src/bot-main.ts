@@ -1,11 +1,10 @@
 // Node entry for the compose service `bot`: one Gateway connection (outbound
-// only, Guilds intent only) answering the slash commands in our one guild.
+// only, Guilds + GuildVoiceStates intents) answering the slash commands in our one guild.
 // Handlers read PostgreSQL directly through the same D1 adapter the API uses.
 // A separate process from the API on purpose: whatever happens here, the
 // website keeps working. See docs/DEPLOY-DISCORD.md.
 
-import http from 'node:http';
-import { Client, Events, GatewayIntentBits, Options, Routes } from 'discord.js';
+import { Events, Routes, type Client } from 'discord.js';
 import pg from 'pg';
 import { asD1, installTypeParsers, PgD1Database } from './db/d1';
 import {
@@ -19,6 +18,9 @@ import {
   type BotConfig,
 } from './discord/client';
 import { COMMANDS, handleCommand } from './discord/commands';
+import { createClient, readVoicePresence, wireVoice } from './discord/gateway';
+import { createHealthServer, type GatewayState } from './discord/health';
+import { createVoiceRecorder } from './voice/recorder';
 import type { BotContext } from './discord/types';
 import { handleVerdictButton, parseVerdictButton } from './discord/verdict';
 import { handleRetiredSessionButton } from './discord/sessions-off';
@@ -44,53 +46,6 @@ const IN_FLIGHT_GRACE_MS = 5_000;
 // slow enough that a bad token never piles up failed requests at Discord.
 const RETRY_LATER_MS = 5 * 60_000;
 
-type GatewayState = 'ready' | 'connecting' | 'disabled';
-
-function createHealthServer(gateway: () => GatewayState): http.Server {
-  return http.createServer((req, res) => {
-    const path = (req.url ?? '/').split('?')[0];
-    if (path === '/healthz') {
-      // Liveness only: a Discord outage must not get the container restarted.
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end('ok');
-    } else if (path === '/status') {
-      const state = gateway();
-      res
-        .writeHead(state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
-        .end(JSON.stringify({ gateway: state }));
-    } else {
-      res.writeHead(404).end();
-    }
-  });
-}
-
-function createClient(): Client {
-  return new Client({
-    // No GuildMembers, GuildPresences or MessageContent: slash commands bring
-    // the users they mention with them.
-    intents: [GatewayIntentBits.Guilds],
-    // Nothing is read from the caches, so keep them (close to) empty. Guilds,
-    // channels and roles stay cached: discord.js does not support limiting those.
-    makeCache: Options.cacheWithLimits({
-      ...Options.DefaultMakeCacheSettings,
-      MessageManager: 0,
-      ReactionManager: 0,
-      PresenceManager: 0,
-      VoiceStateManager: 0,
-      ThreadMemberManager: 0,
-      GuildEmojiManager: 0,
-      GuildStickerManager: 0,
-      GuildInviteManager: 0,
-      GuildBanManager: 0,
-      GuildScheduledEventManager: 0,
-      StageInstanceManager: 0,
-      AutoModerationRuleManager: 0,
-      GuildMemberManager: { maxSize: 0, keepOverLimit: (member) => member.id === member.client.user.id },
-      UserManager: { maxSize: 0, keepOverLimit: (user) => user.id === user.client.user.id },
-    }),
-    // Every reply sets this too (toReplyOptions); this covers anything that does not.
-    allowedMentions: { parse: [] },
-  });
-}
 
 async function registerCommands(client: Client<true>, config: BotConfig): Promise<void> {
   if (client.application.id !== config.appId) {
@@ -160,10 +115,17 @@ function main(): void {
   let stopping = false;
   const inFlight = new Set<Promise<void>>();
 
-  const health = createHealthServer(() => gateway);
-  health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
-
   const client = createClient();
+  const recorder = createVoiceRecorder({
+    pool,
+    // The getter is invoked when each queued job executes, not at event admission.
+    getPresent: () => readVoicePresence(client, config.guildId),
+    isReady: () => !stopping && gateway === 'ready' && client.isReady()
+      && client.guilds.cache.get(config.guildId)?.available === true,
+  });
+  const unwireVoice = wireVoice(client, recorder, config.guildId);
+  const health = createHealthServer(() => gateway, () => recorder.status());
+  health.listen(HEALTH_PORT, '0.0.0.0', () => console.log(`health on :${HEALTH_PORT}`));
   // Verdict posts (P5). Started once the client is logged in, since it sends
   // through the client's REST; events committed meanwhile wait in the outbox.
   let dispatcher: Dispatcher | null = null;
@@ -306,10 +268,11 @@ function main(): void {
     console.log(`${signal}: shutting down`);
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
     gateway = 'connecting';
+    unwireVoice();
     // The dispatcher first: it sends through the client's REST, which
     // destroy() takes the token from, so an event in flight would fail.
     await Promise.race([
-      Promise.allSettled([dispatcher?.stop()]),
+      Promise.allSettled([dispatcher?.stop(), recorder.stop()]),
       new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
     ]);
     await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));

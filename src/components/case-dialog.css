@@ -129,6 +129,21 @@
   margin-top: 0.45rem;
 }
 
+.cd-person {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cd-person__voice {
+  font-size: var(--text-xs);
+  color: var(--blue);
+  padding: 0.35rem 0.4rem;
+}
+
 .cd-chip {
   display: inline-flex;
   align-items: center;

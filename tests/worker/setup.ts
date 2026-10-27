@@ -6,6 +6,8 @@ import { beforeAll, beforeEach } from 'vitest';
 import schema from '../../schema.sql?raw';
 
 const TABLES = [
+  'voice_sessions',
+  'voice_coverage',
   'ai_verdicts',
   'session_players',
   'game_sessions',

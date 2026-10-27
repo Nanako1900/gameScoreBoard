@@ -39,6 +39,7 @@
 | `worker/ai/classify.ts` | classification client — reads the judge's text ONLY |
 | `worker/ai/report.ts` | weekly narrative; never does arithmetic |
 | `worker/report.ts` | weekly stats (all SQL) + idempotent generation |
+| `worker/voice.ts` | private voice history and day roster reads, shared by D1 and PostgreSQL |
 | `worker/errors.ts` | `ApiError` |
 | `worker/time.ts` | week math + sqlite-datetime helpers |
 
@@ -287,6 +288,63 @@ No per-message delivery tracking or onboarding completion field is added to the 
 - `POST /api/records/:id/revoke` → `{ record }`. Admin anytime, or the reporter
   within 15 min of creation. Reverses the applied delta.
 
+### Voice evidence (D1 and PostgreSQL)
+
+These read-only endpoints run on both backends, including during maintenance.
+Responses use `Cache-Control: private, no-store`. Both require a
+session (401 if signed out). Permission denial is 404, before date validation or target lookup.
+
+- `GET /api/voice?user=&from=&to=` → `VoiceHistoryResponse` from `shared/voiceApi.ts`:
+  `{ user, days, gaps, retention_days }`. `user` is required and is a Nanako user ID.
+  The caller can read their own history; judges and admins can read another existing user.
+  A nonexistent user is 404. A missing or NUL-containing user ID is 400; IDs are not trimmed.
+  `from` and `to` are board dates (`YYYY-MM-DD`), both included, with a default last 7 days.
+  An explicit `to` anchors the default start six dates earlier; omitted `to` means today.
+- `GET /api/voice/day?date=` → `VoiceDayResponse` from the same module:
+  `{ date, users, gaps, retention_days }`. Judges and admins only; everyone else gets 404.
+  `date` defaults to today in the board's fixed offset (`boardTzOffsetHours`). Each entry
+  contains `user`, `first_join`, `total_min`, `in_voice_now`, `has_open_segment`.
+  Sort by first join ascending, null last, then Nanako user ID for ties.
+
+Both validate real calendar dates and at most 31 inclusive board dates; malformed,
+reversed or longer ranges return 400. Range starts before the rolling 90-day cutoff
+(`now - 90 days`, compared in UTC) also return 400 with the first available board date.
+Even a partly expired first date is rejected: `firstAvailableVoiceDate` in
+`shared/voiceDays.ts` supplies the first complete queryable date, also used for the date picker minimum.
+`retention_days` comes from `VOICE_RETENTION_DAYS` in `shared/voice.ts`.
+
+The public `user` reference contains only `{ id, username, avatar_url }`; names are the
+Nanako display name or username. History `days` contain `{ date, first_join, total_min, segments }`.
+Each segment has only `{ channel_name, joined_at, left_at, start_reason, end_reason, continued }`:
+no Discord account IDs or channel IDs, and no database row IDs. All timestamp strings,
+including gap endpoints `{ from, to }`, are second-resolution UTC `YYYY-MM-DD HH:MM:SS`;
+`date` is a board calendar date. Web and bot convert times using the board's offset, never the device's zone.
+
+Daily totals clip each segment to the selected board day and fixed query time, sum seconds for each day, then floor once to minutes.
+A segment crossing midnight appears on both days; `continued` means it began before that day.
+`first_join` is the earliest actual join begun on that day, or null if there is no such join.
+A nonempty day with only continued segments displays 「接上一天」; an empty day displays 「首次 —」.
+Original segment timestamps stay intact. Every requested day is returned, including empty days.
+An open segment is capped at the fixed query time for arithmetic and displayed with 「尚未记录离开」 and
+「时长按查询时刻估算」. `bot_online` adds 「机器人上线时已在语音里」;
+`bot_offline` adds 「之后机器人离线，离开时间不确定」.
+
+`gaps` are the complement of the union of persisted `[started_at, last_seen_at]` coverage intervals,
+clipped to the requested range up to the fixed query time. Readers never extend coverage to the query time,
+even when the last heartbeat is recent. Readers take coverage snapshots before and after the segment read
+and use their interval-set intersection. New checkpoints cannot certify an earlier, incomplete segment read,
+and coverage withdrawn by a concurrent retention cleanup cannot survive alongside already-deleted segments.
+A day row's `in_voice_now` is true only for an open segment on the current
+board day whose query time is inside persisted coverage. `has_open_segment` alone only means
+「尚未记录离开」. History details never label an unclosed segment as online.
+
+Render gaps visibly, with second-resolution endpoints and 「这段时间机器人不在线，没有记录不代表没来。」.
+Keep the qualifier 「未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。」
+on the web and bot, including truncated bot output; a gap is not a claim that the Gateway was definitely offline.
+An empty result says 「没有保存的语音记录，不代表没来」: the requested period may predate binding,
+or records may have expired or be unavailable.
+Neither a gap nor an empty day proves absence.
+
 ### Retired scheduling data
 
 Scheduling and invitation API routes have been removed and return the existing 404 response.
@@ -373,6 +431,37 @@ reaches `decided` rather than stranding a player's score.
   conditional `UPDATE … WHERE status = …`, so concurrent sweeps cannot
   double-judge. Capped at 5 per web request, 50 per cron run.
 
+## Voice storage
+
+The recorder writes PostgreSQL; the Worker reads the same table shapes through D1 or the PG adapter.
+`server/migrations/0010_voice.sql`, `migrations/005_voice.sql` and fresh-install `schema.sql` agree:
+
+- `voice_sessions`: identity `id`; Nanako `user_id` referencing `users(id)` with `ON DELETE CASCADE`;
+  private `discord_user_id` and `channel_id`; channel-name snapshot `channel_name`; UTC text `joined_at`,
+  nullable `left_at`; `start_reason` (`joined`, `moved`, `bot_online`) and nullable `end_reason`
+  (`left`, `moved`, `bot_offline`, `unlinked`). `left_at` and `end_reason` are null together;
+  a closed segment cannot end before it began. Index `(user_id, joined_at)` supports history;
+  a partial unique index on `discord_user_id WHERE left_at IS NULL` permits only one open segment per Discord account.
+- `voice_coverage`: identity `id`, UTC text `started_at` and `last_seen_at` with
+  `last_seen_at >= started_at`, indexed by `last_seen_at`. It records persisted observation intervals,
+  not a promise that every member was already bound.
+
+Timestamps have no database defaults: all voice writes supply second-resolution UTC text.
+Storage-only Discord and channel identifiers never enter public DTOs, pages or command replies.
+Binding deletion or replacement closes the old account's open segment with `unlinked` in the same transaction;
+recording and binding changes serialize on the binding row, so a late write cannot revive the old binding.
+The recorder checks complete available-guild snapshots, resumes and minute heartbeats; database failure
+marks recording degraded and stops extending coverage until a successful reconciliation. Hourly cleanup enforces
+`VOICE_RETENTION_DAYS`: segments whose `joined_at` predates the cutoff are removed as whole rows, including open rows.
+If such a row overlaps the retained window, the same PostgreSQL transaction atomically withdraws coverage
+from the cutoff through the latest deleted end (capped at cleanup time; open rows end at that time for withdrawal).
+This is global coverage, so all users see the affected time as uncovered; no surviving records are removed for other users.
+Unqueryable coverage prefixes are also discarded; trustworthy suffixes after the withdrawn interval are retained.
+The old cursor is invalidated and a complete available snapshot is reconciled before coverage can resume from now.
+Any cleanup failure rolls back both deletion and withdrawal and degrades the recorder. A still-present bound member
+whose open row expired starts a new `bot_online` row at reconciliation time, without backdating evidence.
+See the owner-run deployment checklist in `docs/DEPLOY-DISCORD.md`.
+
 ## Frontend expectations
 
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
@@ -412,7 +501,9 @@ reaches `decided` rather than stranding a player's score.
 - The visitor welcome card's 「开始」 and both account-menu entries 「编辑身份」「通知与 Discord」
   link to `/welcome`; `OnboardingDialog` is retired. `/guide` is available without login.
   Both pages are full pages at every viewport size. `GuideContent`, `/help` and `dm.welcome`
-  share `shared/guide.ts`; S2 does not yet add voice recording or an information-board channel.
+  share `shared/guide.ts`. `GUIDE_TIPS` includes `voiceNotice()` from `shared/voice.ts`, so the guide,
+  `/help`, welcome DM and welcome step 5 show the same recording notice and retention period.
+  The rules also state that the bot records voice entry and exit times as reference. An information-board channel is deferred to S4.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
@@ -448,6 +539,7 @@ reaches `decided` rather than stranding a player's score.
   | `/` | the home page | the home page |
   | `/welcome` | full page: five-step onboarding and account settings | same full page |
   | `/guide` | full page: shared bot guide | same full page |
+  | `/admin`, `/admin/voice` | full page: private voice evidence for judges and admins | same full page |
   | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | the same page |
   | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the home page |
@@ -463,6 +555,16 @@ reaches `decided` rather than stranding a player's score.
   「约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。」 and a 「回首页」 button.
   Not found: `/players/<userId>` → 「找不到这位选手。」 with 「看信誉榜」; a case →
   「链接里的案件不存在了。」, any other failure → 「打不开链接里的案件，稍后再试。」.
+- `/admin` and `/admin/voice` share the 「管理」 shell and the sole 「语音记录」 tab.
+  Signed-out readers and users without judge/admin roles render NotFound without fetching evidence.
+  `/admin/ai` and `/admin/members` still render NotFound until S5.
+  With no `?user`, show a board-date picker (default today) and the day roster; choosing a person pushes
+  `/admin/voice?user=<encoded Nanako ID>`. With `?user`, show 7 / 14 / 31-day history ending today.
+  Invalid IDs and API 404 render NotFound. Scope or viewer changes immediately hide prior evidence;
+  a late response cannot replace the current view. Loading and ordinary errors retain the private page with retry.
+  Judges/admins have a 「管理」 menu link to `/admin`; admins keep the existing AI dialog as 「AI 设置」 until S5.
+  Each selected CaseDialog subject has 「看 TA 的语音记录」 linking to their history with
+  `target="_blank" rel="noopener"`, preserving the filing draft in its original tab.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
   routing never uses the hash: a `popstate` that only changed the hash is
   ignored. Every host must serve `index.html` for any other path (SPA

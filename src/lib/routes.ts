@@ -15,6 +15,7 @@ export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'welcome' }
   | { readonly name: 'guide' }
+  | { readonly name: 'admin'; readonly tab: 'voice' }
   | { readonly name: 'sessionGone' }
   | { readonly name: 'player'; readonly userId: string }
   | { readonly name: 'playerCase'; readonly userId: string; readonly caseId: number }
@@ -99,6 +100,7 @@ function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
   if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
   if (segments.length === 1 && head === 'guide') return { name: 'guide' };
+  if (head === 'admin' && (segments.length === 1 || (segments.length === 2 && first === 'voice'))) return { name: 'admin', tab: 'voice' };
   if (head === 'sessions') return { name: 'sessionGone' };
   if (segments.length === 2 && head === 'cases') return idRoute(first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
@@ -131,6 +133,10 @@ export function casePath(caseId: number): string {
   return `/cases/${caseId}`;
 }
 
+export function adminVoicePath(userId?: string): string {
+  return '/admin/voice' + (userId === undefined ? '' : `?${new URLSearchParams({ user: userId }).toString()}`);
+}
+
 export function boardPath(tab: BoardTab): string {
   return tab === 'list' ? '/board' : `/board/${tab}`;
 }
@@ -144,6 +150,8 @@ export function formatRoute(route: LinkableRoute): string {
       return WELCOME_PATH;
     case 'guide':
       return GUIDE_PATH;
+    case 'admin':
+      return adminVoicePath();
     case 'sessionGone':
       return '/sessions';
     case 'player':
@@ -164,6 +172,7 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
       return false;
     case 'welcome':
     case 'guide':
+    case 'admin':
     case 'notFound':
     case 'sessionGone':
     case 'case':

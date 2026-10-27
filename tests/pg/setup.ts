@@ -5,6 +5,8 @@ import { beforeEach } from 'vitest';
 import { pool } from './cloudflare-test';
 
 const TABLES = [
+  'voice_sessions',
+  'voice_coverage',
   'ai_verdicts',
   'session_players',
   'game_sessions',
