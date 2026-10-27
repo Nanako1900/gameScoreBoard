@@ -1,5 +1,7 @@
 # 前端重设计 v5 · 交接说明
 
+> **已被 v6 取代（2026-10-27）**：P0–P3 已合并（P3 为 [#35](https://github.com/Nanako1900/gameScoreBoard/pull/35)，已上线），P4、P5 作废。接手请读 [v6 交接说明](../redesign-v6/HANDOFF.md)。本文保留为历史记录。
+
 > 状态截至 2026-10-27。从这里起，**代码由接手的人实现**；方案、计划文档和结果检查仍由原来的流程负责。
 > 方案：[spec.md](spec.md)（§11 全部按推荐默认值拍板）。分析：[analysis.md](analysis.md)。
 
@@ -10,9 +12,9 @@
 | P0 | 地基、视觉基础、安全网 | [plan-p0/](plan-p0/README.md) | 6 个 PR，#19–#24 | **已合并** |
 | P1 | 地址化、登录回跳、判决前脱敏 | [plan-p1/](plan-p1/README.md) | #25、#26、#29–#32 已合并 | 代码与文档完成；真机验收待机主 |
 | P2 | ★ 邀请后端 | [plan-p2/](plan-p2/README.md) | 六步在 [#34](https://github.com/Nanako1900/gameScoreBoard/pull/34) 整期合并 | 代码完成；部署与真实私信验收见下文 |
-| P3 | 大厅、组织者控制台、信誉榜页 | [plan-p3.md](plan-p3.md) | 未开始 | 计划已写 |
-| P4 | 案件、我的、审理、管理 | [plan-p4.md](plan-p4.md) | 未开始 | 计划已写 |
-| P5 | 锦上添花（可选） | [plan-p5.md](plan-p5.md) | 未开始 | 计划已写 |
+| P3 | 大厅、组织者控制台、信誉榜页 | [plan-p3.md](plan-p3.md) | [#35](https://github.com/Nanako1900/gameScoreBoard/pull/35) 整期合并 | **已合并并上线** |
+| P4 | 案件、我的、审理、管理 | [plan-p4.md](plan-p4.md) | — | **作废**（见 v6） |
+| P5 | 锦上添花（可选） | [plan-p5.md](plan-p5.md) | — | **作废**（见 v6） |
 
 ## 2. 已经在 main 上的
 

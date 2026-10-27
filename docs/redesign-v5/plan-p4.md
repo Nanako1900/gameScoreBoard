@@ -1,5 +1,7 @@
 # P4 实施计划 · 案件、我的、审理（一个 PR）
 
+> **已作废（2026-10-27）**：方向改为 v6「Discord 为主，网页做减法」，本计划不再实施。仍有价值的几项列在 [v6 HANDOFF 后续待办](../redesign-v6/HANDOFF.md#5-后续待办不在-s1s5-里需要机主拍板后再做)，要做时重新写计划。
+
 > 前端重设计 v5 第 4 期。方案：`docs/redesign-v5/spec.md`（§11 全部按推荐默认值拍板，P4 特别用到第 4、5、6、14、15 条）。
 > **P4 = 一个分支、一个 PR、七步。** 文件名、组件名、props、路由、常量名以本文件为准；P3 引入的名字（`TodoInbox`、`TodoCard`、`BottomTabs`、`AccountMenu`、`useTodoSources`、`useLobbySessions` 等）沿用 P3 计划（`plan-p3.md`）的写法。本文件没写到的细节回 spec 查，两者冲突时以 spec 为准（第 7 节列的偏离除外）。
 > 行号只作提示，**定位一律以锚点文字为准**（和 P0–P3 一样）。
