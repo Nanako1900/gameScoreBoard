@@ -106,6 +106,10 @@ const OUTLINE_REMOVED = /(?:^|[;\s])outline\s*:\s*(?:none|0)\s*(?:!important\s*)
 const BOX_SHADOW = /(?:^|[;\s])box-shadow\s*:/;
 /** `color` / `-webkit-text-fill-color` set to the fill red (4.2:1 on --panel-2 — too dim for text). */
 const RED_TEXT = /(?:^|[;\s])(?:-webkit-text-fill-)?color\s*:\s*(?:var\(--red\)|var\(--danger\)|#e5484d)/i;
+/** Selectors naming a form control (`.sf__input`, `.sd__textarea`, `.cd__select`, …). */
+const FORM_CONTROL = /(?:input|textarea|select)\b/;
+/** A border drawn with the low-contrast structure greys (≈1.2–1.5:1). */
+const DIM_BORDER = /(?:^|[;\s])border(?:-color)?\s*:[^;]*var\(--border(?:-strong)?\)/;
 
 describe('css scanner', () => {
   it('sees every stylesheet and its rules', () => {
@@ -156,6 +160,13 @@ describe('src/**/*.css', () => {
 
   it('writes red text with --danger-text, never the fill red', () => {
     expect(STYLE_RULES.filter((rule) => RED_TEXT.test(rule.body)).map(where)).toEqual([]);
+  });
+
+  it('edges form controls with --border-input (3:1), not the structure greys', () => {
+    const offenders = STYLE_RULES.filter(
+      (rule) => FORM_CONTROL.test(rule.prelude) && DIM_BORDER.test(rule.body),
+    );
+    expect(offenders.map(where)).toEqual([]);
   });
 });
 

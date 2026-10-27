@@ -24,14 +24,14 @@
   text-align: left;
   padding: 1rem 0.9rem;
   border-radius: var(--r-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   background: var(--bg-elevated);
   transition: border-color var(--dur-fast), background var(--dur-fast),
     transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast);
 }
 
 .ob-card:hover {
-  border-color: var(--border-strong);
+  border-color: var(--muted);
   transform: translateY(-2px);
 }
 
@@ -42,7 +42,7 @@
 }
 
 .ob-card--locked:hover {
-  border-color: var(--border);
+  border-color: var(--border-input);
   transform: none;
 }
 
@@ -120,14 +120,14 @@
   text-align: left;
   padding: 0.75rem 0.9rem;
   border-radius: var(--r-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   background: var(--bg-elevated);
   transition: border-color var(--dur-fast), background var(--dur-fast),
     box-shadow var(--dur-fast);
 }
 
 .ob__name-opt:hover {
-  border-color: var(--border-strong);
+  border-color: var(--muted);
 }
 
 .ob__name-opt--active {
@@ -154,7 +154,7 @@
   margin-top: 0.7rem;
   padding: 0.65rem 0.8rem;
   border-radius: var(--r-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: var(--text-base);

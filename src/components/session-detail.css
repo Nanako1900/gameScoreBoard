@@ -126,7 +126,7 @@
   padding: 0.08em 0.55em;
   border-radius: var(--r-pill);
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--muted);
   background: var(--panel-2);
 }
 
