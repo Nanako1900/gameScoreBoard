@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CaseDialog } from '../../src/components/CaseDialog';
 import { DraftNote } from '../../src/components/DraftNote';
 import { StatementDialog } from '../../src/components/StatementDialog';
 import { clearAllDrafts, draftKey, readDraft, writeDraft } from '../../src/lib/drafts';
 import { isBlankText, validateStatementDraft } from '../../src/lib/draftShapes';
 import { useDraft } from '../../src/lib/useDraft';
-import type { Config, RecordItem } from '../../src/types';
+import type { Config, PublicUser, RecordItem } from '../../src/types';
 
 // Six local drafts (spec §5 #4): what is typed survives a closed dialog, a
 // reload and the Discord round trip, and is gone after a successful submit or
@@ -260,5 +261,74 @@ describe('StatementDialog — draft, confirm, verdict', () => {
 
     await user.click(screen.getByRole('button', { name: '觉得不公平？可以申诉' }));
     expect(await screen.findByRole('dialog', { name: '申诉这一起' })).toBeInTheDocument();
+  });
+});
+
+const JUDGE: PublicUser = { id: 'j', username: '裁判', avatar_url: null, is_participant: true, is_judge: true, score: 100, created_at: 'x' };
+const PEOPLE: PublicUser[] = [
+  JUDGE,
+  { ...JUDGE, id: 'a', username: '甲', is_judge: false, score: 90 },
+  { ...JUDGE, id: 'b', username: '乙', is_judge: false, score: 80 },
+];
+const CLAIM = '说好八点五排，等到八点四十还没上线，最后四缺一散了。';
+
+describe('CaseDialog — draft', () => {
+  function renderCase(onClose = vi.fn(), onCreated = vi.fn()) {
+    render(<CaseDialog open onClose={onClose} participants={PEOPLE} selfId="j" config={CONFIG} onCreated={onCreated} />);
+    return { onClose, onCreated };
+  }
+
+  it('restores only people who can still be picked', () => {
+    writeDraft('case', undefined, { picked: ['a', 'gone'], claim: CLAIM, extras: { gone: '早走了' } });
+    renderCase();
+    expect(screen.getByRole('checkbox', { name: /甲/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /乙/ })).not.toBeChecked();
+    expect(screen.getByRole('textbox', { name: /发生了什么/ })).toHaveValue(CLAIM);
+    expect(screen.getByText('草稿已存在这台设备')).toBeInTheDocument();
+  });
+
+  it('asks before leaving, and leaving submits nothing', async () => {
+    const calls = mockFetch({});
+    writeDraft('case', undefined, { picked: ['a'], claim: CLAIM, extras: {} });
+    const user = userEvent.setup();
+    const { onClose } = renderCase();
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    const leave = screen.getByRole('group', { name: '这笔还没提交，写的内容会留在这台设备上。' });
+    await user.click(within(leave).getByRole('button', { name: '先离开' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([]);
+    expect(stored(localStorage, 'edg.draft.case')).toMatchObject({ picked: ['a'] });
+  });
+
+  it('keeps only the people who were not filed after a partial success', async () => {
+    mockFetch({
+      'POST /api/records': () =>
+        json(200, {
+          records: [decided({ id: 30, subject: { id: 'a', username: '甲', avatar_url: null } })],
+          failed: [{ subject_id: 'b', error: '今天已经记过了' }],
+        }),
+    });
+    writeDraft('case', undefined, { picked: ['a', 'b'], claim: CLAIM, extras: { a: '甲的补充', b: '乙的补充' } });
+    const user = userEvent.setup();
+    renderCase();
+
+    await user.click(screen.getByRole('button', { name: '记下（2 人）' }));
+    expect(await screen.findByText(/其中 1 人没记上/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(stored(localStorage, 'edg.draft.case')).toEqual({ picked: ['b'], claim: CLAIM, extras: { b: '乙的补充' } }),
+    );
+  });
+
+  it('forgets the draft once every case is filed', async () => {
+    mockFetch({ 'POST /api/records': () => json(200, { records: [decided({ id: 30 })], failed: [] }) });
+    writeDraft('case', undefined, { picked: ['a'], claim: CLAIM, extras: {} });
+    const user = userEvent.setup();
+    const { onClose, onCreated } = renderCase();
+
+    await user.click(screen.getByRole('button', { name: '记下' }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('edg.draft.case')).toBeNull();
   });
 });
