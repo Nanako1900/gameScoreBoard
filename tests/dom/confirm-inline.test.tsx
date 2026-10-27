@@ -7,7 +7,7 @@ import { useInlineConfirm } from '../../src/lib/useInlineConfirm';
 
 // Generic confirm labels are explicit about their action.
 // New confirms never use the bare 「取消」/「确认」: those names are locked to
-// DiscordLinkCard / OnboardingDialog / AdminScoreForm (spec §6.5).
+// DiscordLinkCard / IdentityForm / AdminScoreForm (spec §6.5).
 const QUESTION = '删除这条？';
 const CONFIRM = '确认删除';
 const CANCEL = '保留';

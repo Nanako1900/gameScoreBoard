@@ -67,7 +67,7 @@ interface Stub {
 }
 
 /** The app's reads — a visitor until signIn() — and an RSVP that answers like the server. */
-function stubApi(signedInUser: User = ME): Stub {
+function stubApi(signedInUser: User = ME, bound = true): Stub {
   const calls: Call[] = [];
   let me: User | null = null;
   const routes: Record<string, () => Response> = {
@@ -84,7 +84,9 @@ function stubApi(signedInUser: User = ME): Stub {
     'GET /api/leaderboard': () => json(200, { participants: [] }),
     'GET /api/records?limit=50': () => json(200, { records: [] }),
     'GET /api/me': () => json(200, { user: me, pending: { statements: 0, appeals: 0 } }),
-    'GET /api/me/discord': () => json(404, { error: 'unsupported' }),
+    'GET /api/me/discord': () => json(200, { link: bound ? { discord_username: 'own', linked_at: '', notify_dm: true, dm_ok: true } : null }),
+    'POST /api/me/display-name': () => json(200, { ok: true }),
+    'POST /api/me/roles': () => { me = { ...signedInUser, is_participant: true }; return json(200, { user: me }); },
     'GET /api/report/latest': () => json(200, { report: null }),
     'GET /api/records/7': () => json(200, { record: CASE }),
     'GET /api/users/q': () =>
@@ -115,6 +117,13 @@ function stubApi(signedInUser: User = ME): Stub {
 }
 
 const writes = (calls: readonly Call[]): Call[] => calls.filter((c) => c.method !== 'GET');
+
+async function finishWelcome(): Promise<void> {
+  const user = userEvent.setup();
+  const heading = screen.getByRole('button', { name: /机器人怎么用/ });
+  if (heading.getAttribute('aria-expanded') !== 'true') await user.click(heading);
+  await user.click(screen.getByRole('button', { name: '完成，去首页' }));
+}
 
 const stored = (): unknown => {
   const raw = window.sessionStorage.getItem(LOGIN_RETURN_KEY);
@@ -160,16 +169,16 @@ describe('LoginLink — every way into the login page', () => {
     expect(stored()).toEqual({ v: 1, path: '/players/q', savedAt: expect.any(Number) });
   });
 
-  it('the lobby’s 用 Nanako 账号登录 forgets an older one (nothing to come back to)', async () => {
+  it('the lobby’s 开始 link enters welcome without prematurely consuming a saved return', async () => {
     stubApi();
     const user = userEvent.setup();
     window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/players/q', Date.now()));
     render(<App />);
-    const login = await screen.findByRole('link', { name: '用 Nanako 账号登录' });
-    expect(login).toHaveAttribute('href', '/auth/login');
+    const login = await screen.findByRole('link', { name: '开始' });
+    expect(login).toHaveAttribute('href', '/welcome');
     await user.click(login);
-    expect(stored()).toBeNull();
-    expect(window.location.pathname).toBe('/');
+    expect(stored()).not.toBeNull();
+    expect(window.location.pathname).toBe('/welcome');
   });
 });
 
@@ -191,14 +200,14 @@ describe('登录回跳 — back from the login page', () => {
     expect(writes(stub.calls)).toEqual([]);
   });
 
-  it('the first-run dialog goes first, then the saved address', async () => {
+  it('the welcome page goes first, then the saved address', async () => {
     const stub = stubApi();
     backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?onboarding=1');
-    await screen.findByRole('radiogroup', { name: '选择身份' });
+    await screen.findByRole('heading', { name: '入户' });
     await settle();
-    expect(window.location.pathname).toBe('/');
+    expect(window.location.pathname).toBe('/welcome');
     expect(stored()).not.toBeNull();
-    await userEvent.setup().keyboard('{Escape}');
+    await finishWelcome();
     await screen.findByRole('heading', { name: '当事人' });
     expect(window.location.pathname).toBe('/players/q');
     expect(writes(stub.calls)).toEqual([]);
@@ -219,12 +228,12 @@ describe('登录回跳 — back from the login page', () => {
     expect(writes(stub.calls)).toEqual([]);
   });
 
-  it('a session retirement toast waits for the first-run dialog', async () => {
+  it('a session retirement toast waits for the welcome page', async () => {
     const stub = stubApi();
     backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?session=3&onboarding=1');
-    await screen.findByRole('radiogroup', { name: '选择身份' });
+    await screen.findByRole('heading', { name: '入户' });
     expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
-    await userEvent.setup().keyboard('{Escape}');
+    await finishWelcome();
     expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(stored()).toBeNull();
@@ -233,14 +242,133 @@ describe('登录回跳 — back from the login page', () => {
   it('binding return still asks an unfinished identity before announcing retirement', async () => {
     const stub = stubApi({ ...ME, is_participant: false });
     backFromLogin(stub, serializeLoginReturn('/players/q', Date.now()), '/?session=3&linked=discord');
-    await screen.findByRole('radiogroup', { name: '选择身份' });
+    await screen.findByRole('heading', { name: '入户' });
     expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
     expect(window.location.search).toBe('');
-    await userEvent.setup().keyboard('{Escape}');
+    await userEvent.setup().click(await screen.findByRole('button', { name: '确认' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /机器人怎么用/ })).toHaveAttribute('aria-expanded', 'true'));
+    await finishWelcome();
     expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
     expect(stored()).toBeNull();
+    expect(writes(stub.calls)).toEqual([
+      { method: 'POST', path: '/api/me/display-name' }, { method: 'POST', path: '/api/me/roles' },
+    ]);
+  });
+
+  it('continues the case once after both welcome flags and clears all consumed parameters', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/players/q?old=1', Date.now()),
+      '/?case=7&session=3&onboarding=1&linked=discord&utm=dc');
+    await screen.findByRole('heading', { name: '入户' });
+    expect(window.location.pathname).toBe('/welcome');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(screen.getByText('Discord 绑定成功')).toBeInTheDocument();
+    expect(stored()).not.toBeNull();
+    await finishWelcome();
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe('/players/q/cases/7');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(stored()).toBeNull();
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
+    await settle();
+    expect(stub.calls.filter((call) => call.path === '/api/records/7')).toHaveLength(1);
     expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('does not reopen welcome after login from its own login link', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/welcome', Date.now()), '/?onboarding=1');
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await waitFor(() => expect(stored()).toBeNull());
+    await settle();
+    expect(window.location.pathname).toBe('/');
+    expect(screen.queryByRole('heading', { name: '入户' })).not.toBeInTheDocument();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it.each(['onboarding=1', 'linked=discord'])('continues an existing non-home page after %s', async (flag) => {
+    const stub = stubApi();
+    backFromLogin(stub, null, `/players/q?${flag}&utm=dc`);
+    await screen.findByRole('heading', { name: '入户' });
+    expect(window.location.pathname).toBe('/welcome');
+    expect(window.location.search).toBe('?utm=dc');
+    await finishWelcome();
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe('/players/q');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('keeps the login return ahead of the original non-home page after welcome', async () => {
+    const stub = stubApi();
+    backFromLogin(stub, serializeLoginReturn('/guide', Date.now()), '/players/q?onboarding=1');
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await screen.findByRole('heading', { name: '机器人指南' });
+    expect(window.location.pathname).toBe('/guide');
+    expect(stored()).toBeNull();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it.each([
+    ['/?case=7&onboarding=1&utm=dc', '/players/q/cases/7'],
+    ['/?session=3&onboarding=1&utm=dc', '/'],
+    ['/players/q?onboarding=1&utm=dc', '/players/q'],
+  ])('keeps the original destination across the full Discord OAuth navigation: %s', async (url, landing) => {
+    const firstStub = stubApi(ME, false);
+    const first = backFromLogin(firstStub, null, url);
+    await userEvent.setup().click(await screen.findByRole('link', { name: '绑定 Discord' }));
+    expect(writes(firstStub.calls)).toEqual([]);
+    first.unmount();
+    // OAuth loads a new document and only carries ?linked=discord back from the API.
+    const secondStub = stubApi();
+    backFromLogin(secondStub, null, '/?linked=discord');
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await waitFor(() => expect(window.location.pathname).toBe(landing));
+    if (landing !== '/') {
+      await screen.findByRole('heading', { name: '当事人' });
+      expect(window.location.search).toBe('?utm=dc');
+    } else {
+      expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
+    }
+    expect(writes(secondStub.calls)).toEqual([]);
+  });
+
+  it('retains an entry destination through a welcome reload and forgets it on completion', async () => {
+    const first = backFromLogin(stubApi(), null, '/?onboarding=1&case=7&utm=dc');
+    await screen.findByRole('button', { name: '完成，去首页' });
+    first.unmount();
+    backFromLogin(stubApi(), null, '/welcome?utm=dc');
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe('/players/q/cases/7');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(sessionStorage.getItem('edg.welcome.return')).toBeNull();
+  });
+
+  it.each(['/missing', '/auth/login'])('does not resume an unknown or API-owned entry pathname %s', async (path) => {
+    backFromLogin(stubApi(), null, `${path}?onboarding=1`);
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await settle();
+    expect(window.location.pathname).toBe('/');
+  });
+
+  it.each([
+    ['/?case=7&linked=discord', '/players/q/cases/7'],
+    ['/players/q?linked=discord', '/players/q'],
+  ])('keeps an explicit new destination ahead of an older pending welcome return: %s', async (url, landing) => {
+    sessionStorage.setItem('edg.welcome.return', JSON.stringify({ v: 1, savedAt: Date.now(), path: '/?session=3' }));
+    backFromLogin(stubApi(), null, url);
+    await screen.findByRole('heading', { name: '入户' });
+    await finishWelcome();
+    await screen.findByRole('heading', { name: '当事人' });
+    expect(window.location.pathname).toBe(landing);
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
   });
 
   it('a stale or tampered value goes nowhere and is removed', async () => {

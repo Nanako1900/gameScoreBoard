@@ -1,0 +1,12 @@
+.welcome-page { display: grid; gap: 1.25rem; }
+.welcome-page > h2 { font-size: var(--text-h1); }
+.welcome-page__steps { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.welcome-step { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); }
+.welcome-step__heading { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem;
+  min-height: var(--tap-min); padding: 1rem; text-align: left; font-size: var(--fs-md); }
+.welcome-step__state { font-size: var(--fs-sm); color: var(--muted); }
+.welcome-step__body { display: grid; gap: 0.9rem; padding: 0 1rem 1rem; }
+.welcome-step__body[hidden] { display: none; }
+.welcome-step--disabled { color: var(--muted); }
+.welcome-step__heading:disabled { cursor: default; }
+.welcome-page__error { color: var(--danger-text); }

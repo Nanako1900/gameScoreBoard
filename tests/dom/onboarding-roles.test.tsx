@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OnboardingDialog } from '../../src/components/OnboardingDialog';
+import { IdentityForm } from '../../src/components/IdentityForm';
 import type { User } from '../../src/types';
 
 const BASE: User = {
@@ -21,9 +21,7 @@ afterEach(() => {
 });
 
 function radios(me: User) {
-  // The Discord card asks the backend; a 404 keeps it out of the way.
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => '{}' })));
-  render(<OnboardingDialog open onClose={() => {}} me={me} onSaved={() => {}} />);
+  render(<IdentityForm me={me} onSaved={() => {}} />);
   const group = within(screen.getByRole('radiogroup', { name: '选择身份' }));
   return {
     player: group.getByRole('radio', { name: /上榜选手/ }),
@@ -32,7 +30,7 @@ function radios(me: User) {
   };
 }
 
-describe('OnboardingDialog roles', () => {
+describe('IdentityForm roles', () => {
   it('locks the judge choices for someone an admin has not appointed', () => {
     const { player, judge, both } = radios(BASE);
     expect(player).toBeEnabled();
@@ -51,7 +49,7 @@ describe('OnboardingDialog roles', () => {
   });
 });
 
-describe('OnboardingDialog saves', () => {
+describe('IdentityForm saves', () => {
   function stubSave() {
     const posts: Array<{ path: string; body: unknown }> = [];
     vi.stubGlobal(
@@ -71,18 +69,47 @@ describe('OnboardingDialog saves', () => {
   it('a player who is not a judge saves as a player only', async () => {
     const posts = stubSave();
     const user = userEvent.setup();
-    render(<OnboardingDialog open onClose={() => {}} me={BASE} onSaved={() => {}} />);
+    render(<IdentityForm me={BASE} onSaved={() => {}} />);
     await user.click(screen.getByRole('button', { name: '确认' }));
     await waitFor(() => expect(posts.find((p) => p.path === '/api/me/roles')).toBeDefined());
     expect(posts.find((p) => p.path === '/api/me/roles')?.body).toEqual({ is_participant: true, is_judge: false });
+    expect(posts.map((p) => p.path)).toEqual(['/api/me/display-name', '/api/me/roles']);
   });
 
   it('warns a judge who is about to step down', async () => {
     stubSave();
     const user = userEvent.setup();
-    render(<OnboardingDialog open onClose={() => {}} me={{ ...BASE, is_judge: true, is_participant: true }} onSaved={() => {}} />);
+    render(<IdentityForm me={{ ...BASE, is_judge: true, is_participant: true }} onSaved={() => {}} />);
     expect(screen.queryByText(/需要管理员重新授予/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: /上榜选手/ }));
     expect(screen.getByText(/需要管理员重新授予/)).toBeInTheDocument();
+  });
+});
+
+
+describe('IdentityForm names and failures', () => {
+  it('requires a nonempty custom name and enforces the existing input length', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    render(<IdentityForm me={BASE} onSaved={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('radio', { name: /自定义/ }));
+    expect(screen.getByRole('textbox', { name: '自定义显示名字' })).toHaveAttribute('maxlength', '24');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入自定义名字，或选择使用 Nanako 名字');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('keeps edits and allows retry when the name request fails', async () => {
+    const onSaved = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, text: async () => JSON.stringify({ error: '系统维护中' }) })));
+    const { container } = render(<IdentityForm me={BASE} onSaved={onSaved} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('radio', { name: /自定义/ }));
+    await user.type(screen.getByRole('textbox', { name: '自定义显示名字' }), '新名字');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('系统维护中');
+    expect(screen.getByRole('textbox', { name: '自定义显示名字' })).toHaveValue('新名字');
+    expect(screen.getByRole('button', { name: '确认' })).toBeEnabled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(container.querySelector('style, [style]')).toBeNull();
   });
 });

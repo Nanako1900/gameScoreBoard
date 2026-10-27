@@ -6,6 +6,7 @@ import {
   unlinkDiscord,
   type DiscordLinkInfo,
 } from '../api';
+import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 import './discord-link.css';
 
 type CardState =
@@ -34,11 +35,19 @@ interface DiscordLinkCardProps {
    * its unsaved choice. It must not block the navigation, nor fetch anything.
    */
   onBeforeBind?: () => void;
+  /** Omit for the existing self-contained card; supplied by the welcome page. */
+  linkState?: DiscordLinkRead;
+  onChanged?: (value: DiscordLinkValue) => void;
 }
 
-export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Element | null {
+export function DiscordLinkCard({ onBeforeBind, linkState, onChanged }: DiscordLinkCardProps): JSX.Element | null {
   const titleId = useId();
-  const [state, setState] = useState<CardState>({ status: 'loading' });
+  const [localState, setState] = useState<CardState>({ status: 'loading' });
+  const controlled = linkState !== undefined;
+  const state: CardState = linkState === undefined ? localState : linkState.loading ? { status: 'loading' }
+    : linkState.value === undefined ? { status: 'unsupported' }
+    : linkState.value === 'error' ? { status: 'failed', message: linkState.error ?? '读取 Discord 绑定失败' }
+    : linkState.value === null ? { status: 'unbound' } : { status: 'bound', link: linkState.value };
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,10 +60,12 @@ export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Ele
   const bindRef = useRef<HTMLAnchorElement>(null);
 
   useEffect(() => {
+    if (controlled) return;
     let alive = true;
     getDiscordLink()
       .then((link) => {
         if (!alive) return;
+        onChanged?.(link);
         if (link === undefined) setState({ status: 'unsupported' });
         else if (link === null) setState({ status: 'unbound' });
         else setState({ status: 'bound', link });
@@ -67,7 +78,7 @@ export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Ele
     return () => {
       alive = false;
     };
-  }, []);
+  }, [controlled]);
 
   useEffect(() => {
     const target = focusNext.current;
@@ -96,6 +107,7 @@ export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Ele
       await unlinkDiscord();
       focusNext.current = 'bind';
       setState({ status: 'unbound' });
+      onChanged?.(null);
     } catch (err) {
       focusNext.current = 'unlink';
       setError(errorMessage(err, '解绑失败，请稍后重试'));
@@ -127,7 +139,7 @@ export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Ele
             绑定后可以在 Discord 里查分、看榜、看自己的待办。
             {/* The link is a full navigation: nothing unsaved reaches the server.
                 A host may keep its choice locally through onBeforeBind (the
-                first-run dialog does), but it is still unconfirmed on return.
+                welcome identity form does), but it is still unconfirmed on return.
                 The sentence is locked copy (spec §6.5, discord-link). */}
             <span className="dlink__hint">会跳转到 Discord 授权页，上面还没「确认」的修改不会保存。</span>
           </p>

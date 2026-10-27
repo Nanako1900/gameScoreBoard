@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { User } from '../types';
 import { Avatar } from './Avatar';
 import { Link } from './Link';
+import { WELCOME_PATH } from '../lib/routes';
 import './header.css';
 
 interface AccountMenuProps {
@@ -32,8 +33,8 @@ function MenuActions({ props, close }: { props: AccountMenuProps; close: () => v
   const run = (action: () => void): void => { close(); action(); };
   return <>
     <Link className="hdr__dropdown-item" to={props.myPath} onClick={close}>我的</Link>
-    <button type="button" className="hdr__dropdown-item" onClick={() => run(props.onOpenOnboarding)}>编辑身份</button>
-    <button type="button" className="hdr__dropdown-item" onClick={() => run(props.onOpenOnboarding)}>通知与 Discord</button>
+    <Link className="hdr__dropdown-item" to={WELCOME_PATH} onClick={close}>编辑身份</Link>
+    <Link className="hdr__dropdown-item" to={WELCOME_PATH} onClick={close}>通知与 Discord</Link>
     {(props.me.is_judge || props.me.is_admin) && props.onRecord && <button type="button" className="hdr__dropdown-item"
       onClick={() => run(props.onRecord!)}>记一笔</button>}
     {props.me.is_admin && props.onOpenAdmin && <button type="button" className="hdr__dropdown-item"

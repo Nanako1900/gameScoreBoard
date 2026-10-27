@@ -82,7 +82,7 @@ export interface CoreDataApi {
   state: CoreState;
   /** No keys = ALL_CORE_KEYS. With data on screen a failure only sets `stale`. */
   refresh: (keys?: readonly CoreKey[]) => Promise<void>;
-  /** Optimistic local update after OnboardingDialog saves. */
+  /** Optimistic local update after IdentityForm saves. */
   setMe: (user: User) => void;
 }
 

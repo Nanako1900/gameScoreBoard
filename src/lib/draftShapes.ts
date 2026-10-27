@@ -9,7 +9,7 @@ import { APPEAL_MAX, MAX_NARRATIVE_LEN } from '@shared/scoring';
 
 /** CaseDialog's per-person note (单独补一句). */
 export const CASE_EXTRA_MAX = 300;
-/** OnboardingDialog's custom display name. */
+/** IdentityForm's custom display name. */
 export const DISPLAY_NAME_MAX = 24;
 
 export interface CaseDraftValue {

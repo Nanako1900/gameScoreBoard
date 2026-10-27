@@ -288,7 +288,7 @@ describe('WelcomeCard', () => {
     expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
     expect(screen.getByText('说了来就来；来不了，提前说一声。')).toBeInTheDocument();
     expect(screen.getByText(/放鸽子会被记一笔，每周一 0 点自动回血/)).toHaveTextContent('+5');
-    expect(screen.getByRole('link', { name: '用 Nanako 账号登录' })).toHaveAttribute('href', '/auth/login');
+    expect(screen.getByRole('link', { name: '开始' })).toHaveAttribute('href', '/welcome');
     expect(screen.queryByRole('heading', { name: /约局/ })).not.toBeInTheDocument();
   });
 

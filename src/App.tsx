@@ -3,9 +3,10 @@ import type { RecordItem, User } from './types';
 import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
 import { bootRouter, navigate, useLocation } from './lib/router';
-import { playerPath, routeCoversHome } from './lib/routes';
+import { HOME_PATH, WELCOME_PATH, parseRoute, playerPath, routeCoversHome } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
+import { withoutParams } from './lib/deepLink';
 import type { PinnedCase } from './lib/useCaseLookup';
 import { computeCounts, computeTrends } from './lib/feedStats';
 import { DISCORD_INVITE_URL } from './lib/env';
@@ -17,6 +18,8 @@ import { useResetWatch } from './lib/useResetWatch';
 import { useTabTitle } from './lib/useTabTitle';
 import { clearAllDrafts } from './lib/drafts';
 import { clearLoginReturn } from './lib/loginReturn';
+import { hasLegacyTarget } from './lib/loginReturnShape';
+import { clearWelcomeReturn, readWelcomeReturn, saveWelcomeReturn } from './lib/welcomeReturn';
 import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
@@ -25,7 +28,6 @@ import { WelcomeCard } from './components/WelcomeCard';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
 import { MyScoreLine } from './components/MyScoreLine';
-import { OnboardingDialog } from './components/OnboardingDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
@@ -63,7 +65,26 @@ function AppMain(): JSX.Element {
   const { state, refresh, setMe } = useCoreData();
   const toast = useToast();
   const [caseOpen, setCaseOpen] = useState(false);
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [welcomeEntry] = useState(() => {
+    const { pathname, search } = window.location;
+    const params = new URLSearchParams(search);
+    // OAuth is a full navigation; retain only the ordinary destination in this tab.
+    const explicitTarget = hasLegacyTarget(pathname, search)
+      || !['home', 'welcome', 'notFound'].includes(location.route.name);
+    const resumed = !explicitTarget && (params.get('linked') === 'discord' || location.route.name === 'welcome')
+      ? readWelcomeReturn() : null;
+    const entryPath = resumed ?? pathname + search;
+    const queryAt = entryPath.indexOf('?');
+    const entryLocation = { pathname: queryAt < 0 ? entryPath : entryPath.slice(0, queryAt),
+      search: queryAt < 0 ? '' : entryPath.slice(queryAt) };
+    const route = parseRoute(entryLocation.pathname);
+    const rest = withoutParams(entryLocation.search, ['onboarding', 'linked', 'case', 'session']);
+    return { requested: params.get('onboarding') === '1' || params.get('linked') === 'discord' || resumed !== null,
+      rest, entryPath, entryLocation,
+      returnTo: !['home', 'welcome', 'notFound'].includes(route.name) ? entryLocation.pathname + rest : undefined };
+  });
+  const [welcomePending, setWelcomePending] = useState(welcomeEntry.requested);
+  const welcomeRedirected = useRef(false);
   const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [todoRefreshKey, setTodoRefreshKey] = useState(0);
@@ -74,53 +95,34 @@ function AppMain(): JSX.Element {
   const [discordLinked, setDiscordLinked] = useState(
     () => new URLSearchParams(window.location.search).get('linked') === 'discord',
   );
-  // Set by the effects that open the first-run dialog (state they set is not
-  // visible to an effect in the same commit): the link waits for it to close.
-  const onboardingAsked = useRef(false);
   // The case an old ?case= link or /cases/:id resolved: its page shows it without a second GET.
   const [pinned, setPinned] = useState<PinnedCase | null>(null);
   // Bumped when a statement is judged: the player page behind the dialog reloads its cases.
   const [playerRefreshKey, setPlayerRefreshKey] = useState(0);
 
-  // Handle ?onboarding=1 once data is ready and the user is logged in.
   const ready = state.status === 'ready' ? state.data : null;
   useEffect(() => {
-    if (!ready?.me) {
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('onboarding') === '1') {
-      onboardingAsked.current = true;
-      setOnboardingOpen(true);
-      params.delete('onboarding');
-      const qs = params.toString();
-      navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, { replace: true });
-    }
-  }, [ready?.me]);
+    if (ready === null || !welcomeEntry.requested || welcomeRedirected.current) return;
+    welcomeRedirected.current = true;
+    saveWelcomeReturn(welcomeEntry.entryPath);
+    navigate(WELCOME_PATH + welcomeEntry.rest, { replace: true });
+  }, [ready, welcomeEntry]);
 
-  // Back from binding Discord with no role chosen yet: the bind was started
-  // from the first-run dialog (or a first login lost its flag on the way), so
-  // the first-run question is still open — ask it once more.
-  const askedAfterLink = useRef(false);
-  useEffect(() => {
-    const me = ready?.me;
-    if (!discordLinked || !me || askedAfterLink.current) return;
-    askedAfterLink.current = true;
-    if (!me.is_participant && !me.is_judge) {
-      onboardingAsked.current = true;
-      setOnboardingOpen(true);
-    }
-  }, [discordLinked, ready?.me]);
-
-  // Old ?case= / ?session= links, once the data is in and the first-run dialog is done
-  // (declared after the onboarding effects: it reads onboardingAsked after they ran).
-  const entryBlocked = useCallback(() => onboardingOpen || onboardingAsked.current, [onboardingOpen]);
+  // Entry requests remain in memory until the wizard explicitly finishes.
+  const entryBlocked = useCallback(() => welcomePending, [welcomePending]);
   const { linkMissing, dismissLinkMissing } = useEntryTarget({
-    ready: ready !== null,
-    me: ready?.me ?? null,
-    blocked: entryBlocked,
-    onPinned: setPinned,
+    ready: ready !== null, me: ready?.me ?? null, blocked: entryBlocked,
+    onPinned: setPinned, welcomeEntry: welcomeEntry.requested, entryLocation: welcomeEntry.entryLocation,
+    welcomeReturnTo: welcomeEntry.requested ? welcomeEntry.returnTo : undefined,
   });
+  const rememberWelcomeReturn = useCallback((): void => {
+    saveWelcomeReturn(welcomePending ? welcomeEntry.entryPath : null);
+  }, [welcomePending, welcomeEntry]);
+  const finishWelcome = useCallback((): void => {
+    clearWelcomeReturn();
+    navigate(HOME_PATH);
+    setWelcomePending(false);
+  }, []);
 
   // Opening a view is navigating to its address; a desktop drawer keeps the lobby's scroll.
   const openRoute = useCallback(
@@ -138,6 +140,7 @@ function AppMain(): JSX.Element {
     // Drafts are this person's: whoever signs in next on this device must not find them.
     clearAllDrafts();
     clearLoginReturn();
+    clearWelcomeReturn();
     clearTodoMarks();
     window.location.reload();
   }, []);
@@ -243,7 +246,7 @@ function AppMain(): JSX.Element {
   const tabs = layout === 'page';
   const myPath = me ? playerPath(me.id) : '/';
   const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
-    onOpenStatement={setStatementCase} onOpenNotify={() => setOnboardingOpen(true)}
+    onOpenStatement={setStatementCase} onOpenNotify={() => navigate(WELCOME_PATH)}
     onDismissUnbound={() => { dismissUnbound(); setUnboundDismissed(true); }} />
     : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
       rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
@@ -263,14 +266,13 @@ function AppMain(): JSX.Element {
         config={config}
         me={me}
         onLogout={() => void handleLogout()}
-        onOpenOnboarding={() => setOnboardingOpen(true)}
+        onOpenOnboarding={() => navigate(WELCOME_PATH)}
         onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
       <main className="app__main" hidden={covered}>
         <h1 className="visually-hidden">EDG 信誉分</h1>
         {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
-        {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
         <div className={`app__home${layout === 'drawer' ? ' app__home--desktop' : ''}${score === null ? ' app__home--without-score' : ''}`}>
           <div className="app__primary">{primary}</div>
@@ -283,6 +285,12 @@ function AppMain(): JSX.Element {
 
       <RouteView
         board={board}
+        discordRead={extra.discordRead}
+        onDiscordChanged={extra.setDiscord}
+        onMeUpdated={handleMeUpdated}
+        onWelcomeDone={finishWelcome}
+        onBeforeWelcomeBind={rememberWelcomeReturn}
+        welcomeNotice={discordLinked ? <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} /> : null}
         location={location}
         layout={layout}
         me={me}
@@ -321,18 +329,6 @@ function AppMain(): JSX.Element {
             handleChanged();
             setPlayerRefreshKey((n) => n + 1);
           }}
-        />
-      )}
-
-      {me && (
-        <OnboardingDialog
-          open={onboardingOpen}
-          onClose={() => {
-            onboardingAsked.current = false;
-            setOnboardingOpen(false);
-          }}
-          me={me}
-          onSaved={handleMeUpdated}
         />
       )}
 
