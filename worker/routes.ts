@@ -54,6 +54,7 @@ import {
   createSession,
   getSessionDetail,
   listMyInvites,
+  listSessionHistory,
   listSessions,
   rollCall,
   setRsvp,
@@ -76,6 +77,8 @@ import {
   writeSetting,
 } from './ai/config';
 import { judgeCase } from './ai/provider';
+import { listInvitable } from './invitable';
+import { inviteToSession } from './session-invites';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
@@ -238,6 +241,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       aiEnabled: cfg.enabled,
       maxBatchSubjects: MAX_BATCH_SUBJECTS,
       nextResetAt: nextResetAt(offset),
+      boardTzOffsetHours: offset,
     });
   });
 
@@ -284,6 +288,12 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   app.get('/api/sessions', async (c) => {
     const caller = c.get('user');
     const raw = c.req.query('scope');
+    if (raw === 'history') {
+      // P2-3: started sessions, cancelled ones too, paged by before=<id>.
+      const before = c.req.query('before');
+      const cursor = before === undefined ? null : parseId(before, '约局');
+      return c.json({ sessions: await listSessionHistory(c.env.DB, caller?.id ?? null, cursor) });
+    }
     const scope: SessionScope =
       raw === 'past' || raw === 'mine' || raw === 'upcoming' ? raw : 'upcoming';
     if (scope === 'mine' && !caller) throw new ApiError(401, '未登录');
@@ -510,8 +520,18 @@ export function registerRoutes(app: Hono<AppEnv>): void {
 
   app.post('/api/sessions/:id/cancel', async (c) => {
     const caller = requireUser(c.get('user'));
-    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'));
+    // No body (the web today) reads as {}: no reason.
+    const body = await readJsonBody(c.req.raw);
+    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.reason);
     return c.json({ session });
+  });
+
+  // P2-1: invite more people after creation. Organizer or admin, open and not started.
+  app.post('/api/sessions/:id/invite', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const body = await readJsonBody(c.req.raw);
+    const result = await inviteToSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.user_ids);
+    return c.json(result);
   });
 
   app.post('/api/sessions/:id/rsvp', async (c) => {
@@ -560,6 +580,16 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const caller = requireUser(c.get('user'));
     const sessions = await listMyInvites(c.env.DB, caller.id);
     return c.json({ sessions });
+  });
+
+  // P2-2: who the caller could invite. Under /api/me/ because GET
+  // /api/users/:id would read /api/users/invitable as a user id. Private:
+  // last_played_with_me_at is the caller's own history.
+  app.get('/api/me/invitable', async (c) => {
+    const caller = requireUser(c.get('user'));
+    const users = await listInvitable(c.env.DB, caller.id);
+    privateToViewer(c);
+    return c.json({ users });
   });
 
   // --- Weekly report -------------------------------------------------------

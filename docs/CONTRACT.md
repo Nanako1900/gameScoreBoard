@@ -189,9 +189,24 @@ interface SessionItem {
   settled_at: string | null; created_at: string;
   counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: 'invited' | 'going' | 'maybe' | 'out' | null;
+  going_preview: { id: string; username: string; avatar_url: string | null }[];  // up to GOING_PREVIEW_MAX (5) who said 来, earliest answer first; never a score
+  cancel_reason: string | null;  // P2-3: the organizer's reason (trimmed, ≤ 80 chars); public like `note`
+  cancelled_at: string | null;   // P2-3: sqlite datetime format; null if not cancelled (or cancelled before P2-3)
 }
 
 interface SessionDetail extends SessionItem { players: SessionPlayer[] }
+
+// P2-3: GET /api/sessions?scope=history
+interface HistorySessionItem extends SessionItem {
+  attendance_summary: { on_time: number; late: number; no_show: number; left_early: number; excused: number }; // all five keys
+}
+
+// P2-3: GET /api/me/invites — the context is the caller's own, never shown elsewhere
+interface InvitedSessionItem extends SessionItem {
+  invite_reason: 'new' | 'moved';            // 'moved' = they had answered, then the time changed
+  prev_rsvp: 'going' | 'maybe' | 'out' | null; // what they had said to the old time
+  prev_starts_at: string | null;               // the old time (ISO), as they answered it
+}
 
 interface SessionPlayer {
   user: { id: string; username: string; avatar_url: string | null };
@@ -227,7 +242,9 @@ Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`,
 `/api/sessions/:id`) shape each case for the caller (see `RecordItem`'s PRIVATE
 fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/config`
-  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt }`
+  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt, boardTzOffsetHours }`
+  `boardTzOffsetHours` is `RESET_TZ_OFFSET` as a number of hours (default 8; may be fractional, e.g. 5.5): the board's
+  time zone, the one `/yue` and the weekly reset use. Times are still sent as ISO instants; the web shows them on this clock.
   Also fires (non-blocking) three idempotent jobs: the weekly heal, the
   overdue-case sweep, and last week's report generation.
 - `GET /api/leaderboard` → `{ participants: PublicUser[] }` — `is_participant = 1`, `score DESC, username ASC`.
@@ -237,6 +254,9 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/records/:id` → `{ record }`.
 - `GET /api/users/:id` → `{ user: PublicUser, records: RecordItem[], history: HistoryPoint[] }`.
 - `GET /api/sessions?scope=upcoming|past|mine` → `{ sessions: SessionItem[] }` (`mine` requires auth).
+  `scope=history[&before=<id>]` → `{ sessions: HistorySessionItem[] }`: sessions that have started,
+  **cancelled ones included** (`past` leaves them out), newest first (`starts_at`, then id), 20 a page;
+  `before` is the last id of the previous page (an unknown id gives `[]`; not a positive integer → 400).
 - `GET /api/sessions/:id` → `{ session: SessionDetail, records: RecordItem[] }`.
 - `GET /api/avatar?u=<https url>` → proxied image (worker/avatar.ts). The host
   must be exactly the OAuth host or one in `AVATAR_ALLOWED_HOSTS`, or the URL must
@@ -260,6 +280,15 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/me` → `{ user: User | null, pending: { statements: number, appeals: number } }` (200 either way).
 - `POST /api/me/roles` `{ is_participant?, is_judge? }` → `{ user }`.
 - `POST /api/me/display-name` `{ display_name: string | null }` → `{ user }`.
+- `GET /api/me/invitable` → `{ users: InvitableUser[] }`, `Cache-Control: private, no-store`
+  (P2-2). Everyone but the caller (at most 500), each exactly `{ id, username,
+  avatar_url, is_participant, last_played_with_me_at }` — `username` is the display
+  name; never a score, a role, an email or anything about Discord.
+  `last_played_with_me_at` is the `starts_at` of the latest session that has started,
+  was not cancelled, and where both said `going` and neither was marked `no_show` /
+  `excused` (unmarked counts as there); `null` if none. Order: people played with
+  (latest first), then participants, then name, then id. 401 signed out. An older
+  API answers 404: the client hides the invite entry.
 
 **Cases**
 - `POST /api/records` — two shapes, both requiring `is_judge`:
@@ -309,7 +338,18 @@ fields) and answer `Cache-Control: private, no-store`.
   before it starts (400 afterwards). A new `starts_at` (a different instant, not
   just another spelling) puts every other player — yes, maybe or no — back to
   `invited`: they answer again for the new time.
-- `POST /api/sessions/:id/cancel` → `{ session }`.
+- `POST /api/sessions/:id/cancel` `{ reason? }` → `{ session }`. The body is optional (none = no
+  reason). `reason` is trimmed and cut to 80 characters; blank or not a string → null. Stored with
+  `cancelled_at`; cancelling again changes neither. The cancel DM quotes it.
+- `POST /api/sessions/:id/invite` `{ user_ids: string[] }` → `{ session, added, skipped }` (P2-1).
+  Invite more people after creation. Organizer/admin (403 first, like `PATCH`), `open`
+  and not started (400). `user_ids` is required and not empty; at most 20 distinct ids
+  at once, the session's organizer dropped (nobody left → 200 with `added: 0`). The
+  roster never grows past 50 by invitation (400 「这局最多 50 人，已经有 N 人了」).
+  New people land in `invited`; a row already there — going, maybe, out or invited — is
+  never touched, and unknown ids are dropped. `added` = rows inserted, `skipped` = the
+  other requested ids. On PostgreSQL each new row queues one invitation DM under the
+  same allowances as at creation; nothing in the answer says who can be reached by DM.
 - `POST /api/sessions/:id/rsvp` `{ rsvp, starts_at? }` → `{ session }`. Self only, and only
   `going | maybe | out` — `invited` is organizer-assigned and rejected here.
   `starts_at` is the start time the client showed: for `going` / `maybe`, **409**
@@ -319,8 +359,10 @@ fields) and answer `Cache-Control: private, no-store`.
   Blocked once the session started, is full, or is not `open`. The organizer
   cannot RSVP out. **Only `going` consumes a capacity slot**, so over-inviting is
   intentional and safe.
-- `GET /api/me/invites` → `{ sessions: SessionItem[] }`. Open, future sessions the
-  caller was invited to and has not answered. Drives the one-tap invite banner.
+- `GET /api/me/invites` → `{ sessions: InvitedSessionItem[] }`. Open, future sessions the
+  caller was invited to and has not answered. Drives the one-tap invite banner. Each says why:
+  `invite_reason: 'moved'` with `prev_rsvp` / `prev_starts_at` when the caller had answered and the
+  time then changed (a later move keeps the time they answered; answering again clears it), else `'new'`.
 - `POST /api/sessions/:id/rollcall` `{ entries: [{ user_id, attendance, late_minutes?, note? }] }`
   → `{ session, drafts: CaseDraft[] }`. Organizer/admin, after `starts_at`, only
   for signed-up players. **Writes attendance only — no score changes.** Repeatable

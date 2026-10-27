@@ -7,7 +7,7 @@ import type {
   ViolationDef,
   ViolationType,
 } from '@shared/scoring';
-import type { Attendance, Rsvp, SessionStatus } from '@shared/attendance';
+import type { Attendance, Rsvp, SelfRsvp, SessionStatus } from '@shared/attendance';
 
 export type { ViolationType, CaseStatus, VerdictSource, Attendance, Rsvp, SessionStatus };
 
@@ -107,6 +107,22 @@ export interface HistoryPoint {
   score: number;
 }
 
+// --- Invitable people (P2-2) -------------------------------------------------
+
+/** One row of GET /api/me/invitable: names and avatars only — never a score, never Discord. */
+export interface InvitableUser {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  is_participant: boolean;
+  /** When the caller last really played with them (ISO starts_at); null if never. */
+  last_played_with_me_at: string | null;
+}
+
+export interface InvitableResponse {
+  users: InvitableUser[];
+}
+
 // --- Sessions ---------------------------------------------------------------
 
 export interface SessionPlayer {
@@ -134,10 +150,37 @@ export interface SessionItem {
   created_at: string;
   counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: Rsvp | null;
+  /** P2-6: up to 5 who said 来, earliest answer first — names and avatars, never a score. Absent from an older API: show no avatars. */
+  going_preview?: UserRef[];
+  /** P2-3: the organizer's cancel reason (plain text). Absent from an older API: no reason. */
+  cancel_reason?: string | null;
+  /** P2-3: when it was cancelled (sqlite datetime shape). */
+  cancelled_at?: string | null;
 }
 
 export interface SessionDetail extends SessionItem {
   players: SessionPlayer[];
+}
+
+// P2-3
+export type AttendanceSummary = Record<Attendance, number>;
+
+/** One row of GET /api/sessions?scope=history. */
+export interface HistorySessionItem extends SessionItem {
+  attendance_summary: AttendanceSummary;
+}
+
+export type InviteReason = 'new' | 'moved';
+
+/** One row of GET /api/me/invites. Missing fields (an older API) read as a new invitation. */
+export interface InvitedSessionItem extends SessionItem {
+  invite_reason?: InviteReason;
+  prev_rsvp?: SelfRsvp | null;
+  prev_starts_at?: string | null;
+}
+
+export interface InvitesResponse {
+  sessions: InvitedSessionItem[];
 }
 
 export interface CaseDraft {
@@ -160,6 +203,8 @@ export interface Config {
   aiEnabled: boolean;
   maxBatchSubjects: number;
   nextResetAt: string;
+  /** Board time zone (RESET_TZ_OFFSET), hours. Absent from an older API: fall back to the browser's zone and say 本地时间. */
+  boardTzOffsetHours?: number;
 }
 
 // --- Endpoint response envelopes ------------------------------------------
@@ -205,6 +250,15 @@ export interface RollCallResponse {
 export interface SettleResponse {
   session: SessionDetail;
   created: number;
+  skipped: number;
+}
+
+/** POST /api/sessions/:id/invite (P2-1). */
+export interface InviteResponse {
+  session: SessionDetail;
+  /** People this request actually invited. */
+  added: number;
+  /** The other ids asked for: already in it, or unknown. */
   skipped: number;
 }
 

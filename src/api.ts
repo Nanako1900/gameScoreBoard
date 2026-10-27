@@ -7,6 +7,11 @@ import type {
   CaseStatus,
   Config,
   FileCasesResponse,
+  HistorySessionItem,
+  InvitableResponse,
+  InvitableUser,
+  InviteResponse,
+  InvitesResponse,
   LeaderboardResponse,
   MeResponse,
   NewCaseInput,
@@ -18,6 +23,7 @@ import type {
   RollCallResponse,
   SessionDetail,
   SessionDetailResponse,
+  SessionItem,
   SessionsResponse,
   SettleEntry,
   SettleResponse,
@@ -238,8 +244,12 @@ export function updateSession(
   });
 }
 
-export function cancelSession(id: number): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>(`/api/sessions/${id}/cancel`);
+/** `reason` omitted: no body at all, exactly as before P2-3. */
+export function cancelSession(id: number, reason?: string): Promise<{ session: SessionDetail }> {
+  const path = `/api/sessions/${id}/cancel`;
+  return reason === undefined
+    ? post<{ session: SessionDetail }>(path)
+    : post<{ session: SessionDetail }>(path, { reason });
 }
 
 /** `startsAt`: the start time the player is looking at — a move since is a 409. */
@@ -266,8 +276,46 @@ export function settleSession(
 }
 
 /** Sessions the caller was invited to and has not answered. Drives the banner. */
-export function getMyInvites(): Promise<SessionsResponse> {
-  return request<SessionsResponse>('/api/me/invites');
+export function getMyInvites(): Promise<InvitesResponse> {
+  return request<InvitesResponse>('/api/me/invites');
+}
+
+type MaybeHistoryItem = SessionItem & { attendance_summary?: HistorySessionItem['attendance_summary'] };
+
+function isHistoryItem(item: MaybeHistoryItem): item is HistorySessionItem {
+  return typeof item.attendance_summary === 'object' && item.attendance_summary !== null;
+}
+
+/**
+ * P2-3: sessions that started, cancelled ones too, newest first; `before` = the
+ * last id of the previous page (fewer than a full page = no more). undefined
+ * from an API without scope=history: it reads an unknown scope as 'upcoming'
+ * and answers 200, so the sign is items without attendance_summary.
+ */
+export async function getSessionHistory(before?: number): Promise<HistorySessionItem[] | undefined> {
+  const cursor = before === undefined ? '' : `&before=${before}`;
+  const { sessions } = await request<{ sessions: MaybeHistoryItem[] }>(`/api/sessions?scope=history${cursor}`);
+  return sessions.every(isHistoryItem) ? sessions : undefined;
+}
+
+/**
+ * Everyone the caller could invite (P2-2). Resolves `undefined` when the API
+ * has no such endpoint — an older backend answers 404 — so the invite entry
+ * can hide itself, like getDiscordLink. Any other failure throws ApiError.
+ */
+export async function getInvitable(): Promise<InvitableUser[] | undefined> {
+  try {
+    const { users } = await request<InvitableResponse>('/api/me/invitable');
+    return users;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
+  }
+}
+
+/** P2-1: invite more people after creation. Organizer or admin; rows already there are never changed. */
+export function inviteToSession(id: number, userIds: string[]): Promise<InviteResponse> {
+  return post<InviteResponse>(`/api/sessions/${id}/invite`, { user_ids: userIds });
 }
 
 // --- Weekly report ---------------------------------------------------------
@@ -335,6 +383,10 @@ export function logout(): Promise<{ ok: true }> {
 export interface DiscordLinkInfo {
   discord_username: string;
   linked_at: string;
+  /** DMs on or off (the bot's /notify, or setDiscordNotify). Absent from an API older than P2-5. */
+  notify_dm?: boolean;
+  /** false once Discord refused a DM (DMs closed); turning DMs on or off clears it. */
+  dm_ok?: boolean;
 }
 
 /**
@@ -362,4 +414,19 @@ export async function getDiscordLink(): Promise<DiscordLinkInfo | null | undefin
 /** Remove the caller's binding. The response body carries nothing the UI needs. */
 export async function unlinkDiscord(): Promise<void> {
   await post<unknown>('/api/me/discord/unlink');
+}
+
+/**
+ * Turn the caller's Discord DMs on or off; resolves the binding as it now
+ * stands. `undefined` on 404 — a backend without the switch, like
+ * getDiscordLink — so the UI can hide it. Not bound is 409, thrown as usual.
+ */
+export async function setDiscordNotify(on: boolean): Promise<DiscordLinkInfo | undefined> {
+  try {
+    const { link } = await post<{ link: DiscordLinkInfo }>('/api/me/discord/notify', { on });
+    return link;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
+  }
 }

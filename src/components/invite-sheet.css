@@ -1,0 +1,92 @@
+/* 再叫几个人 — InviteSheet, nested over 约局详情 (P2-1) */
+
+.ivs {
+  display: grid;
+  gap: 1rem;
+}
+
+.ivs__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ivs__group {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ivs__legend {
+  margin-bottom: 0.35rem;
+  padding: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ivs__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: var(--tap-min);
+  padding: 0 0.25rem;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ivs__row > input {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  accent-color: var(--action);
+}
+
+/* Already in, or said no: greyed and not pickable — the words say why, not only the colour. */
+.ivs__row--off {
+  color: var(--muted);
+  cursor: default;
+}
+
+.ivs__tag {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ivs__cap {
+  font-size: var(--fs-sm);
+  color: var(--action);
+}
+
+.ivs__note {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.ivs__error {
+  font-size: var(--fs-sm);
+  color: var(--danger-text);
+}
+
+.ivs__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.ivs__count {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}

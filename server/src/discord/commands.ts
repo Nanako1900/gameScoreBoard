@@ -18,7 +18,7 @@ import { ApiError } from '../../../worker/errors';
 import { getLatestReport } from '../../../worker/report';
 import { listMyInvites } from '../../../worker/sessions';
 import type { RecordItem, SessionItem, User } from '../../../worker/types';
-import { boundUser, linkByDiscordId, unlinkAccounts } from './links';
+import { boundUser, setNotifyDm, unlinkAccounts } from './links';
 import { handleYue, YUE_SLOTS } from './sessions';
 import { reportEmbed } from './report';
 
@@ -359,14 +359,10 @@ async function handleReport(_input: CommandInput, ctx: BotContext): Promise<BotR
 
 async function handleNotify(input: CommandInput, ctx: BotContext): Promise<BotReply> {
   if (ctx.readOnly) return ephemeralReply(READ_ONLY_TEXT);
-  const link = await linkByDiscordId(ctx.db, input.caller.id);
-  if (!link) return ephemeralReply(NOT_LINKED);
   const on = input.state !== 'off';
   // Also clears a "DMs closed" mark: whoever asks for DMs gets one more try.
-  await ctx.db
-    .prepare("UPDATE discord_links SET notify_dm = ?, dm_ok = 1, updated_at = datetime('now') WHERE discord_user_id = ?")
-    .bind(on ? 1 : 0, input.caller.id)
-    .run();
+  const link = await setNotifyDm(ctx.db, { discordUserId: input.caller.id }, on);
+  if (!link) return ephemeralReply(NOT_LINKED);
   return ephemeralReply(
     on
       ? '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。'

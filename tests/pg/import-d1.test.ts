@@ -113,3 +113,36 @@ describe('importD1', () => {
     for (const table of ['users', 'records', 'weekly_heals', 'weekly_reports']) expect(await count(table)).toBe(0);
   });
 });
+
+// --- P2-3 ---
+describe('importD1 and the P2-3 columns', () => {
+  it('carries cancel_reason / cancelled_at / prev_rsvp / prev_starts_at over as they are; an export from before 004 leaves them NULL', async () => {
+    const data = exportFixture();
+    data.users.push({ id: 'p2', username: 'p2', display_name: null, avatar_url: null, email: null, is_participant: 0, is_judge: 0, is_admin: 0, score: 100, created_at: T, updated_at: T });
+    data.game_sessions.push({
+      id: 8, organizer_id: 'org', title: '周二 20:00 开黑', game: null, starts_at: '2026-10-27T12:00:00.000Z', duration_min: null, capacity: null, note: null,
+      status: 'cancelled', settled_at: null, settled_by: null, created_at: T, cancel_reason: '临时加班，改天', cancelled_at: T,
+    });
+    data.session_players.push(
+      { session_id: 8, user_id: 'org', rsvp: 'going', rsvp_at: T, attendance: null, late_minutes: null, attendance_note: null, record_id: null, prev_rsvp: null, prev_starts_at: null },
+      { session_id: 8, user_id: 'p2', rsvp: 'invited', rsvp_at: T, attendance: null, late_minutes: null, attendance_note: null, record_id: null, prev_rsvp: 'going', prev_starts_at: '2026-10-27T11:00:00.000Z' },
+    );
+    const result = await importD1(pool, data);
+    expect(Object.keys(result.checksums)).toHaveLength(9);
+
+    const sessions = await env.DB.prepare('SELECT id, cancel_reason, cancelled_at FROM game_sessions ORDER BY id').all();
+    expect(sessions.results).toEqual([
+      { id: 7, cancel_reason: null, cancelled_at: null },
+      { id: 8, cancel_reason: '临时加班，改天', cancelled_at: T },
+    ]);
+    const players = await env.DB.prepare(
+      'SELECT session_id, user_id, prev_rsvp, prev_starts_at FROM session_players ORDER BY session_id, user_id',
+    ).all();
+    expect(players.results).toEqual([
+      { session_id: 7, user_id: 'org', prev_rsvp: null, prev_starts_at: null },
+      { session_id: 7, user_id: 'p1', prev_rsvp: null, prev_starts_at: null },
+      { session_id: 8, user_id: 'org', prev_rsvp: null, prev_starts_at: null },
+      { session_id: 8, user_id: 'p2', prev_rsvp: 'going', prev_starts_at: '2026-10-27T11:00:00.000Z' },
+    ]);
+  });
+});

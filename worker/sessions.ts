@@ -6,8 +6,14 @@
 // integration "选配、不是必须".
 
 import {
+  MAX_INVITES,
+  MAX_OPEN_SESSIONS,
+  MAX_SESSION_ROSTER,
+  MAX_SESSIONS_PER_DAY,
   ORGANIZER_BONUS_MIN_ATTENDEES,
+  SESSION_CANCEL_REASON_MAX,
   SESSION_GAME_MAX,
+  SESSION_HISTORY_PAGE,
   SESSION_MAX_LEAD_MS,
   SESSION_NOTE_MAX,
   SESSION_TITLE_MAX,
@@ -30,6 +36,9 @@ import {
 import type {
   CaseDraft,
   Env,
+  HistorySessionItem,
+  InviteReason,
+  InvitedSessionItem,
   RecordItem,
   SessionDetail,
   SessionItem,
@@ -44,8 +53,10 @@ import { fileCase } from './cases';
 import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limits';
 import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
+import { goingPreviews, previewOfPlayers } from './session-extras';
+import { NO_ATTENDANCE, attendanceSummaries, inviteContexts } from './session-extras';
 
-const MAX_ROLLCALL_ENTRIES = 50;
+const MAX_ROLLCALL_ENTRIES = MAX_SESSION_ROSTER;
 const MAX_LATE_MINUTES = 24 * 60;
 
 // --- Mapping -----------------------------------------------------------------
@@ -61,7 +72,7 @@ SELECT g.*,
 FROM game_sessions g
 JOIN users o ON o.id = g.organizer_id`;
 
-interface SessionJoinRow extends SessionRow {
+export interface SessionJoinRow extends SessionRow {
   o_username: string;
   o_avatar: string | null;
   c_invited: number;
@@ -70,7 +81,11 @@ interface SessionJoinRow extends SessionRow {
   c_out: number;
 }
 
-function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
+function toSessionItem(
+  row: SessionJoinRow,
+  myRsvp: Rsvp | null,
+  preview: SessionItem['going_preview'],
+): SessionItem {
   return {
     id: row.id,
     organizer: { id: row.organizer_id, username: row.o_username, avatar_url: row.o_avatar },
@@ -82,6 +97,9 @@ function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
     note: row.note,
     status: row.status as SessionStatus,
     settled_at: row.settled_at,
+    // `?? null`: a database not yet migrated (004 / 0007) has no such columns.
+    cancel_reason: row.cancel_reason ?? null,
+    cancelled_at: row.cancelled_at ?? null,
     created_at: row.created_at,
     counts: {
       invited: row.c_invited,
@@ -90,6 +108,7 @@ function toSessionItem(row: SessionJoinRow, myRsvp: Rsvp | null): SessionItem {
       out: row.c_out,
     },
     my_rsvp: myRsvp,
+    going_preview: preview,
   };
 }
 
@@ -169,15 +188,15 @@ export async function listSessions(
     .prepare(`${SESSION_SELECT} ${where} ORDER BY g.starts_at ${order}, g.id DESC LIMIT ?`)
     .bind(...binds)
     .all<SessionJoinRow>();
-  const mine = await myRsvpMap(
-    db,
-    callerId,
-    rows.results.map((r) => r.id),
+  const ids = rows.results.map((r) => r.id);
+  const mine = await myRsvpMap(db, callerId, ids);
+  const previews = await goingPreviews(db, ids);
+  return rows.results.map((r) =>
+    toSessionItem(r, mine.get(r.id) ?? null, previews.get(r.id) ?? []),
   );
-  return rows.results.map((r) => toSessionItem(r, mine.get(r.id) ?? null));
 }
 
-async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
+export async function getSessionRow(db: D1Database, id: number): Promise<SessionJoinRow> {
   const row = await db
     .prepare(`${SESSION_SELECT} WHERE g.id = ?`)
     .bind(id)
@@ -195,12 +214,12 @@ export async function getSessionDetail(
   const players = await db.prepare(PLAYER_SELECT).bind(id).all<SessionPlayerJoinRow>();
   const mapped = players.results.map(toSessionPlayer);
   const mine = callerId ? mapped.find((p) => p.user.id === callerId)?.rsvp ?? null : null;
-  return { ...toSessionItem(row, mine), players: mapped };
+  return { ...toSessionItem(row, mine, previewOfPlayers(mapped)), players: mapped };
 }
 
 // --- Writes ------------------------------------------------------------------
 
-function requireOrganizer(row: SessionRow, caller: User): void {
+export function requireOrganizer(row: SessionRow, caller: User): void {
   if (caller.is_admin) return;
   if (row.organizer_id !== caller.id) throw new ApiError(403, '只有组织者可以操作这个约局');
 }
@@ -253,14 +272,13 @@ export interface CreateSessionInput {
   invite?: unknown;
 }
 
-export const MAX_INVITES = 20;
+export { MAX_INVITES } from '../shared/attendance';
 /**
  * Per organizer: sessions open at once, and sessions created per 24 hours.
  * Every session invites, posts a card and DMs reminders (Discord, P7), so
  * creating them must not be free.
  */
-export const MAX_OPEN_SESSIONS = 5;
-export const MAX_SESSIONS_PER_DAY = 10;
+export { MAX_OPEN_SESSIONS, MAX_SESSIONS_PER_DAY } from '../shared/attendance';
 
 async function assertCanOrganize(db: D1Database, organizerId: string): Promise<void> {
   const open = await db
@@ -279,12 +297,17 @@ async function assertCanOrganize(db: D1Database, organizerId: string): Promise<v
   }
 }
 
-function normalizeInvites(raw: unknown, organizerId: string): string[] {
+/** `field` names the list in the errors: `invite` when creating, `user_ids` for POST …/invite (P2-1). */
+export function normalizeInvites(
+  raw: unknown,
+  organizerId: string,
+  field: 'invite' | 'user_ids' = 'invite',
+): string[] {
   if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw)) throw new ApiError(400, 'invite 必须是数组');
+  if (!Array.isArray(raw)) throw new ApiError(400, `${field} 必须是数组`);
   const ids = new Set<string>();
   for (const v of raw) {
-    if (typeof v !== 'string' || v.length === 0) throw new ApiError(400, 'invite 里有无效的用户 ID');
+    if (typeof v !== 'string' || v.length === 0) throw new ApiError(400, `${field} 里有无效的用户 ID`);
     if (v === organizerId) continue; // the organizer is already going
     ids.add(v);
   }
@@ -391,7 +414,7 @@ export interface InviteItem {
 export async function listMyInvites(
   db: D1Database,
   callerId: string,
-): Promise<SessionItem[]> {
+): Promise<InvitedSessionItem[]> {
   const now = new Date().toISOString();
   const rows = await db
     .prepare(
@@ -403,7 +426,51 @@ export async function listMyInvites(
     )
     .bind(now, callerId)
     .all<SessionJoinRow>();
-  return rows.results.map((r) => toSessionItem(r, 'invited'));
+  const ids = rows.results.map((r) => r.id);
+  const previews = await goingPreviews(db, ids);
+  const contexts = await inviteContexts(db, callerId, ids);
+  return rows.results.map((r) => {
+    const ctx = contexts.get(r.id) ?? { prev_rsvp: null, prev_starts_at: null };
+    const reason: InviteReason = ctx.prev_starts_at === null ? 'new' : 'moved';
+    return { ...toSessionItem(r, 'invited', previews.get(r.id) ?? []), invite_reason: reason, ...ctx };
+  });
+}
+
+/**
+ * GET /api/sessions?scope=history: sessions that have started, cancelled ones
+ * included (scope=past leaves those out), newest first, SESSION_HISTORY_PAGE a
+ * page. `before` is the last id of the previous page; an unknown one gives [].
+ */
+export async function listSessionHistory(
+  db: D1Database,
+  callerId: string | null,
+  before: number | null,
+): Promise<HistorySessionItem[]> {
+  // ISO "now": starts_at is ISO (see listSessions).
+  const binds: unknown[] = [new Date().toISOString()];
+  let cursor = '';
+  if (before !== null) {
+    const at = await db
+      .prepare('SELECT id, starts_at FROM game_sessions WHERE id = ?')
+      .bind(before)
+      .first<{ id: number; starts_at: string }>();
+    if (!at) return [];
+    // (starts_at, id) < (cursor) spelled out: no row values, portable to both engines.
+    cursor = 'AND (g.starts_at < ? OR (g.starts_at = ? AND g.id < ?))';
+    binds.push(at.starts_at, at.starts_at, at.id);
+  }
+  const rows = await db
+    .prepare(`${SESSION_SELECT} WHERE g.starts_at < ? ${cursor} ORDER BY g.starts_at DESC, g.id DESC LIMIT ?`)
+    .bind(...binds, SESSION_HISTORY_PAGE)
+    .all<SessionJoinRow>();
+  const ids = rows.results.map((r) => r.id);
+  const mine = await myRsvpMap(db, callerId, ids);
+  const previews = await goingPreviews(db, ids);
+  const summaries = await attendanceSummaries(db, ids);
+  return rows.results.map((r) => ({
+    ...toSessionItem(r, mine.get(r.id) ?? null, previews.get(r.id) ?? []),
+    attendance_summary: summaries.get(r.id) ?? { ...NO_ATTENDANCE },
+  }));
 }
 
 export async function updateSession(
@@ -456,14 +523,17 @@ export async function updateSession(
       // An answer to one time is not an answer to another: everyone but the
       // organizer answers again — a yes (so nobody can be roll-called for a
       // time they did not agree to: a no-show penalty needs a 'going'), and a
-      // no too (a no to 20:00 is not a no to 23:00).
+      // no too (a no to 20:00 is not a no to 23:00). What they had said, and to
+      // which time, stays for their own /api/me/invites (P2-3). Rows still
+      // 'invited' are not touched, so a second move keeps the time they answered.
       statements.push(
         db
           .prepare(
-            `UPDATE session_players SET rsvp = 'invited', rsvp_at = datetime('now')
+            `UPDATE session_players
+                SET rsvp = 'invited', rsvp_at = datetime('now'), prev_rsvp = rsvp, prev_starts_at = ?
               WHERE session_id = ? AND user_id <> ? AND rsvp IN ('going', 'maybe', 'out')`,
           )
-          .bind(id, row.organizer_id),
+          .bind(row.starts_at, id, row.organizer_id),
       );
     }
     await db.batch(statements);
@@ -475,15 +545,20 @@ export async function cancelSession(
   db: D1Database,
   caller: User,
   id: number,
+  rawReason?: unknown,
 ): Promise<SessionDetail> {
   const row = await getSessionRow(db, id);
   requireOrganizer(row, caller);
   if (row.status === 'settled') throw new ApiError(400, '已结算的约局不能取消');
   // Cancelling twice is not a conflict: it is already what was asked for.
   if (row.status === 'cancelled') return getSessionDetail(db, id, caller.id);
+  const reason = normalizeOptionalText(rawReason, SESSION_CANCEL_REASON_MAX);
   const res = await db
-    .prepare("UPDATE game_sessions SET status = 'cancelled' WHERE id = ? AND status = 'open'")
-    .bind(id)
+    .prepare(
+      `UPDATE game_sessions SET status = 'cancelled', cancel_reason = ?, cancelled_at = datetime('now')
+        WHERE id = ? AND status = 'open'`,
+    )
+    .bind(reason, id)
     .run();
   if ((res.meta?.changes ?? 0) === 0) throw new ApiError(409, '约局状态已变化，请刷新后重试');
   return getSessionDetail(db, id, caller.id);
@@ -565,7 +640,7 @@ export async function setRsvp(
          SELECT ?, ?, ?, datetime('now')
           WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = ? AND status = 'open' ${sameTime}) AND ${seatFree}
          ON CONFLICT(session_id, user_id) DO UPDATE SET
-           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
+           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at, prev_rsvp = NULL, prev_starts_at = NULL`,
       )
       .bind(id, caller.id, rawRsvp, id, ...timeBinds, ...seatBinds),
   ]);

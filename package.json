@@ -26,6 +26,8 @@
     "cf-typegen": "wrangler types",
     "db:migrate3:local": "wrangler d1 execute edg-credit --local --file=./migrations/003_v3_quick_flows.sql",
     "db:migrate3:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/003_v3_quick_flows.sql",
+    "db:migrate4:local": "wrangler d1 execute edg-credit --local --file=./migrations/004_lobby.sql",
+    "db:migrate4:remote": "wrangler d1 execute edg-credit --remote --file=./migrations/004_lobby.sql",
     "test:dom": "vitest run --config vitest.dom.config.ts",
     "test:server": "vitest run --config vitest.server.config.ts",
     "test:pg": "vitest run --config vitest.pg.config.ts"

@@ -7,6 +7,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FILED_DM_GRACE_MS } from '../../shared/scoring';
+import { DEFAULT_DURATION_MIN } from '../../shared/attendance';
 
 const ROOT = path.resolve(__dirname, '../..');
 const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations'];
@@ -77,5 +78,17 @@ describe('history API', () => {
 
   it('still sees the router itself (the scan is not vacuous)', () => {
     expect(HISTORY_USE.test(readFileSync(path.join(ROOT, ROUTER), 'utf8'))).toBe(true);
+  });
+});
+
+// P2-4 (spec §8 常量迁移): a session with no length is taken to last
+// DEFAULT_DURATION_MIN. The roll-call reminder in 0005_sessions.sql says the same
+// thing in SQL; the two must not drift apart.
+describe('session constants that SQL repeats', () => {
+  it('DEFAULT_DURATION_MIN equals COALESCE(s.duration_min, …) in 0005_sessions.sql', () => {
+    const sql = readFileSync(path.join(ROOT, 'server/migrations/0005_sessions.sql'), 'utf8');
+    const defaults = [...sql.matchAll(/COALESCE\(s\.duration_min, (\d+)\)/g)].map((m) => Number(m[1]));
+    expect(defaults.length, 'no COALESCE(s.duration_min, N) in 0005_sessions.sql').toBeGreaterThan(0);
+    expect(new Set(defaults)).toEqual(new Set([DEFAULT_DURATION_MIN]));
   });
 });
