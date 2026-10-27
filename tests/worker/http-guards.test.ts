@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index';
 import { SESSION_COOKIE, STATE_COOKIE, makeSignedState, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
-import { createSession } from '../../worker/sessions';
 import { expireDeadline, noAiEnv, seedUser, statusOf } from './helpers';
 
 afterEach(() => {
@@ -351,13 +350,6 @@ describe('READ_ONLY maintenance mode', () => {
     );
     expect(res.status).toBe(503);
     expect(await errorOf(res)).toMatch(/只读/);
-
-    const patch = await call(
-      '/api/sessions/1',
-      { method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: BASE }, body: '{}' },
-      RO,
-    );
-    expect(patch.status).toBe(503);
   });
 
   it('refuses the OAuth callback — it is a GET that writes the user row', async () => {
@@ -420,7 +412,7 @@ describe('U+0000 and out-of-range ids are refused at the edge', () => {
     await seedUser({ id: 'judge', judge: true });
     await seedUser({ id: 'p', score: 50 });
     // Otherwise valid filings: only the NUL can make them fail.
-    const valid = { subject_id: 'p', type: 'on_time_bonus' };
+    const valid = { subject_id: 'p', type: 'no_show', claim: '说好八点开黑，结果一直没有上线，也没有说明。' };
     for (const extra of [{ tags: ['ok', { deep: 'a\u0000' }] }, { 'k\u0000': 1 }]) {
       const res = await postAs('judge', '/api/records', JSON.stringify({ ...valid, ...extra }));
       expect(res.status).toBe(400);
@@ -445,7 +437,7 @@ describe('U+0000 and out-of-range ids are refused at the edge', () => {
   });
 
   it('answers 400 for an id beyond 2^53 instead of failing the query', async () => {
-    for (const path of ['/api/records/100000000000000000000', '/api/sessions/1e21', '/api/records?session=9007199254740993']) {
+    for (const path of ['/api/records/100000000000000000000', '/api/records?session=9007199254740993']) {
       const res = await call(path);
       expect(res.status, path).toBe(400);
     }
@@ -490,32 +482,5 @@ describe('who may become a judge', () => {
   it('lets an admin grant it to themselves', async () => {
     await seedUser({ id: 'a', admin: true });
     expect((await setRoles('a', { is_judge: true })).status).toBe(200);
-  });
-});
-
-describe('POST /api/sessions/:id/rsvp', () => {
-  const SECRET = 'test-session-secret-0123456789abcdef';
-
-  async function rsvpAs(sub: string, id: number, body: Record<string, unknown>): Promise<Response> {
-    const token = await signSession({ sub }, SECRET);
-    return call(`/api/sessions/${id}/rsvp`, {
-      method: 'POST',
-      headers: { Cookie: `${SESSION_COOKIE}=${token}`, Origin: BASE, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  it('takes the start time the page showed: a stale one is a 409', async () => {
-    const organizer = await seedUser({ id: 'org' });
-    await seedUser({ id: 'p' });
-    const startsAt = new Date(Date.now() + 3_600_000).toISOString();
-    const session = await createSession(env.DB, organizer, { starts_at: startsAt, invite: ['p'] }, 8);
-    const stale = new Date(Date.parse(startsAt) - 3_600_000).toISOString();
-    const refused = await rsvpAs('p', session.id, { rsvp: 'going', starts_at: stale });
-    expect(refused.status).toBe(409);
-    expect(await errorOf(refused)).toMatch(/重新确认/);
-    expect((await rsvpAs('p', session.id, { rsvp: 'going', starts_at: startsAt })).status).toBe(200);
-    // An older page that sends no time still works.
-    expect((await rsvpAs('p', session.id, { rsvp: 'maybe' })).status).toBe(200);
   });
 });

@@ -50,19 +50,6 @@ import {
   type BatchAccusation,
 } from './cases';
 import {
-  cancelSession,
-  createSession,
-  getSessionDetail,
-  listMyInvites,
-  listSessionHistory,
-  listSessions,
-  rollCall,
-  setRsvp,
-  settleSession,
-  updateSession,
-  type SessionScope,
-} from './sessions';
-import {
   ensureWeeklyReport,
   getLatestReport,
   regenerateReport,
@@ -77,8 +64,6 @@ import {
   writeSetting,
 } from './ai/config';
 import { judgeCase } from './ai/provider';
-import { listInvitable } from './invitable';
-import { inviteToSession } from './session-invites';
 import { nextResetAt, resetOffsetHours } from './time';
 import {
   type CookieConfig,
@@ -114,7 +99,6 @@ import {
   isRecordObject,
   NUL_MESSAGE,
   optBool,
-  optNumber,
   optString,
   parseCsvList,
   parseId,
@@ -285,34 +269,6 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     return c.json({ ...profile, records: redactRecords(profile.records, c.get('user')) });
   });
 
-  app.get('/api/sessions', async (c) => {
-    const caller = c.get('user');
-    const raw = c.req.query('scope');
-    if (raw === 'history') {
-      // P2-3: started sessions, cancelled ones too, paged by before=<id>.
-      const before = c.req.query('before');
-      const cursor = before === undefined ? null : parseId(before, '约局');
-      return c.json({ sessions: await listSessionHistory(c.env.DB, caller?.id ?? null, cursor) });
-    }
-    const scope: SessionScope =
-      raw === 'past' || raw === 'mine' || raw === 'upcoming' ? raw : 'upcoming';
-    if (scope === 'mine' && !caller) throw new ApiError(401, '未登录');
-    const sessions = await listSessions(c.env.DB, scope, caller?.id ?? null);
-    return c.json({ sessions });
-  });
-
-  app.get('/api/sessions/:id', async (c) => {
-    const caller = c.get('user');
-    const session = await getSessionDetail(
-      c.env.DB,
-      parseId(c.req.param('id'), '约局'),
-      caller?.id ?? null,
-    );
-    const records = await listRecords(c.env.DB, { session: session.id, limit: 100 });
-    privateToViewer(c);
-    return c.json({ session, records: redactRecords(records, caller) });
-  });
-
   // Same-origin avatar proxy: upstream avatars (e.g. nanako.org) may carry
   // `Cross-Origin-Resource-Policy: same-site`, which blocks embedding them from
   // another origin. Fetch them server-side and re-serve with permissive CORP.
@@ -369,7 +325,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
 
   // --- Cases ---------------------------------------------------------------
   // Two shapes: `subject_ids` (v3 default, AI classifies each) or `subject_id`
-  // + `type` (deterministic — roll-call settlement, bonuses, corrections).
+  // + `type` (a judge explicitly names a penalty type).
   app.post('/api/records', async (c) => {
     const caller = requireUser(c.get('user'));
     const body = await readJsonBody(c.req.raw);
@@ -396,12 +352,17 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       return c.json({ ...result, records: redactRecords(result.records, caller) });
     }
 
+    const type = optString(body.type);
+    if (type && VIOLATION_MAP[type]?.kind === 'bonus') {
+      if (!caller.is_judge) throw new ApiError(403, '需要裁判权限');
+      throw new ApiError(400, '加分类型已停用');
+    }
     const record = await fileCase(
       c.env.DB,
       caller,
       {
         subject_id: requireString(body.subject_id, 'subject_id'),
-        type: optString(body.type),
+        type,
         claim: optString(body.claim),
         note: optString(body.note),
       },
@@ -483,113 +444,6 @@ export function registerRoutes(app: Hono<AppEnv>): void {
     const caller = requireUser(c.get('user'));
     const record = await revokeCase(c.env.DB, caller, parseId(c.req.param('id'), '记录'));
     return c.json({ record: redactRecord(record, caller) });
-  });
-
-  // --- Sessions ------------------------------------------------------------
-  app.post('/api/sessions', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const session = await createSession(
-      c.env.DB,
-      caller,
-      {
-        title: body.title,
-        game: body.game,
-        starts_at: body.starts_at,
-        duration_min: body.duration_min,
-        capacity: body.capacity,
-        note: body.note,
-        invite: body.invite,
-      },
-      resetOffsetHours(c.env.RESET_TZ_OFFSET),
-    );
-    return c.json({ session });
-  });
-
-  app.patch('/api/sessions/:id', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const session = await updateSession(
-      c.env.DB,
-      caller,
-      parseId(c.req.param('id'), '约局'),
-      body,
-    );
-    return c.json({ session });
-  });
-
-  app.post('/api/sessions/:id/cancel', async (c) => {
-    const caller = requireUser(c.get('user'));
-    // No body (the web today) reads as {}: no reason.
-    const body = await readJsonBody(c.req.raw);
-    const session = await cancelSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.reason);
-    return c.json({ session });
-  });
-
-  // P2-1: invite more people after creation. Organizer or admin, open and not started.
-  app.post('/api/sessions/:id/invite', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const result = await inviteToSession(c.env.DB, caller, parseId(c.req.param('id'), '约局'), body.user_ids);
-    return c.json(result);
-  });
-
-  app.post('/api/sessions/:id/rsvp', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const session = await setRsvp(
-      c.env.DB,
-      caller,
-      parseId(c.req.param('id'), '约局'),
-      body.rsvp,
-      body.starts_at,
-    );
-    return c.json({ session });
-  });
-
-  app.post('/api/sessions/:id/rollcall', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const result = await rollCall(
-      c.env.DB,
-      caller,
-      parseId(c.req.param('id'), '约局'),
-      body.entries,
-      resetOffsetHours(c.env.RESET_TZ_OFFSET),
-    );
-    return c.json(result);
-  });
-
-  app.post('/api/sessions/:id/settle', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const body = await readJsonBody(c.req.raw);
-    const result = await settleSession(
-      c.env.DB,
-      caller,
-      parseId(c.req.param('id'), '约局'),
-      body.file,
-      optBool(body.skip_all) === true,
-      c.env,
-      resetOffsetHours(c.env.RESET_TZ_OFFSET),
-    );
-    return c.json(result);
-  });
-
-  // --- Invites -------------------------------------------------------------
-  app.get('/api/me/invites', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const sessions = await listMyInvites(c.env.DB, caller.id);
-    return c.json({ sessions });
-  });
-
-  // P2-2: who the caller could invite. Under /api/me/ because GET
-  // /api/users/:id would read /api/users/invitable as a user id. Private:
-  // last_played_with_me_at is the caller's own history.
-  app.get('/api/me/invitable', async (c) => {
-    const caller = requireUser(c.get('user'));
-    const users = await listInvitable(c.env.DB, caller.id);
-    privateToViewer(c);
-    return c.json({ users });
   });
 
   // --- Weekly report -------------------------------------------------------
