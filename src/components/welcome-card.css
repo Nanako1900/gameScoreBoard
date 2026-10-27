@@ -56,6 +56,17 @@
   text-underline-offset: 3px;
 }
 
+@media (pointer: coarse) {
+  /* Inline link in a sentence: grow the hit area to --tap-min without moving the
+     line (the body line-height is 1.55, so the text box is 1.55em tall). */
+  .welcome__discord a {
+    --welcome-tap-pad: calc((var(--tap-min) - 1.55em) / 2);
+    display: inline-block;
+    padding-block: var(--welcome-tap-pad);
+    margin-block: calc(-1 * var(--welcome-tap-pad));
+  }
+}
+
 @media (hover: hover) {
   .welcome__close:hover {
     color: var(--text);

@@ -177,3 +177,10 @@
   align-self: center;
   margin-top: 0.75rem;
 }
+
+@media (pointer: coarse) {
+  /* .btn--sm is 40px on touch; 看更多 is a standalone control, so give it the full target. */
+  .feed__more {
+    min-height: var(--tap-min);
+  }
+}

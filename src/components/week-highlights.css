@@ -32,9 +32,11 @@
 }
 
 @media (pointer: coarse) {
-  /* Inline name buttons: grow the hit area without moving the line. */
+  /* Inline name buttons: grow the hit area to --tap-min without moving the line.
+     The button inherits .wh's 1.6 line-height, so its text box is 1.6em tall. */
   .wh__link {
-    padding-block: 0.6rem;
-    margin-block: -0.6rem;
+    --wh-tap-pad: calc((var(--tap-min) - 1.6em) / 2);
+    padding-block: var(--wh-tap-pad);
+    margin-block: calc(-1 * var(--wh-tap-pad));
   }
 }
