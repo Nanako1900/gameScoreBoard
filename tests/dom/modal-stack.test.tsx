@@ -382,3 +382,81 @@ describe('Modal — variants and markup', () => {
     expect(onDialogClose).not.toHaveBeenCalled();
   });
 });
+
+describe('Modal — page variant', () => {
+  function PageHarness({ onClose = (): void => {}, headingFocusable = true }: { onClose?: () => void; headingFocusable?: boolean }) {
+    return (
+      <>
+        <Modal open onClose={onClose} labelledBy="page-title" variant="page">
+          <h2 id="page-title" tabIndex={headingFocusable ? -1 : undefined}>
+            选手
+          </h2>
+          <button type="button">页面里的按钮</button>
+        </Modal>
+        <button type="button">页面外的按钮</button>
+      </>
+    );
+  }
+
+  it('renders in place: no portal, no dialog role, no inert, not a layer', () => {
+    const root = makeRoot();
+    render(<PageHarness />, { container: root });
+
+    const section = root.querySelector('section.modal-page');
+    expect(section).not.toBeNull();
+    expect(section).toHaveAttribute('aria-labelledby', 'page-title');
+    expect(section).toHaveAttribute('tabindex', '-1');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
+    expect(root).not.toHaveAttribute('inert');
+    expect(root).not.toHaveAttribute('aria-hidden');
+    expect(layerCount()).toBe(0);
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('focuses the heading on open, falling back to the section', () => {
+    const { unmount } = render(<PageHarness />);
+    expect(screen.getByRole('heading', { name: '选手' })).toHaveFocus();
+    unmount();
+
+    const { container } = render(<PageHarness headingFocusable={false} />);
+    expect(container.querySelector('section.modal-page')).toHaveFocus();
+  });
+
+  it('does not trap Tab and does not close on Escape', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<PageHarness onClose={onClose} />);
+
+    await user.click(screen.getByRole('button', { name: '页面里的按钮' }));
+    await user.tab();
+    expect(screen.getByRole('button', { name: '页面外的按钮' })).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('a center dialog over a page still makes #root inert and owns Escape', async () => {
+    const root = makeRoot();
+    const user = userEvent.setup();
+    const onPageClose = vi.fn();
+    const onDialogClose = vi.fn();
+    render(
+      <>
+        <Modal open onClose={onPageClose} labelledBy="page-title-2" variant="page">
+          <h2 id="page-title-2" tabIndex={-1}>
+            约局
+          </h2>
+        </Modal>
+        <Modal open onClose={onDialogClose} labelledBy="over-title">
+          <h2 id="over-title">点名</h2>
+        </Modal>
+      </>,
+      { container: root },
+    );
+    expect(root).toHaveAttribute('inert');
+    await user.keyboard('{Escape}');
+    expect(onDialogClose).toHaveBeenCalledTimes(1);
+    expect(onPageClose).not.toHaveBeenCalled();
+  });
+});

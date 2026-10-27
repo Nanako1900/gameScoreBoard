@@ -12,7 +12,7 @@ import {
 } from '../lib/modalStack';
 import './modal.css';
 
-export type ModalVariant = 'center' | 'sheet' | 'drawer';
+export type ModalVariant = 'center' | 'sheet' | 'drawer' | 'page';
 
 interface ModalProps {
   open: boolean;
@@ -27,6 +27,8 @@ interface ModalProps {
   /** Optional: rendered as <h2 id={labelledBy} className="modal__title"> inside .modal__bar. A caller that passes it must not render its own element with that id. */
   title?: React.ReactNode;
 }
+
+type LayerVariant = Exclude<ModalVariant, 'page'>;
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -130,8 +132,31 @@ function useLayer(
   }, [active]);
 }
 
+/**
+ * The in-place page variant joins nothing: no portal, no inert, no trap, no
+ * stack, no Escape. It only moves focus to the caller's heading (id={labelledBy},
+ * tabIndex={-1}) on open, falling back to the section itself.
+ */
+function usePageFocus(
+  active: boolean,
+  labelledBy: string,
+  sectionRef: React.RefObject<HTMLElement>,
+): void {
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const heading = document.getElementById(labelledBy);
+    heading?.focus();
+    if (document.activeElement !== heading) {
+      sectionRef.current?.focus();
+    }
+    // `active` only, like useLayer: a re-render must not move focus again.
+  }, [active]);
+}
+
 interface ModalBarProps {
-  variant: ModalVariant;
+  variant: LayerVariant;
   labelledBy: string;
   title: React.ReactNode | undefined;
   onClose: () => void;
@@ -155,7 +180,7 @@ function ModalBar({ variant, labelledBy, title, onClose }: ModalBarProps): JSX.E
 }
 
 interface LayerBodyProps {
-  variant: ModalVariant;
+  variant: LayerVariant;
   labelledBy: string;
   title: React.ReactNode | undefined;
   onClose: () => void;
@@ -163,7 +188,7 @@ interface LayerBodyProps {
 }
 
 /** Every existing caller lands here: a center dialog that brings its own heading. */
-function isLegacyLayout(variant: ModalVariant, title: React.ReactNode | undefined): boolean {
+function isLegacyLayout(variant: LayerVariant, title: React.ReactNode | undefined): boolean {
   return variant === 'center' && title === undefined;
 }
 
@@ -193,7 +218,7 @@ function LayerBody({ variant, labelledBy, title, onClose, children }: LayerBodyP
 
 /** Backdrop and panel classes; the legacy center layout adds no modifier classes. */
 function layerClasses(
-  variant: ModalVariant,
+  variant: LayerVariant,
   size: NonNullable<ModalProps['size']>,
   title: React.ReactNode | undefined,
 ): { backdrop: string; panel: string } {
@@ -206,7 +231,7 @@ function layerClasses(
 
 interface LayerProps {
   panelRef: React.RefObject<HTMLDivElement>;
-  variant: ModalVariant;
+  variant: LayerVariant;
   size: NonNullable<ModalProps['size']>;
   labelledBy: string;
   title: React.ReactNode | undefined;
@@ -255,7 +280,7 @@ function Layer({
  * Motion is transform/opacity only and disabled under prefers-reduced-motion.
  *
  * Open dialogs form a stack (src/lib/modalStack.ts): only the top one answers
- * Escape and Tab.
+ * Escape and Tab. `variant="page"` is not a layer at all — see usePageFocus.
  */
 export function Modal({
   open,
@@ -268,15 +293,25 @@ export function Modal({
   title,
 }: ModalProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
   });
 
-  useLayer(open, panelRef, onCloseRef);
+  const isPage = variant === 'page';
+  useLayer(open && !isPage, panelRef, onCloseRef);
+  usePageFocus(open && isPage, labelledBy, pageRef);
 
   if (!open) {
     return null;
+  }
+  if (variant === 'page') {
+    return (
+      <section ref={pageRef} className="modal-page" aria-labelledby={labelledBy} tabIndex={-1}>
+        {children}
+      </section>
+    );
   }
   return (
     <Layer
