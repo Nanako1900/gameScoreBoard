@@ -176,3 +176,19 @@
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+
+/* P0-6 — what an answer commits to, and the full notice. */
+.sdt__rsvp-block {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.sdt__rsvp-note {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.sdt__rsvp-full {
+  font-size: var(--fs-sm);
+  color: var(--ok);
+}

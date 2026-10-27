@@ -4,12 +4,15 @@ import {
   RSVP_LABEL,
   SELF_RSVPS,
   SESSION_STATUS_LABEL,
+  isSelfRsvp,
 } from '@shared/attendance';
-import type { SelfRsvp } from '@shared/attendance';
+import type { Rsvp, SelfRsvp } from '@shared/attendance';
 import type { RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
+import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
 import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
+import { useUndo } from '../lib/useUndo';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { ConfirmInline } from './ConfirmInline';
@@ -44,6 +47,7 @@ export function SessionDetailDialog({
   const [flash, setFlash] = useState<string | null>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const toast = useToast();
+  const offerUndo = useUndo();
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -81,6 +85,36 @@ export function SessionDetailDialog({
       return false;
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Toast after an answer; a change between two own answers can be undone. */
+  const announceRsvp = (id: number, startsAt: string, prev: Rsvp | null, next: SelfRsvp): void => {
+    const feedback = rsvpFeedback(prev, next);
+    if (!feedback) return;
+    if (!feedback.undoable || prev === null || !isSelfRsvp(prev)) {
+      toast.show({ message: feedback.message, tone: 'ok' });
+      return;
+    }
+    const restore: SelfRsvp = prev;
+    offerUndo({
+      message: feedback.message,
+      // The time this answer was given to, not whatever is on screen later: if
+      // the session has moved since, the server says 409 and the toast says so —
+      // an answer to the old time must not land on the new one.
+      undo: () => setRsvp(id, restore, startsAt),
+      onUndone: () => {
+        void load();
+        onChanged();
+      },
+    });
+  };
+
+  const answer = async (next: SelfRsvp): Promise<void> => {
+    if (!session) return;
+    const { id, starts_at: startsAt, my_rsvp: prev } = session;
+    if (await mutate(() => setRsvp(id, next, startsAt))) {
+      announceRsvp(id, startsAt, prev, next);
     }
   };
 
@@ -150,23 +184,7 @@ export function SessionDetailDialog({
             {flash && <p className="sdt__flash">{flash}</p>}
 
             {canRsvp && (
-              <div className="sdt__rsvp" role="group" aria-label="我的报名">
-                <span className="sdt__rsvp-label">我：</span>
-                {RSVP_ORDER.map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    className={`btn btn--sm${
-                      session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'
-                    }`}
-                    disabled={busy}
-                    aria-pressed={session.my_rsvp === r}
-                    onClick={() => void mutate(() => setRsvp(session.id, r, session.starts_at))}
-                  >
-                    {RSVP_LABEL[r]}
-                  </button>
-                ))}
-              </div>
+              <RsvpControls session={session} busy={busy} onAnswer={(r) => void answer(r)} />
             )}
 
             <section className="sdt__section">
@@ -252,6 +270,54 @@ export function SessionDetailDialog({
         />
       )}
     </>
+  );
+}
+
+const FULL_NOTICE_ID = 'session-detail-full';
+
+interface RsvpControlsProps {
+  session: SessionDetail;
+  busy: boolean;
+  onAnswer: (rsvp: SelfRsvp) => void;
+}
+
+/**
+ * The panel's one set of 来 / 待定 / 不来 (session-rsvp-moved pins a single 来)
+ * and what an answer commits to. 来 closes once the seats are taken — the
+ * server refuses it anyway — and the notice says what to do instead.
+ */
+function RsvpControls({ session, busy, onAnswer }: RsvpControlsProps): JSX.Element {
+  const closed = goingClosed(session);
+  const notice = fullNotice(session);
+  return (
+    <div className="sdt__rsvp-block">
+      <div className="sdt__rsvp" role="group" aria-label="我的报名">
+        <span className="sdt__rsvp-label">我：</span>
+        {RSVP_ORDER.map((r) => {
+          const shut = r === 'going' && closed;
+          return (
+            <button
+              key={r}
+              type="button"
+              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}`}
+              disabled={busy || shut}
+              aria-pressed={session.my_rsvp === r}
+              aria-describedby={shut && notice ? FULL_NOTICE_ID : undefined}
+              onClick={() => onAnswer(r)}
+            >
+              {RSVP_LABEL[r]}
+            </button>
+          );
+        })}
+      </div>
+      <p className="sdt__rsvp-note">来 = 承诺，没来会被记一笔；待定不算承诺。</p>
+      <p className="sdt__rsvp-note">开局前说不来，点名结算不会记你。</p>
+      {notice && (
+        <p id={FULL_NOTICE_ID} className="sdt__rsvp-full">
+          {notice}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -333,3 +333,81 @@ describe('取消这局', () => {
     expect(screen.getByRole('button', { name: '确认取消' })).toBeEnabled();
   });
 });
+
+describe('answering in the dialog', () => {
+  /** GETs reflect the last answer POSTed. */
+  function stubAnswers(first: Rsvp, extra: Partial<SessionDetail> = {}): Call[] {
+    let mine: Rsvp = first;
+    return mockFetch({
+      'GET /api/sessions/1': () => detail(makeSession({ ...extra, my_rsvp: mine })),
+      'POST /api/sessions/1/rsvp': (call) => {
+        mine = (call.body as { rsvp: Rsvp }).rsvp;
+        return json(200, { session: makeSession({ ...extra, my_rsvp: mine }) });
+      },
+    });
+  }
+
+  it('says what an answer means, without an alert', async () => {
+    stubAnswers('invited');
+    renderDialog(PLAYER);
+    expect(await screen.findByRole('button', { name: '来' })).toBeEnabled();
+    expect(screen.getByText('来 = 承诺，没来会被记一笔；待定不算承诺。')).toBeInTheDocument();
+    expect(screen.getByText('开局前说不来，点名结算不会记你。')).toBeInTheDocument();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('a first answer gets a note and no undo (invited cannot be restored)', async () => {
+    const calls = stubAnswers('invited');
+    const user = userEvent.setup();
+    renderDialog(PLAYER);
+    await user.click(await screen.findByRole('button', { name: '来' }));
+    expect(await screen.findByText('已回复：来。开局前想改随时改。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
+    expect(writes(calls)).toEqual([
+      { method: 'POST', path: '/api/sessions/1/rsvp', body: { rsvp: 'going', starts_at: START } },
+    ]);
+  });
+
+  it('switching answers says 已改成 and offers 撤销', async () => {
+    stubAnswers('maybe');
+    const user = userEvent.setup();
+    renderDialog(PLAYER);
+    await user.click(await screen.findByRole('button', { name: '来' }));
+    expect(await screen.findByText('已改成：来')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤销' })).toBeInTheDocument();
+  });
+
+  it('changing to 不来 can be undone back to the previous answer', async () => {
+    const calls = stubAnswers('maybe');
+    const user = userEvent.setup();
+    const onChanged = renderDialog(PLAYER);
+    await user.click(await screen.findByRole('button', { name: '不来' }));
+    expect(await screen.findByText('收到，提前说了点名就不会记你 👍')).toBeInTheDocument();
+    expect(writes(calls)).toHaveLength(1); // offered, not sent
+    await user.click(screen.getByRole('button', { name: '撤销' }));
+    expect(await screen.findByText('已撤销')).toBeInTheDocument();
+    expect(writes(calls).map((c) => c.body)).toEqual([
+      { rsvp: 'out', starts_at: START },
+      { rsvp: 'maybe', starts_at: START },
+    ]);
+    await waitFor(() => expect(screen.getByRole('button', { name: '待定' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it('a full session closes 来 and says what to do instead', async () => {
+    stubAnswers('invited', { capacity: 2, counts: { invited: 1, going: 2, maybe: 0, out: 0 } });
+    renderDialog(PLAYER);
+    const going = await screen.findByRole('button', { name: '来' });
+    expect(going).toBeDisabled();
+    expect(going).toHaveAccessibleDescription('来 2/2 满了，可以先报待定。');
+    expect(screen.getByRole('button', { name: '待定' })).toBeEnabled();
+    expect(screen.getByText('来 2/2 满了，可以先报待定。')).toBeInTheDocument();
+  });
+
+  it('someone already going keeps 来 when it is full', async () => {
+    stubAnswers('going', { capacity: 2, counts: { invited: 1, going: 2, maybe: 0, out: 0 } });
+    renderDialog(PLAYER);
+    expect(await screen.findByRole('button', { name: '来' })).toBeEnabled();
+    expect(screen.queryByText(/满了/)).toBeNull();
+  });
+});
