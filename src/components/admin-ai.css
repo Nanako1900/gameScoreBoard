@@ -1,8 +1,7 @@
 /* 管理端 AI 配置 */
 
 .aai__title {
-  font-size: var(--text-h1);
-  padding-right: 2rem;
+  font-size: var(--text-h2);
 }
 
 .aai__subtitle {
@@ -31,16 +30,6 @@
   margin-top: 0.85rem;
   font-size: var(--text-sm);
   color: var(--up);
-}
-
-.aai__code {
-  display: inline-block;
-  padding: 0.1em 0.45em;
-  margin-left: 0.4em;
-  border-radius: var(--r-sm);
-  font-family: var(--font-num);
-  font-size: 0.85em;
-  background: rgba(0, 0, 0, 0.4);
 }
 
 /* --- health --------------------------------------------------------------- */

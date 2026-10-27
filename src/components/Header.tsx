@@ -13,7 +13,7 @@ interface HeaderProps {
   me: User | null;
   onLogout: () => void;
   onOpenOnboarding: () => void;
-  /** Provided only for admins — opens the AI sentencing configuration. */
+  /** Retained for older callers; AI settings now live at /admin/ai. */
   onOpenAiPanel?: () => void;
   pending?: boolean;
   layout?: RouteLayout;
@@ -53,7 +53,7 @@ export function Header(props: HeaderProps): JSX.Element {
     </div>
     {!props.pending && <div className="hdr__actions">{props.me
       ? <AccountMenu me={props.me} myPath={props.myPath ?? playerPath(props.me.id)} dot={props.meDot}
-        onOpenOnboarding={props.onOpenOnboarding} onRecord={props.onRecord} onOpenAdmin={props.onOpenAiPanel} onLogout={props.onLogout} />
+        onOpenOnboarding={props.onOpenOnboarding} onRecord={props.onRecord} onLogout={props.onLogout} />
       : <LoginLink className="btn btn--gold">登录</LoginLink>}</div>}
   </div></header>;
 }

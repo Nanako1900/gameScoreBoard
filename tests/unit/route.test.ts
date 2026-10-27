@@ -42,7 +42,6 @@ describe('parseRoute', () => {
       '/me',
       '/me/notify',
       '/review',
-      '/admin/ai',
       '/admin/members',
       '/join',
       '/cases/new',
@@ -263,7 +262,16 @@ describe('voice administration routes', () => {
     expect(formatRoute(route)).toBe('/admin/voice');
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
   });
-  it.each(['/admin/ai', '/admin/members', '/admin/voice/more', '/admin//'])('does not introduce later admin routes: %s', (path) => {
+  it.each(['/admin/members', '/admin/voice/more', '/admin//'])('does not introduce later admin routes: %s', (path) => {
     expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+});
+
+
+describe('AI administration route', () => {
+  it.each(['/admin/ai', '/admin/ai/'])('parses and formats %s as a full page', (path) => {
+    const route = { name: 'admin', tab: 'ai' } as const;
+    expect(parseRoute(path)).toEqual(route); expect(formatRoute(route)).toBe('/admin/ai');
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
   });
 });

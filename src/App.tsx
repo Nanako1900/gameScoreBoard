@@ -28,7 +28,6 @@ import { WelcomeCard } from './components/WelcomeCard';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
 import { MyScoreLine } from './components/MyScoreLine';
-import { AdminAiPanel } from './components/AdminAiPanel';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
@@ -86,7 +85,6 @@ function AppMain(): JSX.Element {
   const [welcomePending, setWelcomePending] = useState(welcomeEntry.requested);
   const welcomeRedirected = useRef(false);
   const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [todoRefreshKey, setTodoRefreshKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(readOnboardingDismissed);
@@ -270,7 +268,6 @@ function AppMain(): JSX.Element {
         me={me}
         onLogout={() => void handleLogout()}
         onOpenOnboarding={() => navigate(WELCOME_PATH)}
-        onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
       <main className="app__main" hidden={covered}>
@@ -335,7 +332,6 @@ function AppMain(): JSX.Element {
         />
       )}
 
-      {aiPanelOpen && <AdminAiPanel open onClose={() => setAiPanelOpen(false)} />}
       {tabs && <BottomTabs me={me} route={location.route} todoCount={todoBadgeCount(items)} meDot={meNeedsAttention(items)} myPath={myPath} />}
     </div>
   );
