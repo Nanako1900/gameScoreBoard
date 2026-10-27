@@ -5,7 +5,7 @@
 > 绑定页和 bot 都读 PostgreSQL，所以要等 API 切到 Coolify（[DEPLOY-CUTOVER.md](DEPLOY-CUTOVER.md)）之后才有意义。
 >
 > **合并本期 PR 不会改变线上行为**：`DISCORD_TOKEN` 留空时 `bot` 空闲（不连 Discord，健康检查照常绿）；
-> `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` 留空时 `/link/discord` 和 `/api/me/discord` 都是 404，
+> `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` 留空时 `/link/discord`、`/api/me/discord` 和 `POST /api/me/discord/notify` 都是 404，
 > 网页上的 Discord 卡片自动隐藏。
 
 | 命令 | 作用 | 谁看得到 |
@@ -17,7 +17,7 @@
 | `/verdicts [user]` | 最近 5 次判决 | 只有自己 |
 | `/todo` | 待写陈述、待回应的约局（每条都能直接点开）；管理员还能看到等得最久的待复核申诉 | 只有自己 |
 | `/report` | 最新一期周报 | 频道里所有人 |
-| `/notify 开/关` | 私信提醒开关（P6，默认开） | 只有自己 |
+| `/notify 开/关` | 私信提醒开关（P6，默认开）；网页上也能开关（`POST /api/me/discord/notify`，和 bot 是同一个开关；网页上的按钮随 `/me/notify` 页上线） | 只有自己 |
 | `/yue 时间 [人数]` | 发起约局（P7）：今晚 20/21/22 点、明晚、后天 20 点；卡片发到约局频道 | 只有自己（卡片在频道里） |
 
 Discord 里**没有任何管理操作**，改判、撤销、改分都只在网页上做。
