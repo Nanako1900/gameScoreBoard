@@ -344,6 +344,7 @@ export interface AiConfigPatch {
 // --- Weekly report ----------------------------------------------------------
 
 export interface ReportStats {
+  basis?: 'verdict';
   weekStart: string;
   weekEnd: string;
   sessionsPlayed: number;

@@ -14,6 +14,7 @@ interface WeeklyReportCardProps {
    * Renders no .wr-award at all — the home page names no 鸽王 (spec §2.4).
    */
   compact?: boolean;
+  hidePigeon?: boolean;
 }
 
 const DISMISS_KEY = 'edg.report.dismissed';
@@ -107,7 +108,7 @@ function CompactBody({ report }: { report: WeeklyReport }): JSX.Element {
       <p className="wr__compact-stats">
         <span>开局 <strong className="tabular">{s.sessionsPlayed}</strong></span>
         <span aria-hidden="true">·</span>
-        <span>立案 <strong className="tabular">{s.casesFiled}</strong></span>
+        <span>{s.basis === 'verdict' ? '判决' : '立案'} <strong className="tabular">{s.casesFiled}</strong></span>
         {s.attendanceRate !== null && (
           <>
             <span aria-hidden="true">·</span>
@@ -119,7 +120,7 @@ function CompactBody({ report }: { report: WeeklyReport }): JSX.Element {
   );
 }
 
-function FullBody({ report }: { report: WeeklyReport }): JSX.Element {
+function FullBody({ report, hidePigeon }: { report: WeeklyReport; hidePigeon?: boolean }): JSX.Element {
   const s = report.stats;
   return (
     <>
@@ -127,15 +128,15 @@ function FullBody({ report }: { report: WeeklyReport }): JSX.Element {
 
       <div className="wr__stats">
         <Stat value={String(s.sessionsPlayed)} label="开局" />
-        <Stat value={String(s.casesFiled)} label="立案" />
+        <Stat value={String(s.casesFiled)} label={s.basis === 'verdict' ? '判决' : '立案'} />
         <Stat value={String(s.totalPenalty)} label="总扣分" tone={s.totalPenalty < 0 ? 'down' : undefined} />
         <Stat value={attendance(s.attendanceRate)} label="出勤率" />
       </div>
 
       <ul className="wr__awards">
-        {s.star && <Award emoji="🏆" label="本周之星" who={s.star.name} val={fmtDelta(s.star.delta)} tone="up" />}
-        {s.pigeon && (
-          <Award emoji="🕊️" label="本周鸽王" who={s.pigeon.name} val={fmtDelta(s.pigeon.delta)} tone="down" />
+        {s.star && <Award emoji="🏆" label="上周之星" who={s.star.name} val={fmtDelta(s.star.delta)} tone="up" />}
+        {!hidePigeon && s.pigeon && (
+          <Award emoji="🕊️" label="上周鸽王" who={s.pigeon.name} val={fmtDelta(s.pigeon.delta)} tone="down" />
         )}
         {s.bestTalker && (
           <Award
@@ -179,6 +180,7 @@ export function WeeklyReportCard({
   regenerating = false,
   stale = false,
   compact = false,
+  hidePigeon = false,
 }: WeeklyReportCardProps): JSX.Element | null {
   const [hidden, setHidden] = useState(() => isDismissed(report.week_start));
   if (hidden) return null;
@@ -197,7 +199,7 @@ export function WeeklyReportCard({
         onRegenerate={onRegenerate}
         onDismiss={dismiss}
       />
-      {compact ? <CompactBody report={report} /> : <FullBody report={report} />}
+      {compact ? <CompactBody report={report} /> : <FullBody report={report} hidePigeon={hidePigeon} />}
     </section>
   );
 }

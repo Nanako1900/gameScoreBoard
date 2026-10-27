@@ -386,3 +386,96 @@ describe('previousWeekStart', () => {
     expect(Date.parse(`${week}T00:00:00Z`)).toBeLessThan(Date.now());
   });
 });
+
+// P3-7: the event that first applied a case's score determines its report week.
+describe('P3-7 verdict-time report basis', () => {
+  const currentWeek = (): string => new Date(Date.parse(`${previousWeekStart(OFFSET_HOURS)}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+  const sqlNowWeek = (): string => new Date(inThisWeek(24)).toISOString().replace('T', ' ').slice(0, 19);
+
+  async function judgedCase(options: { filedAt?: string; judgedAt?: string; type?: string; delta?: number; sessionId?: number } = {}): Promise<number> {
+    await seedUser({ id: 'verdict-judge', judge: true });
+    await seedUser({ id: 'verdict-player', username: '好好解释的人' });
+    const row = await env.DB.prepare(
+      `INSERT INTO records (subject_id, reporter_id, type, delta, claim, statement, status, verdict_source, created_at, session_id)
+       VALUES ('verdict-player', 'verdict-judge', ?, ?, '立案经过', '提前解释', 'decided', 'ai', ?, ?)`,
+    ).bind(options.type ?? 'no_show', options.delta ?? -9, options.filedAt ?? inLastWeek(), options.sessionId ?? null).run();
+    const id = Number(row.meta?.last_row_id);
+    if (options.judgedAt !== undefined) await scoreEvent(id, options.judgedAt, options.delta ?? -9);
+    return id;
+  }
+
+  async function scoreEvent(id: number, at: string, delta: number, userId = 'verdict-player'): Promise<void> {
+    await env.DB.prepare(`INSERT INTO score_events (user_id, delta, reason, resulting_score, created_at) VALUES (?, ?, ?, 91, ?)`)
+      .bind(userId, delta, `record:${id}`, at).run();
+  }
+
+  it('counts a case filed last week but judged this week only in the verdict week', async () => {
+    await judgedCase({ judgedAt: sqlNowWeek() });
+    const previous = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
+    const current = await computeStats(env.DB, currentWeek(), OFFSET_HOURS);
+    expect(previous.casesFiled).toBe(0); expect(previous.totalPenalty).toBe(0); expect(previous.bestTalker).toBeNull();
+    expect(current).toMatchObject({ basis: 'verdict', casesFiled: 1, totalPenalty: -9,
+      bestTalker: { name: '好好解释的人', savedBy: 6 } });
+  });
+
+  it('keeps last-week verdicts in last week even when filed earlier', async () => {
+    const earlier = new Date(Date.parse(inLastWeek() + 'Z') - 7 * 86_400_000).toISOString().replace('T', ' ').slice(0, 19);
+    await judgedCase({ filedAt: earlier, judgedAt: inLastWeek(2) });
+    expect(await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).toMatchObject({ basis: 'verdict', casesFiled: 1, totalPenalty: -9 });
+    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).casesFiled).toBe(0);
+  });
+
+  it('falls back to filing time for zero-delta records without an exact record event', async () => {
+    await judgedCase({ delta: 0 });
+    await env.DB.prepare(`INSERT INTO score_events (user_id, delta, reason, resulting_score, created_at) VALUES ('verdict-player', 0, 'record:seed', 100, ?)`)
+      .bind(sqlNowWeek()).run();
+    expect(await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).toMatchObject({ basis: 'verdict', casesFiled: 1, totalPenalty: 0 });
+    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).casesFiled).toBe(0);
+  });
+
+  it('uses the subject and exact record id when looking up a verdict event', async () => {
+    const id = await judgedCase({ judgedAt: sqlNowWeek() });
+    await scoreEvent(id, inLastWeek(), -9, 'verdict-judge');
+    expect((await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).casesFiled).toBe(0);
+    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).casesFiled).toBe(1);
+  });
+
+  it('uses the first matching event when later score corrections exist', async () => {
+    const id = await judgedCase({ judgedAt: inLastWeek(3) });
+    await scoreEvent(id, sqlNowWeek(), 2);
+    expect((await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).casesFiled).toBe(1);
+    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).casesFiled).toBe(0);
+  });
+
+  it('counts group wipes in the verdict week with the same expression', async () => {
+    const organizer = await seedUser({ id: 'verdict-org' });
+    const row = await env.DB.prepare(`INSERT INTO game_sessions (organizer_id, title, starts_at, status) VALUES (?, '团灭测试', ?, 'settled')`)
+      .bind(organizer.id, isoInLastWeek()).run();
+    await judgedCase({ judgedAt: sqlNowWeek(), type: 'no_show_group', delta: -20, sessionId: Number(row.meta?.last_row_id) });
+    expect((await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS)).sessionsCollapsed).toBe(0);
+    expect((await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).sessionsCollapsed).toBe(1);
+  });
+
+  it('still excludes cases that have not been decided', async () => {
+    const id = await judgedCase({ judgedAt: sqlNowWeek() });
+    await env.DB.prepare(`UPDATE records SET status = 'awaiting_statement' WHERE id = ?`).bind(id).run();
+    expect(await computeStats(env.DB, currentWeek(), OFFSET_HOURS)).toMatchObject({ casesFiled: 0, sessionsCollapsed: 0, bestTalker: null });
+  });
+
+  it('persists the same verdict-basis stats returned directly by computeStats', async () => {
+    await judgedCase({ judgedAt: inLastWeek(3) });
+    const report = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
+    const direct = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
+    expect(report?.stats).toEqual(direct); expect(report?.stats).toHaveProperty('basis', 'verdict');
+  });
+
+  it('does not recalculate an existing report written without basis', async () => {
+    const { basis: _newBasis, ...figures } = await computeStats(env.DB, previousWeekStart(OFFSET_HOURS), OFFSET_HOURS);
+    const oldStats = { ...figures, casesFiled: 7 };
+    await env.DB.prepare(`INSERT INTO weekly_reports (week_start, stats_json, narrative, source) VALUES (?, ?, '原来的周报', 'fallback')`)
+      .bind(previousWeekStart(OFFSET_HOURS), JSON.stringify(oldStats)).run();
+    await judgedCase({ judgedAt: inLastWeek() });
+    const report = await ensureWeeklyReport(env.DB, noAiEnv(), OFFSET_HOURS, REPORT_DUE);
+    expect(report?.stats).toEqual(oldStats); expect(report?.narrative).toBe('原来的周报');
+  });
+});

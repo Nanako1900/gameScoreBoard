@@ -39,6 +39,7 @@ export const DEFAULT_REPORT_PROMPT = `你是「EDG 信誉分」的周报主笔�
 
 /** Server-computed figures. Every field is already final — the AI only narrates. */
 export interface ReportStats {
+  basis?: 'verdict';
   weekStart: string;
   weekEnd: string;
   sessionsPlayed: number;

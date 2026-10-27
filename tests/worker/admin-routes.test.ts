@@ -1138,6 +1138,7 @@ describe('POST /api/admin/report/:week/regenerate', () => {
       source: 'fallback',
       narrative: '这周没有已结算的约局。没有人被记一笔，大家都挺靠谱。',
       stats: {
+        basis: 'verdict',
         weekStart: '2026-10-19',
         weekEnd: '2026-10-25',
         sessionsPlayed: 0,

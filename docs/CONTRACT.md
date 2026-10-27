@@ -392,9 +392,12 @@ fields) and answer `Cache-Control: private, no-store`.
   Monday-morning rush produces one narrative rather than one per visitor.
 - Last week's report is written from **Monday 10:30** board time on (not at
   midnight), and once every case filed that week has been judged — waiting at
-  most one statement window past the week's end, plus an hour — so a case
-  filed late on Sunday is counted (cases filed, total penalty) in its week. On
-  the Worker the lazy job runs after the overdue-case sweep for that reason.
+  most one statement window past the week's end, plus an hour. Cases, total
+  penalty, group wipes and 最会说话 count the week a case was judged — its first
+  `record:<id>` score event for the subject; older rows without that event fall
+  back to when they were filed. New stats carry `basis: 'verdict'`; reports
+  written before this change keep the numbers they were written with. On the
+  Worker the lazy job still runs after the overdue-case sweep.
   本周之星 / 鸽王 count score movement within the week (a case judged on Monday
   moves next week's), and neither the weekly heal nor an admin's corrections.
   Until last week's report is out, `/api/report/latest` is the one before.
