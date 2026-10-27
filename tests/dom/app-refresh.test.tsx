@@ -343,3 +343,46 @@ describe('App — a refresh that fails', () => {
     expect(screen.getByText(stale)).toBeInTheDocument();
   });
 });
+
+describe('App — the weekly reset passes with the page open', () => {
+  it('refetches config, shows 回血中… meanwhile, and never a negative countdown', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+      shouldAdvanceTime: true,
+    });
+    vi.setSystemTime(START);
+    const firstReset = new Date(START + 30_000).toISOString();
+    const nextReset = new Date(START + 30_000 + 7 * DAY).toISOString();
+    let configCalls = 0;
+    let release: (res: Response) => void = () => undefined;
+    const calls = mockFetch(
+      routes({
+        'GET /api/config': () => {
+          configCalls += 1;
+          if (configCalls === 1) return json(200, config(firstReset));
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        },
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: ROW });
+    expect(clock()).toBe('00:01');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MINUTE + 1_000);
+    });
+    expect(gets(calls, '/api/config')).toBe(2);
+    expect(clock()).toBe('回血中…');
+
+    await act(async () => {
+      release(json(200, config(nextReset)));
+    });
+    await waitFor(() => expect(clock()).toMatch(/^\d+天 \d{2}:\d{2}$/));
+    expect(clock()).not.toContain('-');
+    await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
+    expect(gets(calls, '/api/me')).toBe(2);
+    expect(gets(calls, '/api/config')).toBe(2);
+  });
+});

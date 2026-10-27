@@ -8,6 +8,7 @@ import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
 import { useVisibleRefresh } from './lib/useVisibleRefresh';
+import { useResetWatch } from './lib/useResetWatch';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
@@ -188,6 +189,15 @@ function AppMain(): JSX.Element {
     setSessionsKey((n) => n + 1);
   }, [ready, refresh]);
   useVisibleRefresh(handleVisible);
+
+  // Past nextResetAt: GET /api/config runs the weekly heal and returns next
+  // week's reset, so it goes first; refresh runs one at a time, so the board
+  // and my score are read after it.
+  const handleResetCrossed = useCallback((): void => {
+    void refresh(['config']);
+    void refresh(['leaderboard', 'me']);
+  }, [refresh]);
+  useResetWatch(ready?.config.nextResetAt ?? null, handleResetCrossed);
 
   // The admin re-rolls the weekly report's prose: nothing but the report changes.
   // It used to reject unhandled on failure; now the admin is told.
