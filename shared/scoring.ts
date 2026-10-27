@@ -195,3 +195,14 @@ export const TIERS: Tier[] = [
 export function tierFor(score: number): Tier {
   return TIERS.find((t) => score >= t.min) ?? TIERS[TIERS.length - 1];
 }
+
+// --- P3-2 ---
+export interface FilingViewer { id: string; is_admin: boolean; is_judge: boolean }
+/**
+ * An admin, or the judge who filed the case. Being its reporter is not enough:
+ * a session organizer files roll-call cases without being a judge, and must not
+ * then re-type them (a 小迟到 into a 团灭级放鸽) past the roll call's own rules.
+ */
+export function isFilingJudge(caller: FilingViewer, reporterId: string): boolean {
+  return caller.is_admin || (caller.is_judge && reporterId === caller.id);
+}

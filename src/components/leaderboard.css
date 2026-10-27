@@ -168,3 +168,6 @@
     display: none;
   }
 }
+
+.lb__more { display: inline-flex; align-items: center; min-height: var(--tap-min); font-size: var(--fs-sm); white-space: nowrap; }
+.lb__ellipsis { padding: 0.25rem; text-align: center; color: var(--muted); }

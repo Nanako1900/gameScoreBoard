@@ -8,15 +8,12 @@ import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
 import type { PinnedCase } from './lib/useCaseLookup';
 import { computeCounts, computeTrends } from './lib/feedStats';
-import { FEED_PREVIEW_COUNT } from './lib/constants';
 import { DISCORD_INVITE_URL } from './lib/env';
-import { revealSection } from './lib/revealSection';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
 import { useVisibleRefresh } from './lib/useVisibleRefresh';
 import { useResetWatch } from './lib/useResetWatch';
-import { todoCount } from './lib/tabTitle';
 import { useTabTitle } from './lib/useTabTitle';
 import { clearAllDrafts } from './lib/drafts';
 import { clearLoginReturn } from './lib/loginReturn';
@@ -24,27 +21,31 @@ import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
-import { Leaderboard } from './components/Leaderboard';
-import { WeekHighlights } from './components/WeekHighlights';
 import { WelcomeCard } from './components/WelcomeCard';
-import { RecordsFeed } from './components/RecordsFeed';
-import { RulesPanel } from './components/RulesPanel';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
-import { PendingBanner } from './components/PendingBanner';
 import { MyScoreLine } from './components/MyScoreLine';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { SessionsPanel } from './components/SessionsPanel';
 import { RecentSessions } from './components/RecentSessions';
 import { useLobbySessions } from './lib/useLobbySessions';
 import { AdminAiPanel } from './components/AdminAiPanel';
-import { InviteBanner } from './components/InviteBanner';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import { RouteView } from './components/RouteView';
 import type { BoardData } from './components/BoardPage';
 import { boardPath } from './lib/routes';
+import { COUNTDOWN_TICK_MS, BOARD_MINI_ROWS_PHONE, BOARD_MINI_ROWS_DESKTOP } from './lib/constants';
+import { buildTodo, handledSessionIds, meNeedsAttention, todoBadgeCount } from './lib/todo';
+import { readSeenCancelled, readUnboundDismissed, markCancelledSeen, dismissUnbound, clearTodoMarks } from './lib/todoMarks';
+import { useTodoSources } from './lib/useTodoSources';
+import { useRsvpAnswer } from './lib/useRsvpAnswer';
+import { useNow } from './lib/useNow';
+import { TodoInbox } from './components/TodoInbox';
+import { BoardMini } from './components/BoardMini';
+import { BottomTabs, showsBottomTabs } from './components/BottomTabs';
+import { Skeleton } from './components/Skeleton';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -73,8 +74,8 @@ function AppMain(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
-  // Controlled so the welcome card's 30 秒看懂 can open it.
-  const [rulesOpen, setRulesOpen] = useState(false);
+  const [seenCancelled, setSeenCancelled] = useState(readSeenCancelled);
+  const [unboundDismissed, setUnboundDismissed] = useState(readUnboundDismissed);
   // ?linked=discord is where the API lands the browser after a successful bind.
   // Read once at mount; the effect below strips it so a reload doesn't repeat it.
   const [discordLinked, setDiscordLinked] = useState(
@@ -145,6 +146,7 @@ function AppMain(): JSX.Element {
     // Drafts are this person's: whoever signs in next on this device must not find them.
     clearAllDrafts();
     clearLoginReturn();
+    clearTodoMarks();
     window.location.reload();
   }, []);
 
@@ -176,7 +178,6 @@ function AppMain(): JSX.Element {
   }, [refresh]);
   useResetWatch(ready?.config.nextResetAt ?? null, handleResetCrossed);
 
-  useTabTitle(ready ? todoCount(ready) : 0);
 
   // The admin re-rolls the weekly report's prose: nothing but the report changes.
   // It used to reject unhandled on failure; now the admin is told.
@@ -213,15 +214,18 @@ function AppMain(): JSX.Element {
   }, [ready, trends, counts, regenerating, openPlayer, handleRegenerate]);
   const lobby = useLobbySessions({ enabled: ready !== null, me: ready?.me ?? null, refreshKey: sessionsKey });
 
+  const now = useNow(COUNTDOWN_TICK_MS);
+  const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: sessionsKey });
+  const items = useMemo(() => ready?.me ? buildTodo({ me: ready.me, now, pending: ready.pending, myPending: ready.myPending,
+    invites: ready.invites, feed: ready.records, mine: lobby.mine, appealed: extra.appealed, discord: extra.discord,
+    seenCancelled, unboundDismissed }) : [], [ready, now, lobby.mine, extra.appealed, extra.discord, seenCancelled, unboundDismissed]);
+  const rsvp = useRsvpAnswer({ reload: lobby.reload, onAnswered: handleChanged });
+  useTabTitle(todoBadgeCount(items));
   if (state.status === 'loading') {
-    return (
-      <div className="app app--center">
-        <div className="app__loader" role="status" aria-live="polite">
-          <span className="app__loader-mark">EDG</span>
-          <span className="app__loader-text">信誉分加载中…</span>
-        </div>
-      </div>
-    );
+    return <div className="app"><Header pending config={null} me={null} onLogout={() => {}} onOpenOnboarding={() => {}} />
+      <main className="app__main" aria-busy="true"><span className="visually-hidden" role="status">信誉分加载中…</span>
+        <Skeleton label="要你处理加载中" /><Skeleton label="约局加载中" /><Skeleton label="信誉榜加载中" />
+      </main></div>;
   }
 
   if (state.status === 'error') {
@@ -238,22 +242,37 @@ function AppMain(): JSX.Element {
     );
   }
 
-  const { config, participants, records, me, myPending, invites, report } = state.data;
+  const { config, participants, records, me, report } = state.data;
   // A page (phone) or NotFound replaces the lobby; it stays mounted, only hidden (contract §8 #6).
   const covered = routeCoversHome(location.route, layout);
-  const canRecord = me?.is_judge === true;
-  const showRules = (): void => {
-    setRulesOpen(true);
-    revealSection('rules');
-  };
-
+  const canRecord = me?.is_judge === true || me?.is_admin === true;
   // MyScoreLine's 第 N 名: the board's own competition ranking (P0-4's rank.ts).
   const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
 
+  const tabs = layout === 'page' && showsBottomTabs(location.route);
+  const myPath = me ? playerPath(me.id) : '/';
+  const primary = me ? <TodoInbox items={lobby.loading || !extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
+    busyId={rsvp.busyId} error={rsvp.error} onAnswer={(session, answer) => void rsvp.answer(session, answer)} onOpenSession={openSession}
+    onOpenStatement={setStatementCase} onOpenNotify={() => setOnboardingOpen(true)}
+    onSeenCancelled={(id) => { markCancelledSeen(id); setSeenCancelled((old) => [...new Set([...old, id])]); }}
+    onDismissUnbound={() => { dismissUnbound(); setUnboundDismissed(true); }} />
+    : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
+      rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
+  const score = me && <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} />;
+  const sessions = <SessionsPanel lobby={lobby} hideCreate handledElsewhere={handledSessionIds(items)} boardTzOffsetHours={config.boardTzOffsetHours}
+    me={me} refreshKey={sessionsKey} onOpenSession={openSession} onCreate={() => navigate(sessionNewPath())} />;
+  const mini = <BoardMini participants={participants} trends={trends} counts={counts} records={records} nextResetAt={config.nextResetAt}
+    meId={me?.id} rows={layout === 'page' ? BOARD_MINI_ROWS_PHONE : BOARD_MINI_ROWS_DESKTOP} onSelect={openPlayer} />;
+  const weekly = report && <WeeklyReportCard report={report} compact moreTo={boardPath('report')} stale={board?.reportStale}
+    regenerating={regenerating} onRegenerate={board?.onRegenerate} />;
+  const recent = <RecentSessions refreshKey={sessionsKey} boardTzOffsetHours={config.boardTzOffsetHours} onOpenSession={openSession} />;
   return (
-    <div className="app">
+    <div className={`app${tabs ? ' app--tabs' : ''}`}>
+
       <Header
+        layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)}
+        onRecord={canRecord ? () => setCaseOpen(true) : undefined}
         config={config}
         me={me}
         onLogout={() => void handleLogout()}
@@ -261,105 +280,14 @@ function AppMain(): JSX.Element {
         onOpenAiPanel={me?.is_admin === true ? () => setAiPanelOpen(true) : undefined}
       />
 
-      {/* Stack order = 待办 → 我的分数 → 约局 → 榜单 → 周报 → 详表.
-       *
-       * Ordered by what the visitor can ACT on, most actionable first. It is set
-       * in the DOM rather than with CSS `order` on purpose: `order` would leave
-       * tab and screen-reader order following the source, so keyboard users would
-       * traverse the page in a different sequence than they see it. One order,
-       * three consumers.
-       *
-       * The two banners self-hide when empty, so a quiet day collapses straight
-       * to 约局 without leaving gaps. */}
       <main className="app__main" hidden={covered}>
-        {state.stale && (
-          <StaleNotice
-            message={state.stale.message}
-            onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))}
-          />
-        )}
-
+        <h1 className="visually-hidden">EDG 信誉分</h1>
+        {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
-
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
-
-        {!me && (
-          <WelcomeCard
-            loginUrl={AUTH_LOGIN_URL}
-            discordInviteUrl={DISCORD_INVITE_URL}
-            onShowRules={showRules}
-            rulesTo={boardPath('rules')}
-            weeklyHeal={config.weeklyHeal}
-          />
-        )}
-
-        <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={openSession} />
-
-        <PendingBanner cases={myPending} onOpen={setStatementCase} />
-
-        {/* Your score and Monday's heal, right after what you have to do (spec §2.4). */}
-        {me && <MyScoreLine me={me} rank={myRank} config={config} onOpen={() => openPlayer(me.id)} />}
-
-        {/* Above the board: this is the only block on the page that leads to a new
-            game happening, and it used to sit under a 520px leaderboard where
-            nobody scrolled to it. */}
-        <SessionsPanel
-          lobby={lobby}
-          boardTzOffsetHours={config.boardTzOffsetHours}
-          me={me}
-          refreshKey={sessionsKey}
-          onOpenSession={openSession}
-          onCreate={() => navigate(sessionNewPath())}
-        />
-        <RecentSessions refreshKey={sessionsKey} boardTzOffsetHours={config.boardTzOffsetHours} onOpenSession={openSession} />
-
-        {report && (
-          <WeeklyReportCard
-            report={report}
-            moreTo={boardPath('report')}
-            compact
-            stale={(() => {
-              const lastWeek = lastWeekStartOf(config.nextResetAt);
-              return lastWeek !== null && report.week_start < lastWeek;
-            })()}
-            regenerating={regenerating}
-            onRegenerate={
-              me?.is_admin === true
-                ? () => handleRegenerate(report.week_start)
-                : undefined
-            }
-          />
-        )}
-
-        <div className="app__grid">
-          <div className="app__col app__col--main">
-            <Leaderboard
-              participants={participants}
-              trends={trends}
-              counts={counts}
-              onSelect={openPlayer}
-              meId={me?.id ?? null}
-              highlights={
-                <WeekHighlights
-                  records={records}
-                  nextResetAt={config.nextResetAt}
-                  onSelectUser={openPlayer}
-                />
-              }
-            />
-            <RulesPanel config={config} open={rulesOpen} onOpenChange={setRulesOpen} />
-          </div>
-
-          <aside className="app__col app__col--side">
-            <RecordsFeed
-              records={records}
-              title="最新动态"
-              onSelectUser={openPlayer}
-              emptyHint="还没有任何记录，等待第一笔。"
-              previewCount={FEED_PREVIEW_COUNT}
-            />
-          </aside>
-        </div>
+        {layout === 'page' ? <>{primary}{score}{sessions}{mini}{weekly}{recent}</>
+          : <div className="app__lobby"><div className="app__lobby-main">{primary}{sessions}{recent}</div>
+            <aside className="app__lobby-side">{score}{mini}{weekly}</aside></div>}
       </main>
 
       <RouteView
@@ -384,20 +312,6 @@ function AppMain(): JSX.Element {
       <footer className="app__footer" hidden={covered}>
         <p>EDG 信誉分 · 开黑守约，从不放鸽开始</p>
       </footer>
-
-      {canRecord && (
-        <button
-          type="button"
-          className="app__fab"
-          onClick={() => setCaseOpen(true)}
-          aria-label="记一笔"
-        >
-          <span className="app__fab-plus" aria-hidden="true">
-            ✎
-          </span>
-          <span className="app__fab-label">记一笔</span>
-        </button>
-      )}
 
       {canRecord && me && (
         <CaseDialog
@@ -438,6 +352,7 @@ function AppMain(): JSX.Element {
       )}
 
       {aiPanelOpen && <AdminAiPanel open onClose={() => setAiPanelOpen(false)} />}
+      {tabs && <BottomTabs me={me} route={location.route} todoCount={todoBadgeCount(items)} meDot={meNeedsAttention(items)} myPath={myPath} />}
     </div>
   );
 }

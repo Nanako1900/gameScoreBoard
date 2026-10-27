@@ -13,7 +13,7 @@ import type {
   PendingCounts,
   PublicUser,
   RecordItem,
-  SessionItem,
+  InvitedSessionItem,
   User,
   WeeklyReport,
 } from '../types';
@@ -34,7 +34,7 @@ export interface CoreData {
   /** Cases where the signed-in user still owes a statement. */
   myPending: RecordItem[];
   /** Sessions the user was invited to and has not answered. */
-  invites: SessionItem[];
+  invites: InvitedSessionItem[];
   report: WeeklyReport | null;
 }
 
@@ -48,7 +48,7 @@ type MePart = Pick<CoreData, 'me' | 'pending' | 'myPending' | 'invites'>;
 const NO_PENDING: PendingCounts = { statements: 0, appeals: 0 };
 
 /** 'me' and its two follow-ups; a failed invites read falls back to `fallbackInvites`. */
-async function loadMe(fallbackInvites: SessionItem[]): Promise<MePart> {
+async function loadMe(fallbackInvites: InvitedSessionItem[]): Promise<MePart> {
   const { user, pending = NO_PENDING } = await getMe();
   // Only fetch the follow-ups that can possibly be non-empty: /api/me already
   // tells us whether anything is pending, and invites need a session at all.
@@ -60,7 +60,7 @@ async function loadMe(fallbackInvites: SessionItem[]): Promise<MePart> {
       ? getMyInvites()
           .then((r) => r.sessions)
           .catch(() => fallbackInvites)
-      : Promise.resolve<SessionItem[]>([]),
+      : Promise.resolve<InvitedSessionItem[]>([]),
   ]);
   return { me: user, pending, myPending, invites };
 }

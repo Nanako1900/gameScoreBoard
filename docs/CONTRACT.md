@@ -454,7 +454,10 @@ reaches `decided` rather than stranding a player's score.
 
 ## Frontend expectations
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
-  `/api/records?mine=pending` when `pending.statements > 0`.
+  `/api/records?mine=pending` when `pending.statements > 0`. Signed-in readers also load
+  `/api/sessions?scope=mine` and `/api/me/discord`; admins with pending appeals load
+  `/api/records?limit=50&status=appealed`. These supplemental reads settle independently;
+  their failure never blocks the page or raises a global notice.
 - Import display constants from `@shared/scoring` and `@shared/attendance`.
 - A pre-verdict case must never render its `delta` as `0` — show the pending
   range, or 判决后公开 when the API hid it (`pending_hidden`). Such a case says
@@ -462,8 +465,8 @@ reaches `decided` rather than stranding a player's score.
   — and its feed row shows only the name and 「处理中」.
 - Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
   label when it is null (pre-v3 rows).
-- An invitation is an action the user owes, so the invite banner outranks the
-  weekly report on the page.
+- Invitations and other actions the user owes appear in 「要你处理」 before the
+  score and sessions; the weekly report follows the compact board.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:

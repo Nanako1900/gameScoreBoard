@@ -20,6 +20,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.7rem;
+  min-height: var(--tap-min);
   transition: transform var(--dur-fast) var(--ease);
 }
 
@@ -42,7 +43,7 @@
 .hdr__logo-mark {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: var(--fs-md);
   letter-spacing: 0.06em;
   color: var(--gold);
 }
@@ -56,12 +57,12 @@
 .hdr__title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.15rem;
+  font-size: var(--fs-lg);
   letter-spacing: 0.04em;
 }
 
 .hdr__subtitle {
-  font-size: var(--text-xs);
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
@@ -75,15 +76,19 @@
 }
 
 .hdr__reset-time {
-  font-size: 1.05rem;
+  font-size: var(--fs-md);
   font-weight: 700;
-  color: var(--blue);
+  color: var(--text);
 }
+
+.hdr__reset-label { font-size: var(--fs-xs); }
 
 .hdr__actions {
   display: flex;
   align-items: center;
 }
+
+.hdr__actions > .btn { font-size: var(--fs-sm); }
 
 .hdr__menu {
   position: relative;
@@ -93,6 +98,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  min-height: var(--tap-min);
   padding: 0.28rem 0.55rem 0.28rem 0.3rem;
   border-radius: var(--r-pill);
   border: 1px solid var(--border);
@@ -109,7 +115,7 @@
 
 .hdr__username {
   font-weight: 600;
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
   max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -118,7 +124,7 @@
 
 .hdr__caret {
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 .hdr__dropdown {
@@ -149,7 +155,7 @@
 }
 
 .hdr__dropdown-roles {
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -157,7 +163,10 @@
   text-align: left;
   padding: 0.55rem 0.65rem;
   border-radius: var(--r-sm);
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
   color: var(--text);
   transition: background var(--dur-fast), color var(--dur-fast);
 }
@@ -202,3 +211,13 @@
     animation: none;
   }
 }
+
+.hdr__nav { display: flex; gap: 0.35rem; font-size: var(--fs-sm); }
+.hdr__nav a { display: inline-flex; align-items: center; min-height: var(--tap-min); padding: 0.45rem 0.65rem;
+  color: var(--muted); border: 1px solid transparent; border-radius: var(--r-pill); white-space: nowrap; }
+.hdr__nav a[aria-current="page"] { color: var(--action); border-color: var(--action); }
+.hdr__create { gap: 0.35rem; white-space: nowrap; font-size: var(--fs-sm); }
+.hdr__attention { width: 0.45rem; height: 0.45rem; border: 1px solid currentColor; border-radius: var(--r-pill); background: currentColor; }
+@media (hover: hover) { .hdr__nav a:hover { color: var(--text); background: var(--panel); } }
+@media (forced-colors: active) { .hdr__nav a[aria-current="page"] { border-color: Highlight; }
+  .hdr__attention { border-color: ButtonText; } }

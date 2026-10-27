@@ -7,6 +7,7 @@ import './my-score-line.css';
 interface MyScoreLineProps {
   /** Rendered only when me.is_participant. */
   me: User;
+  variant?: 'line' | 'card';
   /** competitionRanks over participants; null = not on the board. */
   rank: number | null;
   config: Config;
@@ -19,14 +20,14 @@ interface MyScoreLineProps {
  * config.nextResetAt, the numbers from config.weeklyHeal and MAX_SCORE.
  * 本周变化 is P4-5's.
  */
-export function MyScoreLine({ me, rank, config, onOpen }: MyScoreLineProps): JSX.Element | null {
+export function MyScoreLine({ me, rank, config, onOpen, variant = 'line' }: MyScoreLineProps): JSX.Element | null {
   const now = useNow(COUNTDOWN_TICK_MS);
   // Only people on the board are healed (worker/db.ts weeklyHeal: is_participant = 1).
   if (!me.is_participant) return null;
   const standing = rank === null ? `${me.score} 分` : `${me.score} 分 · 第 ${rank} 名`;
   const preview = healPreview(me.score, config, now);
   return (
-    <section className="msl panel" aria-label="我的分数">
+    <section className={`msl panel${variant === 'card' ? ' msl--card' : ''}`} aria-label="我的分数">
       {onOpen ? (
         <button type="button" className="msl__standing" onClick={onOpen}>
           {standing}

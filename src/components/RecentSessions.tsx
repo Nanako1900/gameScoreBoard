@@ -6,6 +6,7 @@ import { useNow } from '../lib/useNow';
 import { SessionCard } from './SessionCard';
 import { Link } from './Link';
 import { SESSION_HISTORY_PATH } from '../lib/routes';
+import { Skeleton } from './Skeleton';
 import './recent-sessions.css';
 
 interface RecentProps { refreshKey: number; boardTzOffsetHours?: number; onOpenSession: (id: number) => void }
@@ -30,7 +31,7 @@ export function RecentSessions({ refreshKey, boardTzOffsetHours, onOpenSession }
     <h2 id="recent-title"><button type="button" aria-expanded={expanded} onClick={() => setExpanded((old) => !old)}>最近结束</button></h2>
     {expanded && <div className="recent__body">
       {failed && <p role="status">这块没加载出来，你的操作没丢。<button type="button" className="btn btn--ghost btn--sm" onClick={retry}>重试</button></p>}
-      {loading ? <p>加载中…</p> : sessions.length ? <ul>{sessions.slice(0, RECENT_SESSIONS_SHOWN).map((s) =>
+      {loading ? <Skeleton label="最近结束加载中" lines={2} /> : sessions.length ? <ul>{sessions.slice(0, RECENT_SESSIONS_SHOWN).map((s) =>
         <SessionCard key={s.id} session={s} me={null} now={now} boardTzOffsetHours={boardTzOffsetHours} onOpen={() => onOpenSession(s.id)} />)}</ul>
         : !failed && <p>还没有已结束的约局。</p>}
       <Link className="recent__more" to={SESSION_HISTORY_PATH}>看全部历史 <span aria-hidden="true">›</span></Link>

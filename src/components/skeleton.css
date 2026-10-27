@@ -1,0 +1,8 @@
+.skel { display: grid; gap: 0.65rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-md); }
+.skel__line { display: block; height: 1rem; border-radius: var(--r-sm); background: var(--panel-2); }
+.skel__line:last-child { max-width: 75%; }
+@media (prefers-reduced-motion: no-preference) {
+  .skel__line { animation: skel-pulse 1.5s var(--ease) infinite alternate; }
+  @keyframes skel-pulse { to { opacity: 0.45; } }
+}
+@media (forced-colors: active) { .skel__line { border: 1px solid GrayText; } }

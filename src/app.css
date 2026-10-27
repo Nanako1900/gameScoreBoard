@@ -10,29 +10,7 @@
   padding: 2rem;
 }
 
-/* --- Loading / error ------------------------------------------------------ */
-
-.app__loader {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  color: var(--muted);
-}
-
-.app__loader-mark {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 2.5rem;
-  letter-spacing: 0.08em;
-  color: var(--gold);
-  animation: loader-pulse 1.4s var(--ease) infinite;
-}
-
-.app__loader-text {
-  font-size: var(--text-sm);
-  letter-spacing: 0.06em;
-}
+/* --- Error --------------------------------------------------------------- */
 
 .app__error {
   max-width: 420px;
@@ -70,30 +48,11 @@
   gap: clamp(1.1rem, 0.9rem + 1vw, 1.9rem);
 }
 
-/* The two to-do banners belong to each other — keep them as one cluster rather
-   than three equally-spaced strangers. */
-.app__main > .invite + .pending {
-  margin-top: calc(-1 * clamp(1.1rem, 0.9rem + 1vw, 1.9rem) + 0.5rem);
-}
-
-.app__grid {
-  display: grid;
-  grid-template-columns: 1.6fr 1fr;
-  gap: clamp(1rem, 0.75rem + 1.5vw, 2rem);
-  align-items: start;
-}
-
-.app__col {
-  display: flex;
-  flex-direction: column;
-  gap: clamp(1rem, 0.75rem + 1vw, 1.5rem);
-  min-width: 0;
-}
-
-.app__col--side {
-  position: sticky;
-  top: 5.5rem;
-}
+/* DOM main comes before the compact, sticky side column. */
+.app__lobby-main, .app__lobby-side { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.app__lobby { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.app__lobby-side { position: sticky; top: 5.5rem; }
+.app--tabs { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
 
 /* --- Footer --------------------------------------------------------------- */
 
@@ -103,90 +62,6 @@
   text-align: center;
   color: var(--faint);
   font-size: var(--text-xs);
-}
-
-/* --- FAB (judge record) --------------------------------------------------- */
-
-.app__fab {
-  position: fixed;
-  right: clamp(1rem, 0.5rem + 2vw, 2.5rem);
-  bottom: clamp(1rem, 0.5rem + 2vw, 2.5rem);
-  z-index: 60;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.85rem 1.35rem;
-  border-radius: var(--r-pill);
-  font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: #17130a;
-  background: linear-gradient(180deg, #ffd75e, var(--gold));
-  border: 1px solid var(--gold-dim);
-  box-shadow: var(--glow-gold), 0 12px 30px -10px rgba(245, 197, 66, 0.5);
-  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
-}
-
-@media (hover: hover) {
-  .app__fab:hover {
-    transform: translateY(-2px) scale(1.02);
-    box-shadow: var(--glow-gold), 0 18px 40px -12px rgba(245, 197, 66, 0.65);
-  }
-}
-
-.app__fab:active {
-  transform: translateY(0) scale(0.99);
-}
-
-.app__fab-plus {
-  font-size: 1.15rem;
-}
-
-@keyframes loader-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(0.97);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.03);
-  }
-}
-
-@media (max-width: 1023px) {
-  .app__grid {
-    grid-template-columns: 1fr;
-  }
-  .app__col--side {
-    position: static;
-  }
-}
-
-@media (max-width: 600px) {
-  .app__fab-label {
-    display: none;
-  }
-  .app__fab {
-    padding: 0.9rem;
-  }
-  .app__fab-plus {
-    font-size: 1.4rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app__loader-mark,
-  .app__fab {
-    animation: none;
-    transition: none;
-  }
-}
-
-@media (hover: hover) and (prefers-reduced-motion: reduce) {
-  .app__fab:hover {
-    transform: none;
-  }
 }
 
 /* --- Routes (P1-1) ------------------------------------------------------------ */
