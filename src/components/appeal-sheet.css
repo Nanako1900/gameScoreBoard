@@ -1,0 +1,74 @@
+/* 申诉 — a bottom sheet on phones (Modal variant="sheet"), centred above. */
+
+.aps {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.aps__case {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.aps__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.aps__label {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* ≥16px: iOS zooms the whole page into a smaller field on focus. */
+.aps__textarea {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.aps__textarea:disabled {
+  opacity: 0.6;
+}
+
+.aps__counter {
+  align-self: flex-end;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.aps__hint {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.aps__error {
+  font-size: var(--fs-sm);
+  color: var(--danger-text);
+}
+
+.aps__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+@media (max-width: 600px) {
+  /* Stacked in DOM order: the main action ends up last, nearest the thumb. */
+  .aps__actions {
+    flex-direction: column;
+  }
+
+  .aps__actions .btn {
+    width: 100%;
+  }
+}

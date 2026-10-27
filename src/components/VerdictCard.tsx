@@ -21,6 +21,11 @@ const SOURCE_BADGE: Record<VerdictSource, { label: string; tone: string }> = {
   admin_override: { label: '管理员改判', tone: 'override' },
 };
 
+/** 'AI 裁决' / '管理员改判' …, for places that name a verdict's source outside the card. */
+export function verdictSourceLabel(source: VerdictSource): string {
+  return SOURCE_BADGE[source].label;
+}
+
 const PRIVATE_TO = '只有当事人、立案人、裁判和管理员能看';
 
 /**
