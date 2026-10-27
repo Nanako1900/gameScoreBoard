@@ -241,6 +241,7 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       aiEnabled: cfg.enabled,
       maxBatchSubjects: MAX_BATCH_SUBJECTS,
       nextResetAt: nextResetAt(offset),
+      boardTzOffsetHours: offset,
     });
   });
 

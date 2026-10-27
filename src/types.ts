@@ -203,6 +203,8 @@ export interface Config {
   aiEnabled: boolean;
   maxBatchSubjects: number;
   nextResetAt: string;
+  /** Board time zone (RESET_TZ_OFFSET), hours. Absent from an older API: fall back to the browser's zone and say 本地时间. */
+  boardTzOffsetHours?: number;
 }
 
 // --- Endpoint response envelopes ------------------------------------------

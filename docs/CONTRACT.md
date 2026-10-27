@@ -234,7 +234,9 @@ Routes returning cases (`/api/records`, `/api/records/:id`, `/api/users/:id`,
 `/api/sessions/:id`) shape each case for the caller (see `RecordItem`'s PRIVATE
 fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/config`
-  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt }`
+  → `{ violations, tiers, weeklyHeal, weeklyBonusCap, statementWindowHours, aiEnabled, maxBatchSubjects, nextResetAt, boardTzOffsetHours }`
+  `boardTzOffsetHours` is `RESET_TZ_OFFSET` as a number of hours (default 8; may be fractional, e.g. 5.5): the board's
+  time zone, the one `/yue` and the weekly reset use. Times are still sent as ISO instants; the web shows them on this clock.
   Also fires (non-blocking) three idempotent jobs: the weekly heal, the
   overdue-case sweep, and last week's report generation.
 - `GET /api/leaderboard` → `{ participants: PublicUser[] }` — `is_participant = 1`, `score DESC, username ASC`.

@@ -309,3 +309,19 @@ describe('P2-3 over HTTP: cancel reasons, invite context, history', () => {
     expect((await call('/api/sessions?scope=past&before=abc')).status).toBe(200);
   });
 });
+
+// --- P2-4 ---
+describe("GET /api/config: the board's time zone", () => {
+  async function boardOffset(overrides: Partial<Env>): Promise<unknown> {
+    const res = await call('/api/config', {}, overrides);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { boardTzOffsetHours?: unknown }).boardTzOffsetHours;
+  }
+
+  it('is RESET_TZ_OFFSET, the same hours the weekly reset uses (8 when unset)', async () => {
+    expect(await boardOffset({ RESET_TZ_OFFSET: undefined })).toBe(8);
+    expect(await boardOffset({ RESET_TZ_OFFSET: '0' })).toBe(0);
+    expect(await boardOffset({ RESET_TZ_OFFSET: '5.5' })).toBe(5.5);
+    expect(await boardOffset({ RESET_TZ_OFFSET: 'not a number' })).toBe(8);
+  });
+});
