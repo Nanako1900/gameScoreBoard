@@ -1,6 +1,6 @@
 // Pure UTC arithmetic. Dates belong to the board's fixed offset; persisted
 // timestamps are second-resolution UTC text, never the host's local clock.
-import { VOICE_RANGE_MAX_DAYS, type VoiceEndReason, type VoiceStartReason } from './voice';
+import { VOICE_RANGE_MAX_DAYS, VOICE_RETENTION_DAYS, type VoiceEndReason, type VoiceStartReason } from './voice';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -47,6 +47,16 @@ export function voiceRangeBounds(from: string, to: string, offsetHours: number):
   if (!Number.isFinite(offsetHours)) throw new RangeError('榜单时区无效');
   const shift = offsetHours * HOUR_MS;
   return { start: sqlUtc(first - shift), end: sqlUtc(last + DAY_MS - shift) };
+}
+
+/** First whole board date whose UTC start has not expired; partial old days
+ * are rejected by the API instead of implying that erased history was empty. */
+export function firstAvailableVoiceDate(now: string, offsetHours: number): string {
+  if (!Number.isFinite(offsetHours)) throw new RangeError('榜单时区无效');
+  const cutoff = timestamp(now) - VOICE_RETENTION_DAYS * DAY_MS;
+  const candidate = sqlUtc(cutoff + offsetHours * HOUR_MS).slice(0, 10);
+  const start = timestamp(voiceRangeBounds(candidate, candidate, offsetHours).start);
+  return start < cutoff ? sqlUtc(calendarDate(candidate) + DAY_MS).slice(0, 10) : candidate;
 }
 
 interface ParsedSegment { row: VoiceSegmentRow; start: number; end: number }

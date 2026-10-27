@@ -63,7 +63,8 @@ import {
   writeSetting,
 } from './ai/config';
 import { judgeCase } from './ai/provider';
-import { nextResetAt, resetOffsetHours } from './time';
+import { nextResetAt, resetOffsetHours, sqlNow } from './time';
+import { getVoiceDay, getVoiceHistory } from './voice';
 import {
   type CookieConfig,
   cookieNames,
@@ -279,6 +280,28 @@ export function registerRoutes(app: Hono<AppEnv>): void {
       isStoredAvatar: (url) => avatarUrlExists(c.env.DB, url),
     }),
   );
+
+  // --- Private voice evidence ----------------------------------------------
+  app.get('/api/voice/day', async (c) => {
+    privateToViewer(c);
+    const caller = requireUser(c.get('user'));
+    if (!caller.is_judge && !caller.is_admin) throw new ApiError(404, '这页不存在');
+    const now = sqlNow();
+    return c.json(await getVoiceDay(c.env.DB, c.req.query('date'), resetOffsetHours(c.env.RESET_TZ_OFFSET), now));
+  });
+
+  app.get('/api/voice', async (c) => {
+    privateToViewer(c);
+    const caller = requireUser(c.get('user'));
+    const userId = c.req.query('user');
+    if (userId === undefined || userId.length === 0) throw new ApiError(400, '缺少 user');
+    // Refuse before looking up the target or parsing dates; neither a bad
+    // range nor a nonexistent account reveals another person's evidence.
+    if (userId !== caller.id && !caller.is_judge && !caller.is_admin) throw new ApiError(404, '这页不存在');
+    const now = sqlNow();
+    return c.json(await getVoiceHistory(c.env.DB, userId, c.req.query('from'), c.req.query('to'),
+      resetOffsetHours(c.env.RESET_TZ_OFFSET), now));
+  });
 
   // --- Authenticated -------------------------------------------------------
   app.get('/api/me', async (c) => {
