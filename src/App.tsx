@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RecordItem, User } from './types';
+import type { RecordItem, SessionDetail, User } from './types';
 import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
 import { bootRouter, navigate, useLocation } from './lib/router';
-import { playerPath, routeCoversHome, sessionPath } from './lib/routes';
+import { playerPath, routeCoversHome, sessionNewPath, sessionPath } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
 import type { PinnedCase } from './lib/useCaseLookup';
@@ -37,7 +37,6 @@ import { OnboardingDialog } from './components/OnboardingDialog';
 import { SessionsPanel } from './components/SessionsPanel';
 import { RecentSessions } from './components/RecentSessions';
 import { useLobbySessions } from './lib/useLobbySessions';
-import { SessionFormDialog } from './components/SessionFormDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { InviteBanner } from './components/InviteBanner';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
@@ -67,7 +66,10 @@ function AppMain(): JSX.Element {
   const [caseOpen, setCaseOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
-  const [sessionFormOpen, setSessionFormOpen] = useState(false);
+  const [created, setCreated] = useState<number | null>(null);
+  useEffect(() => {
+    if (created !== null && (location.route.name !== 'session' || location.route.sessionId !== created)) setCreated(null);
+  }, [created, location.route]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
@@ -307,7 +309,7 @@ function AppMain(): JSX.Element {
           me={me}
           refreshKey={sessionsKey}
           onOpenSession={openSession}
-          onCreate={() => setSessionFormOpen(true)}
+          onCreate={() => navigate(sessionNewPath())}
         />
         <RecentSessions refreshKey={sessionsKey} boardTzOffsetHours={config.boardTzOffsetHours} onOpenSession={openSession} />
 
@@ -361,6 +363,9 @@ function AppMain(): JSX.Element {
       </main>
 
       <RouteView
+        participants={participants}
+        created={created}
+        onCreated={(session: SessionDetail) => { setCreated(session.id); handleChanged(); navigate(sessionPath(session.id), { replace: true }); }}
         mySessions={lobby.mine}
         board={board}
         location={location}
@@ -429,19 +434,6 @@ function AppMain(): JSX.Element {
           }}
           me={me}
           onSaved={handleMeUpdated}
-        />
-      )}
-
-      {sessionFormOpen && (
-        <SessionFormDialog
-          open
-          participants={participants}
-          selfId={me?.id ?? null}
-          onClose={() => setSessionFormOpen(false)}
-          onCreated={(session) => {
-            handleChanged();
-            openSession(session.id);
-          }}
         />
       )}
 

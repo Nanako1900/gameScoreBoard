@@ -147,7 +147,7 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 | `/players/:id/cases/:caseId` | 同选手页 | 这一起案件移到最上方（移动，不是复制）并获得焦点 | P1 已有 |
 | `/cases/:id` | 别名 | 先查出当事人，再换成上一行的地址 | P1 已有 |
 | 其他任何路径 | 页面 | 「这页不存在」，附「回大厅」 | P1 已有 |
-| `/sessions/new`（可带 `?again=<id>`） | 页面 / 居中弹窗 | 发起约局 | 计划 P3-4 |
+| `/sessions/new`（可带 `?again=<id>`） | 页面 / 居中弹窗 | 发起约局、同阵容再约与分享 | P3 已有 |
 | `/sessions/:id/rollcall` | 页面 | 点名、立案与完成摘要 | P3 已有 |
 | `/sessions/history` | 页面 | 约局历史，含被取消的局和取消理由 | P3 已有 |
 | `/board`、`/board/feed`、`/board/report`、`/board/rules` | 页面 | 信誉榜 / 动态 / 战报 / 规则 | P3 已有 |

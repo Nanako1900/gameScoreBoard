@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SESSION_GAME_MAX, SESSION_NOTE_MAX } from '../../shared/attendance';
 import { APPEAL_MAX, MAX_NARRATIVE_LEN } from '../../shared/scoring';
 import {
   isCaseDraftEmpty,
@@ -128,5 +129,24 @@ describe('validateOnboardingDraft', () => {
   it('refuses an unknown choice or a too-long name', () => {
     expect(validateOnboardingDraft({ choice: 'admin', useNanako: true, customName: '' }, true)).toBeNull();
     expect(validateOnboardingDraft({ choice: 'participant', useNanako: false, customName: '名'.repeat(25) }, true)).toBeNull();
+  });
+});
+
+// P3-4: older drafts have no more block and stay byte-for-byte compatible.
+describe('session more settings draft', () => {
+  const core = { invite: ['b'], custom: '', chosen: null };
+  it('keeps the four string settings alongside the old fields', () => {
+    const raw = { ...core, more: { game: '无畏契约', capacity: '5', durationMin: '90', note: '开麦' } };
+    expect(validateSessionDraft(raw, ['b'], [])).toEqual(raw);
+  });
+  it('does not drop an old draft or add an absent more block', () => {
+    expect(validateSessionDraft(core, ['b'], [])).toEqual(core);
+  });
+  it('ignores a malformed settings block while keeping the useful old draft', () => {
+    for (const more of [null, [], { game: '游戏' }, { game: '', capacity: 5, durationMin: '', note: '' },
+      { game: '游'.repeat(SESSION_GAME_MAX + 1), capacity: '', durationMin: '', note: '' },
+      { game: '', capacity: '', durationMin: '', note: '注'.repeat(SESSION_NOTE_MAX + 1) }]) {
+      expect(validateSessionDraft({ ...core, more }, ['b'], [])).toEqual(core);
+    }
   });
 });

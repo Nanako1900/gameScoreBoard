@@ -25,6 +25,7 @@ import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
 import { OrganizerConsole } from './OrganizerConsole';
 import { ShareActions } from './ShareActions';
+import { CreatedCard } from './CreatedCard';
 import { Link } from './Link';
 import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
 import { VisitorRsvpPrompt } from './VisitorRsvpPrompt';
@@ -33,6 +34,7 @@ import './session-detail.css';
 
 interface SessionDetailDialogProps {
   sessionId: number;
+  created?: boolean;
   mySessions?: readonly SessionItem[] | null;
   me: User | null;
   onClose: () => void;
@@ -52,6 +54,7 @@ const NOT_FOUND_STATUS = 404;
 
 export function SessionDetailDialog({
   sessionId,
+  created,
   mySessions,
   me,
   onClose,
@@ -229,6 +232,7 @@ export function SessionDetailDialog({
               </p>
               {session.note && <p className="sdt__note">{session.note}</p>}
             </header>
+            {created && <CreatedCard session={session} boardTzOffsetHours={boardTzOffsetHours} />}
 
             {session.status === 'cancelled' && <div className="sdt__cancelled"><p>已取消</p>
               {session.cancel_reason && <p>{session.organizer.username}：{session.cancel_reason}</p>}</div>}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, getSession } from '../api';
 import type { SessionDetail, SessionDetailResponse, User } from '../types';
 import { goBack } from '../lib/router';
-import { sessionPath } from '../lib/routes';
+import { sessionPath, sessionNewPath } from '../lib/routes';
 import { SESSION_NOT_FOUND } from '../lib/routeCopy';
 import { parseTimestamp } from '../lib/time';
 import { settledSummary } from '../lib/sessionSummary';
@@ -60,7 +60,8 @@ function RollCallBody({ resource, me, setFlow }: {
     <button type="button" className="btn btn--ghost" onClick={() => void resource.retry()}>重试</button></p>;
   if (!data) return null;
   if (completed) return <div className="rcp__done"><p className="rcp__success">已结算 ✓</p>
-    <p>{settledSummary(data.session.players, data.records)}</p><SessionReturn id={data.session.id} replace /></div>;
+    <p>{settledSummary(data.session.players, data.records)}</p><SessionReturn id={data.session.id} replace />
+    <Link to={sessionNewPath(data.session.id)} className="btn btn--gold">再约一次</Link></div>;
   const error = entryError(data.session, me);
   if (error) return <><p>{error}</p><SessionReturn id={data.session.id} /></>;
   return <RollCallFlow session={data.session} titleId="rollcall-page-title" onClose={goBack}

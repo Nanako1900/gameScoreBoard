@@ -63,3 +63,8 @@ export const MINUTE_MS = 60_000;
 export const ICS_LINE_MAX_BYTES = 75;
 export const QUOTA_HINT_AT = 1;
 export const SESSION_QUOTA_WINDOW_MS = 24 * 60 * MINUTE_MS;
+
+// --- P3-4 ---
+export const AGAIN_STEP_DAYS = 7;
+export const AGAIN_STEP_MS = AGAIN_STEP_DAYS * 24 * 60 * MINUTE_MS;
+export const SESSION_CAPACITY_MIN = 2;

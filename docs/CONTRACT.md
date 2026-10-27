@@ -488,6 +488,7 @@ reaches `decided` rather than stranding a player's score.
   | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
   |---|---|---|
   | `/` | the hall | the hall |
+  | `/sessions/new` (`?again=<id>` optional) | session form page, returning to the created session with replace | center dialog over the hall |
   | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
   | `/sessions/<id>/rollcall` | organizer/admin roll call and settlement, sharing the existing local draft | the same page |
   | `/sessions/history` | history, including cancelled sessions and their reasons | the same page |

@@ -4,7 +4,7 @@ import type { InviteResponse, RecordItem, SessionDetail, SessionItem } from '../
 import { inviteToast } from '../lib/invitePicker';
 import { consoleState, gapLine, quotaHint, sessionQuota } from '../lib/sessionConsole';
 import { settledSummary } from '../lib/sessionSummary';
-import { rollcallPath } from '../lib/routes';
+import { rollcallPath, sessionNewPath } from '../lib/routes';
 import { clockOn, formatWhen, parseTimestamp } from '../lib/time';
 import { sessionEndsAt } from '../lib/lobbySessions';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
@@ -67,7 +67,8 @@ function BeforeConsole({ props, sheets }: { props: OrganizerConsoleProps; sheets
     <CancelSessionControl session={props.session} busy={props.busy} onConfirm={props.onCancel} /></>;
 }
 function ActiveConsole({ props, state }: { props: OrganizerConsoleProps; state: 'live' | 'due' | 'settled' }): JSX.Element {
-  if (state === 'settled') return <p>{settledSummary(props.session.players, props.records)}</p>;
+  if (state === 'settled') return <><p>{settledSummary(props.session.players, props.records)}</p>
+    <Link to={sessionNewPath(props.session.id)} className="btn btn--gold">再约一次</Link><p className="oc__hint">同一批人，默认下周同一时间</p></>;
   if (state === 'due') return <><p>局结束了，点个名？</p><p>点名只记出勤；扣不扣分，下一步你说了算。</p>
     <Link to={rollcallPath(props.session.id)} className="btn btn--gold">去点名</Link></>;
   return <><p className="oc__live"><IconLive />进行中 · {clockOn(parseTimestamp(props.session.starts_at), props.boardTzOffsetHours)} 开的，预计 {clockOn(sessionEndsAt(props.session), props.boardTzOffsetHours)} 结束</p>

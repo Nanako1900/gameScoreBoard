@@ -7,7 +7,7 @@ import { useNow } from '../lib/useNow';
 import { useRsvpAnswer } from '../lib/useRsvpAnswer';
 import { LoginLink } from './LoginLink';
 import { Link } from './Link';
-import { SESSION_HISTORY_PATH } from '../lib/routes';
+import { SESSION_HISTORY_PATH, sessionNewPath } from '../lib/routes';
 import { SessionCard } from './SessionCard';
 import './sessions-panel.css';
 
@@ -30,7 +30,7 @@ function Timeline({ groups, now, busyId, answer, ...props }: TimelineProps): JSX
 function EmptyLobby({ me, onCreate }: Pick<SessionsPanelProps, 'me' | 'onCreate'>): JSX.Element {
   return <div className="sessions__empty"><p>今晚还没人组局。第一个开黑的永远是英雄。</p>
     {me ? <button type="button" className="btn btn--gold btn--sm" onClick={onCreate}>组一局</button>
-      : <LoginLink className="btn btn--gold btn--sm">登录后组局</LoginLink>}
+      : <LoginLink className="btn btn--gold btn--sm" returnTo={sessionNewPath()}>登录后组局</LoginLink>}
   </div>;
 }
 /** One timeline, with an optional parent-owned data source for the home inbox. */

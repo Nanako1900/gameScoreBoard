@@ -15,6 +15,7 @@ export type BoardTab = (typeof BOARD_TABS)[number];
 export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'session'; readonly sessionId: number }
+  | { readonly name: 'sessionNew' }
   | { readonly name: 'player'; readonly userId: string }
   | { readonly name: 'playerCase'; readonly userId: string; readonly caseId: number }
   /** Alias: look the case up, then replace the address with its playerCase one. */
@@ -43,6 +44,7 @@ export interface EdgHistoryState {
 
 export const HOME_PATH = '/';
 export const SESSION_HISTORY_PATH = '/sessions/history';
+export const SESSION_NEW_PATH = '/sessions/new';
 export const RESERVED_PREFIXES = ['/api', '/auth', '/link'] as const;
 
 const HOME: Route = { name: 'home' };
@@ -98,6 +100,7 @@ function idRoute(name: 'session' | 'case', raw: string): Route {
 function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
   if (segments.length === 2 && head === 'sessions' && first === 'history') return { name: 'sessionHistory' };
+  if (segments.length === 2 && head === 'sessions' && first === 'new') return { name: 'sessionNew' };
   if (segments.length === 2 && head === 'sessions') return idRoute('session', first);
   if (segments.length === 2 && head === 'cases') return idRoute('case', first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
@@ -124,6 +127,16 @@ export function parseRoute(pathname: string): Route {
 
 export function sessionPath(sessionId: number): string {
   return `/sessions/${sessionId}`;
+}
+
+export function sessionNewPath(again?: number): string {
+  return again === undefined ? SESSION_NEW_PATH : `${SESSION_NEW_PATH}?again=${again}`;
+}
+
+/** Optional repeat context is independent of the pathname and accepts only canonical ids. */
+export function parseAgain(search: string): number | null {
+  const value = new URLSearchParams(search).get('again');
+  return value !== null && ID_PATTERN.test(value) ? Number(value) : null;
 }
 
 export function playerPath(userId: string): string {
@@ -153,6 +166,8 @@ export function formatRoute(route: LinkableRoute): string {
       return HOME_PATH;
     case 'session':
       return sessionPath(route.sessionId);
+    case 'sessionNew':
+      return SESSION_NEW_PATH;
     case 'player':
       return playerPath(route.userId);
     case 'playerCase':

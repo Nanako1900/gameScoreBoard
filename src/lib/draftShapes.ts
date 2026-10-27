@@ -5,7 +5,7 @@
 // the roster, a slot that passed, a judge role the user lacks) is dropped.
 // Pure: unit-tested in tests/unit/draft-shapes.test.ts.
 
-import { isAttendance, type Attendance } from '@shared/attendance';
+import { isAttendance, SESSION_GAME_MAX, SESSION_NOTE_MAX, type Attendance } from '@shared/attendance';
 import { APPEAL_MAX, MAX_NARRATIVE_LEN } from '@shared/scoring';
 import type { SessionPlayer } from '../types';
 
@@ -31,6 +31,7 @@ export interface SessionDraftValue {
   invite: string[];
   custom: string;
   chosen: string | null;
+  more?: { game: string; capacity: string; durationMin: string; note: string };
 }
 export type OnboardingChoice = 'participant' | 'judge' | 'both';
 export interface OnboardingDraftValue {
@@ -144,6 +145,14 @@ export function toStoredMark(input: MarkInput): StoredMark | null {
     : { attendance: input.attendance };
 }
 
+function sessionMore(raw: unknown): SessionDraftValue['more'] {
+  if (!isRecord(raw)) return undefined;
+  const { game, capacity, durationMin, note } = raw;
+  if (typeof game !== 'string' || game.length > SESSION_GAME_MAX || typeof note !== 'string' || note.length > SESSION_NOTE_MAX
+    || typeof capacity !== 'string' || typeof durationMin !== 'string') return undefined;
+  return { game, capacity, durationMin, note };
+}
+
 export function validateSessionDraft(
   raw: unknown,
   invitableIds: readonly string[],
@@ -155,10 +164,12 @@ export function validateSessionDraft(
   if (invite === null || typeof custom !== 'string') return null;
   if (custom !== '' && !DATETIME_LOCAL.test(custom)) return null;
   if (chosen !== null && typeof chosen !== 'string') return null;
+  const more = sessionMore(raw.more);
   return {
     invite: invite.filter((id) => invitableIds.includes(id)),
     custom,
     chosen: typeof chosen === 'string' && slotIsos.includes(chosen) ? chosen : null,
+    ...(more ? { more } : {}),
   };
 }
 

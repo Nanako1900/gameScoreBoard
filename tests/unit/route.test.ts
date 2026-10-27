@@ -17,6 +17,9 @@ import {
   readEdgState,
   routeCoversHome,
   rollcallPath,
+  SESSION_NEW_PATH,
+  sessionNewPath,
+  parseAgain,
   sessionPath,
   type LinkableRoute,
   type Route,
@@ -44,7 +47,6 @@ describe('parseRoute', () => {
 
   it('knows nothing of the later phases’ routes yet', () => {
     for (const later of [
-      '/sessions/new',
       '/me',
       '/me/notify',
       '/review',
@@ -262,5 +264,29 @@ describe('rollcall routes', () => {
   });
   it.each(['/sessions/07/rollcall', '/sessions/5/rollcall/x', '/sessions/0/rollcall'])('refuses %s', (path) => {
     expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+});
+
+// P3-4: the query is optional prefill, never a separate route.
+describe('new session routes', () => {
+  it('parses and formats the create page before numeric session ids', () => {
+    const route: LinkableRoute = { name: 'sessionNew' };
+    expect(SESSION_NEW_PATH).toBe('/sessions/new');
+    expect(parseRoute('/sessions/new')).toEqual(route);
+    expect(parseRoute('/sessions/new/')).toEqual(route);
+    expect(formatRoute(route)).toBe('/sessions/new');
+    expect(sessionNewPath()).toBe('/sessions/new');
+    expect(sessionNewPath(5)).toBe('/sessions/new?again=5');
+    expect(routeCoversHome(route, 'page')).toBe(true);
+    expect(routeCoversHome(route, 'drawer')).toBe(false);
+  });
+  it.each(['/sessions/new/1', '/sessions/new//', '/sessions/newer'])('refuses %s', (path) => {
+    expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+  it('takes only ID_PATTERN in the again query, ignoring other keys', () => {
+    expect(parseAgain('?again=5')).toBe(5);
+    expect(parseAgain('?utm=dc&again=123456789012345')).toBe(123456789012345);
+    for (const bad of ['', '?again=', '?again=0', '?again=07', '?again=-1', '?again=1e3',
+      '?again=1.5', '?again=1234567890123456', '?again=abc', '?session=5']) expect(parseAgain(bad), bad).toBeNull();
   });
 });
