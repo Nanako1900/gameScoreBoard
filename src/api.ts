@@ -383,6 +383,10 @@ export function logout(): Promise<{ ok: true }> {
 export interface DiscordLinkInfo {
   discord_username: string;
   linked_at: string;
+  /** DMs on or off (the bot's /notify, or setDiscordNotify). Absent from an API older than P2-5. */
+  notify_dm?: boolean;
+  /** false once Discord refused a DM (DMs closed); turning DMs on or off clears it. */
+  dm_ok?: boolean;
 }
 
 /**
@@ -410,4 +414,19 @@ export async function getDiscordLink(): Promise<DiscordLinkInfo | null | undefin
 /** Remove the caller's binding. The response body carries nothing the UI needs. */
 export async function unlinkDiscord(): Promise<void> {
   await post<unknown>('/api/me/discord/unlink');
+}
+
+/**
+ * Turn the caller's Discord DMs on or off; resolves the binding as it now
+ * stands. `undefined` on 404 — a backend without the switch, like
+ * getDiscordLink — so the UI can hide it. Not bound is 409, thrown as usual.
+ */
+export async function setDiscordNotify(on: boolean): Promise<DiscordLinkInfo | undefined> {
+  try {
+    const { link } = await post<{ link: DiscordLinkInfo }>('/api/me/discord/notify', { on });
+    return link;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
+  }
 }

@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App';
-import { ApiError, DISCORD_LINK_URL, getDiscordLink } from '../../src/api';
+import { ApiError, DISCORD_LINK_URL, getDiscordLink, setDiscordNotify } from '../../src/api';
 import { DiscordLinkCard } from '../../src/components/DiscordLinkCard';
 import { OnboardingDialog } from '../../src/components/OnboardingDialog';
 import type { User } from '../../src/types';
@@ -278,5 +278,46 @@ describe('App — ?linked=discord', () => {
     expect(await screen.findByText('Discord 绑定成功')).toBeInTheDocument();
     await settle();
     expect(screen.queryByRole('heading', { name: '设置你的显示名字与身份' })).not.toBeInTheDocument();
+  });
+});
+
+describe('setDiscordNotify', () => {
+  interface Sent {
+    method: string;
+    path: string;
+    body: unknown;
+  }
+
+  /** Answers every request with one response, recording what was sent. */
+  function answer(status: number, body: unknown): Sent[] {
+    const sent: Sent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        sent.push({ method: init?.method ?? 'GET', path: url.replace(/^https?:\/\/[^/]+/, ''), body: init?.body ?? null });
+        return Promise.resolve(json(status, body));
+      }),
+    );
+    return sent;
+  }
+
+  it('posts exactly { on } and resolves the binding as it now stands', async () => {
+    const link = { discord_username: 'nanako_edg', linked_at: '2026-10-20 12:00:00', notify_dm: false, dm_ok: true };
+    const sent = answer(200, { link });
+    await expect(setDiscordNotify(false)).resolves.toEqual(link);
+    expect(sent).toEqual([{ method: 'POST', path: '/api/me/discord/notify', body: '{"on":false}' }]);
+  });
+
+  it('resolves undefined on 404 — a backend without the switch', async () => {
+    answer(404, { error: 'Not found' });
+    await expect(setDiscordNotify(true)).resolves.toBeUndefined();
+  });
+
+  it('throws the API\'s words for anything else, e.g. 409 when not bound', async () => {
+    answer(409, { error: '还没有绑定 Discord' });
+    const err = await setDiscordNotify(true).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 409, message: '还没有绑定 Discord' });
   });
 });
