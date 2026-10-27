@@ -265,3 +265,81 @@ describe('App — coming back to the tab', () => {
     expect(gets(calls, '/api/report/latest')).toBe(1);
   });
 });
+
+describe('App — a refresh that fails', () => {
+  it('keeps the board on screen and says so with role=status, not an alert; 重试 clears it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    let failing = false;
+    const fail = (ok: () => Response): Route => () => (failing ? json(500, { error: 'boom' }) : ok());
+    const calls = mockFetch(
+      routes({
+        'GET /api/leaderboard': fail(() => json(200, { participants: [PLAYER] })),
+        'GET /api/records?limit=50': fail(() => json(200, { records: [] })),
+        'GET /api/me': fail(() => json(200, { user: null, pending: { statements: 0, appeals: 0 } })),
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: ROW });
+
+    failing = true;
+    vi.setSystemTime(START + MINUTE + 1_000);
+    leaveAndReturn();
+
+    const notice = await screen.findByText('没刷新出来，显示的是 1 分钟前的数据。');
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: ROW })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('出错了')).not.toBeInTheDocument();
+
+    failing = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(screen.queryByText(/没刷新出来/)).not.toBeInTheDocument());
+    expect(gets(calls, '/api/leaderboard')).toBe(3);
+  });
+
+  it('503 (maintenance) says the page is read-only for now', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    let down = false;
+    mockFetch(
+      routes({
+        'GET /api/leaderboard': () =>
+          down ? json(503, { error: '系统维护中（只读），请稍后再试' }) : json(200, { participants: [PLAYER] }),
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: ROW });
+    down = true;
+    vi.setSystemTime(START + 2 * MINUTE + 1_000);
+    leaveAndReturn();
+    expect(await screen.findByText('系统维护中，暂时只能看，显示的是 2 分钟前的数据。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: ROW })).toBeInTheDocument();
+  });
+
+  it('stays up while what failed is still old, even when another part refreshes fine', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START);
+    let failing = false;
+    const calls = mockFetch(
+      adminRoutes({
+        'GET /api/leaderboard': () =>
+          failing ? json(500, { error: 'boom' }) : json(200, { participants: [PLAYER] }),
+        [REGENERATE]: () => json(200, { report: REPORT }),
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: ROW });
+    failing = true;
+    vi.setSystemTime(START + MINUTE + 1_000);
+    leaveAndReturn();
+    const stale = '没刷新出来，显示的是 1 分钟前的数据。';
+    await screen.findByText(stale);
+
+    // Only the report is refetched (and arrives); the board is still the old one.
+    await userEvent.setup().click(screen.getByRole('button', { name: '换个说法' }));
+    await waitFor(() => expect(gets(calls, '/api/report/latest')).toBe(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: '换个说法' })).toBeEnabled());
+    expect(screen.getByText(stale)).toBeInTheDocument();
+  });
+});

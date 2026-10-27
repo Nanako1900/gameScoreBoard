@@ -9,6 +9,7 @@ import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
 import { useVisibleRefresh } from './lib/useVisibleRefresh';
 import { ToastProvider, useToast } from './components/Toast';
+import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
 import { RedBlackBoard } from './components/RedBlackBoard';
 import { Leaderboard } from './components/Leaderboard';
@@ -265,6 +266,13 @@ function AppMain(): JSX.Element {
        * The two banners self-hide when empty, so a quiet day collapses straight
        * to 约局 without leaving gaps. */}
       <main className="app__main">
+        {state.stale && (
+          <StaleNotice
+            message={state.stale.message}
+            onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))}
+          />
+        )}
+
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
 
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
