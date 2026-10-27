@@ -28,7 +28,15 @@ function errorMessage(err: unknown, fallback: string): string {
  * OAuth + a confirm page), so here it is only a link; unbinding is a POST
  * behind an inline confirm.
  */
-export function DiscordLinkCard(): JSX.Element | null {
+interface DiscordLinkCardProps {
+  /**
+   * Called as the 绑定 Discord link is followed (spec §4.4 #2): the host keeps
+   * its unsaved choice. It must not block the navigation, nor fetch anything.
+   */
+  onBeforeBind?: () => void;
+}
+
+export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Element | null {
   const titleId = useId();
   const [state, setState] = useState<CardState>({ status: 'loading' });
   const [confirming, setConfirming] = useState(false);
@@ -121,7 +129,7 @@ export function DiscordLinkCard(): JSX.Element | null {
                 unsaved is gone, and nothing on the way back reopens it. */}
             <span className="dlink__hint">会跳转到 Discord 授权页，上面还没「确认」的修改不会保存。</span>
           </p>
-          <a ref={bindRef} className="btn btn--sm dlink__bind" href={DISCORD_LINK_URL}>
+          <a ref={bindRef} className="btn btn--sm dlink__bind" href={DISCORD_LINK_URL} onClick={onBeforeBind}>
             绑定 Discord
           </a>
         </div>

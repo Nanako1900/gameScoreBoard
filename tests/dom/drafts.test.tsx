@@ -4,13 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { quickSlots } from '@shared/quickTime';
 import { CaseDialog } from '../../src/components/CaseDialog';
 import { DraftNote } from '../../src/components/DraftNote';
+import { OnboardingDialog } from '../../src/components/OnboardingDialog';
 import { RollCallDialog } from '../../src/components/RollCallDialog';
 import { SessionFormDialog } from '../../src/components/SessionFormDialog';
 import { StatementDialog } from '../../src/components/StatementDialog';
 import { clearAllDrafts, draftKey, readDraft, writeDraft } from '../../src/lib/drafts';
 import { isBlankText, validateStatementDraft } from '../../src/lib/draftShapes';
 import { useDraft } from '../../src/lib/useDraft';
-import type { Config, PublicUser, RecordItem, SessionDetail } from '../../src/types';
+import type { Config, PublicUser, RecordItem, SessionDetail, User } from '../../src/types';
 
 // Six local drafts (spec §5 #4): what is typed survives a closed dialog, a
 // reload and the Discord round trip, and is gone after a successful submit or
@@ -473,5 +474,72 @@ describe('RollCallDialog — draft', () => {
     await user.click(await screen.findByRole('button', { name: '跳过全部，仅记录出勤' }));
     await waitFor(() => expect(onSettled).toHaveBeenCalledWith(session, 0));
     expect(localStorage.getItem('edg.draft.rollcall.1')).toBeNull();
+  });
+});
+
+describe('OnboardingDialog — the choice survives binding Discord (M21)', () => {
+  const NEWCOMER: User = {
+    id: 'u1',
+    username: 'Nanako',
+    oauth_username: 'Nanako',
+    avatar_url: null,
+    is_participant: false,
+    is_judge: false,
+    is_admin: true,
+    score: 100,
+    created_at: '2026-10-01 00:00:00',
+  };
+
+  async function followBindLink(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    const link = await screen.findByRole('link', { name: '绑定 Discord' });
+    // jsdom cannot navigate; stop the default after React's handler has run.
+    const block = (e: Event): void => e.preventDefault();
+    document.addEventListener('click', block);
+    try {
+      await user.click(link);
+    } finally {
+      document.removeEventListener('click', block);
+    }
+  }
+
+  it('keeps the unsaved choice across the round trip, with no extra request', async () => {
+    const calls = mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
+    const user = userEvent.setup();
+    const { unmount } = render(<OnboardingDialog open onClose={() => {}} me={NEWCOMER} onSaved={() => {}} />);
+
+    await user.click(screen.getByRole('radio', { name: /^裁判/ }));
+    await followBindLink(user);
+    expect(calls).toHaveLength(1);
+    expect(stored(sessionStorage, 'edg.draft.onboarding')).toEqual({ choice: 'judge', useNanako: true, customName: '' });
+    expect(localStorage.getItem('edg.draft.onboarding')).toBeNull();
+    unmount();
+
+    // Back from Discord: a full page load mounts the dialog afresh.
+    mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
+    render(<OnboardingDialog open onClose={() => {}} me={NEWCOMER} onSaved={() => {}} />);
+    expect(screen.getByRole('radio', { name: /^裁判/ })).toHaveAttribute('aria-checked', 'true');
+    await screen.findByRole('link', { name: '绑定 Discord' }); // the card has settled: no stray act() warning
+  });
+
+  it('drops the draft on 稍后再说', async () => {
+    mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
+    writeDraft('onboarding', undefined, { choice: 'judge', useNanako: true, customName: '' });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<OnboardingDialog open onClose={onClose} me={NEWCOMER} onSaved={() => {}} />);
+    await screen.findByRole('link', { name: '绑定 Discord' });
+
+    await user.click(screen.getByRole('button', { name: '稍后再说' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem('edg.draft.onboarding')).toBeNull();
+  });
+
+  it('never pre-picks a judge role for someone who is not one', async () => {
+    mockFetch({ 'GET /api/me/discord': () => json(200, { link: null }) });
+    writeDraft('onboarding', undefined, { choice: 'both', useNanako: true, customName: '' });
+    render(<OnboardingDialog open onClose={() => {}} me={{ ...NEWCOMER, is_admin: false }} onSaved={() => {}} />);
+    expect(screen.getByRole('radio', { name: /上榜选手/ })).toHaveAttribute('aria-checked', 'true');
+    expect(sessionStorage.getItem('edg.draft.onboarding')).toBeNull();
+    await screen.findByRole('link', { name: '绑定 Discord' });
   });
 });
