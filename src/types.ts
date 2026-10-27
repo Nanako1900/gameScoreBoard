@@ -150,6 +150,8 @@ export interface SessionItem {
   created_at: string;
   counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: Rsvp | null;
+  /** P2-6: up to 5 who said 来, earliest answer first — names and avatars, never a score. Absent from an older API: show no avatars. */
+  going_preview?: UserRef[];
 }
 
 export interface SessionDetail extends SessionItem {

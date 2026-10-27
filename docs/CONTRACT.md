@@ -181,6 +181,7 @@ interface SessionItem {
   settled_at: string | null; created_at: string;
   counts: { invited: number; going: number; maybe: number; out: number };
   my_rsvp: 'invited' | 'going' | 'maybe' | 'out' | null;
+  going_preview: { id: string; username: string; avatar_url: string | null }[];  // up to GOING_PREVIEW_MAX (5) who said 来, earliest answer first; never a score
 }
 
 interface SessionDetail extends SessionItem { players: SessionPlayer[] }
