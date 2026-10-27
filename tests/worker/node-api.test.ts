@@ -233,3 +233,16 @@ describe('runJobs — the timer that replaces Cloudflare cron', () => {
     expect(await reports()).toBe(0);
   });
 });
+
+// P1-0: production capi.nanako.org is this Node wrapper with FRONTEND_URL set
+// (compose.yaml). Old SPA links that still hit the API host keep path and query.
+describe('createApi — old SPA links on the API host', () => {
+  it('302s /sessions/5?x=1 to FRONTEND_URL, uncacheable', async () => {
+    const res = await api({ FRONTEND_URL: 'https://community.example.com' }).fetch(
+      new Request('https://api.example.com/sessions/5?x=1'),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(res.headers.get('Location')).toBe('https://community.example.com/sessions/5?x=1');
+  });
+});
