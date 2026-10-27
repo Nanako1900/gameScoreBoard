@@ -17,6 +17,8 @@ const PAD_BOTTOM = 26;
 const INNER_W = W - PAD_X * 2;
 const INNER_H = H - PAD_TOP - PAD_BOTTOM;
 const GRID_LINES = [0, 25, 50, 75, 100];
+/** Dot radii (viewBox units): the picked point stands out from the latest, which stands out from the rest. */
+const DOT_R = { active: 5, last: 4, base: 2.5 } as const;
 
 interface PlotPoint {
   px: number;
@@ -79,7 +81,7 @@ function ChartSvg({ points, active, color }: ChartSvgProps): JSX.Element {
           className={`chart__dot${i === points.length - 1 ? ' chart__dot--last' : ''}${i === active ? ' chart__dot--active' : ''}`}
           cx={p.px}
           cy={p.py}
-          r={i === active ? 5 : i === points.length - 1 ? 4 : 2.5}
+          r={i === active ? DOT_R.active : i === points.length - 1 ? DOT_R.last : DOT_R.base}
         >
           <title>{readout(p.point)}</title>
         </circle>

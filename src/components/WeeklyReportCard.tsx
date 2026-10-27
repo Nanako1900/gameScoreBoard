@@ -56,14 +56,6 @@ function attendance(rate: number | null): string {
   return rate === null ? '—' : `${Math.round(rate * 100)}%`;
 }
 
-/**
- * 上周战报 — one paragraph of personality on top of numbers that came from SQL.
- *
- * The split is load-bearing: the prose is AI-written and allowed to be playful,
- * the figures below it are computed server-side and rendered deadpan. Nothing in
- * the stat strip is ever phrased as a joke, because a number that reads as a
- * punchline is a number nobody trusts.
- */
 interface ReportHeadProps {
   report: WeeklyReport;
   stale: boolean;

@@ -16,6 +16,37 @@ interface RecordsFeedProps {
   previewCount?: number;
 }
 
+interface FeedPreview {
+  shown: RecordItem[];
+  /** True while rows are held back: render 看更多. */
+  limited: boolean;
+  expand: () => void;
+  /** The ref for row `index`: only the first row 看更多 revealed gets one. */
+  refFor: (index: number) => RefObject<HTMLLIElement> | undefined;
+}
+
+/** The first `previewCount` rows until 看更多 is pressed; then all of them. */
+function useFeedPreview(records: RecordItem[], previewCount: number | undefined): FeedPreview {
+  const [expanded, setExpanded] = useState(false);
+  const firstRevealed = useRef<HTMLLIElement>(null);
+  const limited = !expanded && previewCount !== undefined && records.length > previewCount;
+
+  // 看更多 unmounts once pressed: hand focus to the first row it revealed, so
+  // keyboard and screen-reader users carry on reading instead of landing on <body>.
+  useEffect(() => {
+    if (expanded) {
+      firstRevealed.current?.focus();
+    }
+  }, [expanded]);
+
+  return {
+    shown: limited ? records.slice(0, previewCount) : records,
+    limited,
+    expand: () => setExpanded(true),
+    refFor: (index) => (expanded && index === previewCount ? firstRevealed : undefined),
+  };
+}
+
 export function RecordsFeed({
   records,
   title = '动态',
@@ -26,18 +57,7 @@ export function RecordsFeed({
 }: RecordsFeedProps): JSX.Element {
   const headingId = useId();
   const hasTitle = title.trim().length > 0;
-  const [expanded, setExpanded] = useState(false);
-  const firstRevealed = useRef<HTMLLIElement>(null);
-  const limited = !expanded && previewCount !== undefined && records.length > previewCount;
-  const shown = limited ? records.slice(0, previewCount) : records;
-
-  // 看更多 unmounts once pressed: hand focus to the first row it revealed, so
-  // keyboard and screen-reader users carry on reading instead of landing on <body>.
-  useEffect(() => {
-    if (expanded) {
-      firstRevealed.current?.focus();
-    }
-  }, [expanded]);
+  const { shown, limited, expand, refFor } = useFeedPreview(records, previewCount);
   return (
     <section
       className={`feed panel${compact ? ' feed--compact' : ''}`}
@@ -57,18 +77,13 @@ export function RecordsFeed({
       ) : (
         <ul className="feed__list">
           {shown.map((r, i) => (
-            <RecordRow
-              key={r.id}
-              record={r}
-              onSelectUser={onSelectUser}
-              rowRef={expanded && i === previewCount ? firstRevealed : undefined}
-            />
+            <RecordRow key={r.id} record={r} onSelectUser={onSelectUser} rowRef={refFor(i)} />
           ))}
         </ul>
       )}
 
       {limited && (
-        <button type="button" className="btn btn--ghost btn--sm feed__more" onClick={() => setExpanded(true)}>
+        <button type="button" className="btn btn--ghost btn--sm feed__more" onClick={expand}>
           看更多
         </button>
       )}

@@ -15,6 +15,56 @@ interface ScoreGaugeProps {
   tone?: 'tier' | 'neutral';
 }
 
+/** The numeral is this fraction of the gauge's diameter. */
+const VALUE_FONT_RATIO = 0.34;
+/** Gauge scale: 0..100. */
+const FULL_SCALE = 100;
+
+interface GaugeRingProps {
+  size: number;
+  strokeWidth: number;
+  value: number;
+}
+
+/** Track plus the arc for `value`, starting at 12 o'clock. Decorative: the root carries the label. */
+function GaugeRing({ size, strokeWidth, value }: GaugeRingProps): JSX.Element {
+  const radius = (size - strokeWidth) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - value / FULL_SCALE);
+  return (
+    <svg
+      className="gauge__svg"
+      viewBox={`0 0 ${size} ${size}`}
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      <circle
+        className="gauge__track"
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill="none"
+        strokeWidth={strokeWidth}
+      />
+      <circle
+        className="gauge__arc"
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill="none"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={dashOffset}
+        transform={`rotate(-90 ${cx} ${cy})`}
+      />
+    </svg>
+  );
+}
+
 /**
  * Hand-rolled SVG circular gauge (0..100). Arc color follows tierFor(score),
  * unless tone="neutral": on public views the score is public, but the 段位 is
@@ -32,12 +82,7 @@ export function ScoreGauge({
   const value = clampScore(score);
   const tier = tierFor(value);
   const neutral = tone === 'neutral';
-  const radius = (size - strokeWidth) / 2;
-  const cx = size / 2;
-  const cy = size / 2;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference * (1 - value / 100);
-  const fontSize = size * 0.34;
+  const fontSize = size * VALUE_FONT_RATIO;
   // React applies this through CSSOM, which the CSP allows without 'unsafe-inline'.
   const style: CSSProperties = neutral
     ? { width: size, height: size }
@@ -50,34 +95,7 @@ export function ScoreGauge({
       role="img"
       aria-label={neutral ? `${label} ${value} 分` : `${label} ${value} 分，段位 ${tier.name}`}
     >
-      <svg
-        className="gauge__svg"
-        viewBox={`0 0 ${size} ${size}`}
-        width={size}
-        height={size}
-        aria-hidden="true"
-      >
-        <circle
-          className="gauge__track"
-          cx={cx}
-          cy={cy}
-          r={radius}
-          fill="none"
-          strokeWidth={strokeWidth}
-        />
-        <circle
-          className="gauge__arc"
-          cx={cx}
-          cy={cy}
-          r={radius}
-          fill="none"
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
-          transform={`rotate(-90 ${cx} ${cy})`}
-        />
-      </svg>
+      <GaugeRing size={size} strokeWidth={strokeWidth} value={value} />
       <div className="gauge__center">
         <span className="gauge__value tabular" style={{ fontSize }}>
           {value}
