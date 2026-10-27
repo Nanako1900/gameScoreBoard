@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { FILED_DM_GRACE_MS } from '../../shared/scoring';
 
 const ROOT = path.resolve(__dirname, '../..');
-const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations', 'functions'];
+const SOURCE_DIRS = ['worker', 'shared', 'src', 'tests', 'migrations'];
 const ROOT_FILES = ['schema.sql', 'index.html', 'wrangler.toml'];
 const SOURCE_EXT = /\.(ts|tsx|js|css|sql)$/;
 const MINUTE_MS = 60_000;

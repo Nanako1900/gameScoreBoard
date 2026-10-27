@@ -108,3 +108,15 @@ describe('scripts/pages-headers.mjs refuses a dist with 404.html', () => {
     expect(readFileSync(path.join(dir, '_headers'), 'utf8')).toContain('Content-Security-Policy:');
   });
 });
+
+// P1-0 (spec §11 #16): Cloudflare Pages deploys a root functions/ directory as
+// Pages Functions. The EdgeOne leftovers there reverse-proxied /api/* and /auth/*
+// on community.nanako.org to the retired workers.dev Worker.
+describe('Cloudflare Pages project root', () => {
+  const ROOT = path.resolve(__dirname, '../..');
+
+  it('has no functions/ directory and no edgeone.json', () => {
+    expect(existsSync(path.join(ROOT, 'functions'))).toBe(false);
+    expect(existsSync(path.join(ROOT, 'edgeone.json'))).toBe(false);
+  });
+});
