@@ -430,3 +430,27 @@ describe('App — the board on the home page', () => {
     expect(screen.getByRole('button', { name: '第 3 名 老王，96 分' })).toHaveClass('lb-row--me');
   });
 });
+
+// P3-2: the compact board uses its own narrow-column layout; the full board keeps its default.
+describe('Leaderboard compact layout boundary', () => {
+  it('marks only a limited board as mini while keeping its plain score and full-rank own row', () => {
+    const { container } = render(<Leaderboard participants={TIED} trends={{ [TIED[0].id]: -3 }}
+      counts={{ [TIED[0].id]: 2 }} onSelect={() => {}} meId={TIED[TIED.length - 1].id} limit={1} />);
+    const board = container.querySelector('.lb')!;
+    expect(board).toHaveClass('lb--mini');
+    expect(board.querySelectorAll('.lb-row')).toHaveLength(2);
+    expect(board.querySelectorAll('.lb-row__score')).toHaveLength(2);
+    expect(board.querySelector('.lb-row__score')).toHaveTextContent(String(TIED[0].score));
+    expect(board.querySelector('.lb-row--me .lb-row__rank')).toHaveTextContent('3');
+    expect(board.querySelector('.lb-row--me .tier-badge')).not.toBeNull();
+  });
+  it('does not add the mini layout to the full board or remove its trend and gauge content', () => {
+    const { container } = render(<Leaderboard participants={TIED} trends={{ [TIED[0].id]: -3 }}
+      counts={{ [TIED[0].id]: 2 }} onSelect={() => {}} meId={TIED[0].id} />);
+    expect(container.querySelector('.lb')).not.toHaveClass('lb--mini');
+    expect(container.querySelectorAll('.lb-row')).toHaveLength(TIED.length);
+    expect(container.querySelectorAll('.lb-row__trend')).toHaveLength(TIED.length);
+    expect(container.querySelectorAll('.lb-row__gauge')).toHaveLength(TIED.length);
+    expect(container.querySelector('.lb-row__trend')).toHaveTextContent('2 条记录');
+  });
+});

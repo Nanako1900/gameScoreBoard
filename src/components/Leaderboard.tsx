@@ -98,7 +98,7 @@ function BoardRows({ props, ranks }: { props: LeaderboardProps; ranks: number[] 
 export function Leaderboard(props: LeaderboardProps): JSX.Element {
   const headingId = useId();
   const ranks = competitionRanks(props.participants.map((p) => p.score));
-  return <section className="lb panel" aria-labelledby={headingId}>
+  return <section className={`lb panel${props.limit !== undefined ? ' lb--mini' : ''}`} aria-labelledby={headingId}>
     <header className="lb__head"><h2 id={headingId} className="lb__title">{props.title ?? '信誉榜'}</h2>
       <span className="lb__count">{props.participants.length} 位选手</span>
       {props.moreTo && <Link className="lb__more" to={props.moreTo} aria-label="完整榜">完整榜 ›</Link>}
