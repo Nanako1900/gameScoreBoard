@@ -125,8 +125,10 @@ export function DiscordLinkCard({ onBeforeBind }: DiscordLinkCardProps): JSX.Ele
         <div className="dlink__row">
           <p className="dlink__text">
             绑定后可以在 Discord 里查分、看榜、看自己的待办。
-            {/* The link is a full navigation: whatever the host dialog holds
-                unsaved is gone, and nothing on the way back reopens it. */}
+            {/* The link is a full navigation: nothing unsaved reaches the server.
+                A host may keep its choice locally through onBeforeBind (the
+                first-run dialog does), but it is still unconfirmed on return.
+                The sentence is locked copy (spec §6.5, discord-link). */}
             <span className="dlink__hint">会跳转到 Discord 授权页，上面还没「确认」的修改不会保存。</span>
           </p>
           <a ref={bindRef} className="btn btn--sm dlink__bind" href={DISCORD_LINK_URL} onClick={onBeforeBind}>
