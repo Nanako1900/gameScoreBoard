@@ -12,14 +12,20 @@ import {
 } from '../lib/modalStack';
 import './modal.css';
 
+export type ModalVariant = 'center' | 'sheet' | 'drawer';
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   labelledBy: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg';
+  /** Default 'center' — exactly today's behaviour and markup. */
+  variant?: ModalVariant;
   /** Default true. false: a backdrop press does nothing; Escape and ✕ still call onClose (the caller decides, e.g. shows a leave confirm). */
   dismissible?: boolean;
+  /** Optional: rendered as <h2 id={labelledBy} className="modal__title"> inside .modal__bar. A caller that passes it must not render its own element with that id. */
+  title?: React.ReactNode;
 }
 
 const FOCUSABLE_SELECTOR =
@@ -124,6 +130,123 @@ function useLayer(
   }, [active]);
 }
 
+interface ModalBarProps {
+  variant: ModalVariant;
+  labelledBy: string;
+  title: React.ReactNode | undefined;
+  onClose: () => void;
+}
+
+/** Sticky top of the sheet / drawer / titled layouts: grabber, title and ✕ stay on screen. */
+function ModalBar({ variant, labelledBy, title, onClose }: ModalBarProps): JSX.Element {
+  return (
+    <div className="modal__bar">
+      {variant === 'sheet' && <span className="modal__grabber" aria-hidden="true" />}
+      {title !== undefined && (
+        <h2 id={labelledBy} className="modal__title">
+          {title}
+        </h2>
+      )}
+      <button type="button" className="modal__close" onClick={onClose} aria-label="关闭">
+        ✕
+      </button>
+    </div>
+  );
+}
+
+interface LayerBodyProps {
+  variant: ModalVariant;
+  labelledBy: string;
+  title: React.ReactNode | undefined;
+  onClose: () => void;
+  children: React.ReactNode;
+}
+
+/** Every existing caller lands here: a center dialog that brings its own heading. */
+function isLegacyLayout(variant: ModalVariant, title: React.ReactNode | undefined): boolean {
+  return variant === 'center' && title === undefined;
+}
+
+/**
+ * What goes inside the panel. A plain center dialog without `title` — every
+ * existing caller — keeps today's markup byte for byte: an absolutely placed ✕,
+ * then the children. Everything else gets the sticky bar and a body wrapper.
+ */
+function LayerBody({ variant, labelledBy, title, onClose, children }: LayerBodyProps): JSX.Element {
+  if (isLegacyLayout(variant, title)) {
+    return (
+      <>
+        <button type="button" className="modal__close" onClick={onClose} aria-label="关闭">
+          ✕
+        </button>
+        {children}
+      </>
+    );
+  }
+  return (
+    <>
+      <ModalBar variant={variant} labelledBy={labelledBy} title={title} onClose={onClose} />
+      <div className="modal__body">{children}</div>
+    </>
+  );
+}
+
+/** Backdrop and panel classes; the legacy center layout adds no modifier classes. */
+function layerClasses(
+  variant: ModalVariant,
+  size: NonNullable<ModalProps['size']>,
+  title: React.ReactNode | undefined,
+): { backdrop: string; panel: string } {
+  const panel = `modal__panel panel modal__panel--${size}`;
+  if (isLegacyLayout(variant, title)) {
+    return { backdrop: 'modal', panel };
+  }
+  return { backdrop: `modal modal--${variant}`, panel: `${panel} modal__panel--${variant}` };
+}
+
+interface LayerProps {
+  panelRef: React.RefObject<HTMLDivElement>;
+  variant: ModalVariant;
+  size: NonNullable<ModalProps['size']>;
+  labelledBy: string;
+  title: React.ReactNode | undefined;
+  dismissible: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}
+
+/** The portaled backdrop and dialog panel shared by center / sheet / drawer. */
+function Layer({
+  panelRef,
+  variant,
+  size,
+  labelledBy,
+  title,
+  dismissible,
+  onClose,
+  children,
+}: LayerProps): JSX.Element {
+  const classes = layerClasses(variant, size, title);
+  return createPortal(
+    <div className={classes.backdrop} onMouseDown={dismissible ? onClose : undefined}>
+      <div
+        ref={panelRef}
+        className={classes.panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <LayerBody variant={variant} labelledBy={labelledBy} title={title} onClose={onClose}>
+          {children}
+        </LayerBody>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /**
  * Accessible modal dialog: Escape to close, backdrop click to close, focus is
  * trapped inside the panel while open and restored on close, background scroll
@@ -140,7 +263,9 @@ export function Modal({
   labelledBy,
   children,
   size = 'md',
+  variant = 'center',
   dismissible = true,
+  title,
 }: ModalProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -153,29 +278,17 @@ export function Modal({
   if (!open) {
     return null;
   }
-
-  return createPortal(
-    <div className="modal" onMouseDown={dismissible ? onClose : undefined}>
-      <div
-        ref={panelRef}
-        className={`modal__panel panel modal__panel--${size}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-        tabIndex={-1}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          className="modal__close"
-          onClick={onClose}
-          aria-label="关闭"
-        >
-          ✕
-        </button>
-        {children}
-      </div>
-    </div>,
-    document.body,
+  return (
+    <Layer
+      panelRef={panelRef}
+      variant={variant}
+      size={size}
+      labelledBy={labelledBy}
+      title={title}
+      dismissible={dismissible}
+      onClose={onClose}
+    >
+      {children}
+    </Layer>
   );
 }

@@ -298,3 +298,87 @@ describe('Modal — dismissible', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Modal — variants and markup', () => {
+  it('center without title keeps today’s markup exactly', () => {
+    render(
+      <Modal open onClose={() => {}} labelledBy="legacy-title" size="lg">
+        <h2 id="legacy-title">旧弹窗</h2>
+      </Modal>,
+    );
+    const panel = screen.getByRole('dialog', { name: '旧弹窗' });
+    expect(panel.parentElement?.className).toBe('modal');
+    expect(panel.className).toBe('modal__panel panel modal__panel--lg');
+    expect(panel).toHaveAttribute('aria-modal', 'true');
+    expect(panel).toHaveAttribute('tabindex', '-1');
+    const first = panel.firstElementChild as HTMLElement;
+    expect(first.className).toBe('modal__close');
+    expect(first).toHaveAccessibleName('关闭');
+    expect(panel.querySelector('.modal__bar')).toBeNull();
+    expect(panel.querySelector('.modal__body')).toBeNull();
+  });
+
+  it('sheet renders the sticky bar with grabber, title and ✕, children in .modal__body', () => {
+    render(
+      <Modal open onClose={() => {}} labelledBy="sheet-title" variant="sheet" title="改到什么时候？">
+        <p>内容</p>
+      </Modal>,
+    );
+    const panel = screen.getByRole('dialog', { name: '改到什么时候？' });
+    expect(panel.parentElement?.className).toBe('modal modal--sheet');
+    expect(panel.className).toBe('modal__panel panel modal__panel--md modal__panel--sheet');
+
+    const bar = panel.firstElementChild as HTMLElement;
+    expect(bar.className).toBe('modal__bar');
+    expect(Array.from(bar.children).map((el) => el.className)).toEqual([
+      'modal__grabber',
+      'modal__title',
+      'modal__close',
+    ]);
+    expect(bar.querySelector('.modal__grabber')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('heading', { name: '改到什么时候？' })).toHaveAttribute('id', 'sheet-title');
+    expect(panel.querySelector('.modal__body')).toHaveTextContent('内容');
+  });
+
+  it('drawer and titled center use the bar without a grabber', () => {
+    render(
+      <>
+        <Modal open onClose={() => {}} labelledBy="drawer-title" variant="drawer" title="抽屉">
+          <p>抽屉内容</p>
+        </Modal>
+        <Modal open onClose={() => {}} labelledBy="titled-title" title="有标题">
+          <p>居中内容</p>
+        </Modal>
+      </>,
+    );
+    const drawer = screen.getByRole('dialog', { name: '抽屉' });
+    expect(drawer.parentElement?.className).toBe('modal modal--drawer');
+    expect(drawer.querySelector('.modal__grabber')).toBeNull();
+
+    const titled = screen.getByRole('dialog', { name: '有标题' });
+    expect(titled.parentElement?.className).toBe('modal modal--center');
+    expect(titled.querySelector('.modal__bar .modal__close')).not.toBeNull();
+  });
+
+  it('a sheet on top of a center dialog follows the same stack rules', async () => {
+    const user = userEvent.setup();
+    const onSheetClose = vi.fn();
+    const onDialogClose = vi.fn();
+    render(
+      <>
+        <Modal open onClose={onDialogClose} labelledBy="base-title">
+          <h2 id="base-title">约局详情</h2>
+        </Modal>
+        <Modal open onClose={onSheetClose} labelledBy="top-title" variant="sheet" title="改到什么时候？">
+          <button type="button" data-autofocus>
+            先不改
+          </button>
+        </Modal>
+      </>,
+    );
+    expect(screen.getByRole('button', { name: '先不改' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(onSheetClose).toHaveBeenCalledTimes(1);
+    expect(onDialogClose).not.toHaveBeenCalled();
+  });
+});
