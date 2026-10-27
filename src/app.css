@@ -46,7 +46,7 @@
 
 .app__error-title {
   font-size: var(--text-h1);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .app__error-msg {
@@ -132,9 +132,11 @@
   transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
-.app__fab:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: var(--glow-gold), 0 18px 40px -12px rgba(245, 197, 66, 0.65);
+@media (hover: hover) {
+  .app__fab:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: var(--glow-gold), 0 18px 40px -12px rgba(245, 197, 66, 0.65);
+  }
 }
 
 .app__fab:active {
@@ -157,7 +159,7 @@
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .app__grid {
     grid-template-columns: 1fr;
   }
@@ -171,7 +173,7 @@
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 600px) {
   .app__fab-label {
     display: none;
   }
@@ -189,6 +191,9 @@
     animation: none;
     transition: none;
   }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
   .app__fab:hover {
     transform: none;
   }

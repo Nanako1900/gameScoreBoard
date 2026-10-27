@@ -20,8 +20,15 @@
   transition: background var(--dur-fast);
 }
 
-.rules__toggle:hover {
-  background: var(--panel-2);
+@media (hover: hover) {
+  .rules__toggle:hover {
+    background: var(--panel-2);
+  }
+}
+
+/* .rules clips its overflow (rounded panel): draw the ring inside the button. */
+.rules__toggle:focus-visible {
+  outline-offset: -4px;
 }
 
 .rules__toggle-label {
@@ -174,7 +181,7 @@
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 600px) {
   .rules__grid {
     grid-template-columns: 1fr;
   }

@@ -32,3 +32,17 @@ describe('source files', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// H8 (spec §6.1): Vite emits CSS in import order. theme.css must come first so
+// component stylesheets override its base rules — imported after App it silently
+// beat them (modal shadow, .dlink__bind blue, .pd__revoke-btn red, pill radii).
+describe('src/main.tsx', () => {
+  it('imports theme.css before App', () => {
+    const main = readFileSync(path.join(ROOT, 'src/main.tsx'), 'utf8');
+    const themeAt = main.indexOf("import './theme.css';");
+    const appAt = main.indexOf("from './App';");
+    expect(themeAt).toBeGreaterThanOrEqual(0);
+    expect(appAt).toBeGreaterThanOrEqual(0);
+    expect(themeAt).toBeLessThan(appAt);
+  });
+});

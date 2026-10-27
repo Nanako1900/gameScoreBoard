@@ -4,6 +4,12 @@
    ======================================================================== */
 
 :root {
+  /* ======================================================================
+     Primitive layer — the raw palette. New CSS should reach for the semantic
+     layer below; a future light theme only has to swap these values.
+     Contrast of the text and edge tokens is locked by tests/unit/contrast.test.ts.
+     ====================================================================== */
+
   /* --- Surfaces & structure --- */
   --bg: #0a0e14;
   --bg-elevated: #0d131c;
@@ -11,23 +17,53 @@
   --panel-2: #182030;
   --border: #232b3a;
   --border-strong: #2f3a4d;
+  /* Edges of inputs, checkboxes and clickable chips: ≥ 3:1 on every surface. */
+  --border-input: #66738a;
 
   /* --- Text --- */
   --text: #e6edf3;
   --muted: #8b96a5;
-  --faint: #5c6675;
+  --faint: #848fa0;
 
   /* --- Accents --- */
   --gold: #f5c542;
   --gold-dim: #b8912a;
+  /* Fills and borders only — #e5484d is 4.2:1 on --panel-2, too dim for text. */
   --red: #e5484d;
   --red-dim: #a5343a;
+  /* Every piece of red text (errors, deductions, danger labels). */
+  --danger-text: #ff6b6f;
   --blue: #4aa3ff;
   --green: #3ddc84;
+  --amber: #ff8a3d;
+  /* Keyboard focus ring — see :focus-visible below. */
+  --focus: #8ab4ff;
 
-  /* --- Semantic (score deltas) --- */
+  /* --- Score deltas --- */
   --up: #3ddc84;
-  --down: #e5484d;
+  /* A deduction is text, so it follows --danger-text rather than the fill red. */
+  --down: var(--danger-text);
+
+  /* ======================================================================
+     Semantic layer — one meaning per colour (spec §6.2). Pair every colour
+     with an icon or words: gold and amber are only ~1.45:1 apart.
+     ====================================================================== */
+  --action: var(--gold); /* primary button, current nav item */
+  --attn: var(--amber); /* needs you, deadline < 2h, time moved, dm_ok = 0 */
+  --ok: var(--green); /* going, on time, bonus, heal, full */
+  --neutral: var(--muted); /* maybe, no reply, not going, cancelled — never red */
+  --danger: var(--red); /* danger button fill / edge, deductions — never colours a person */
+  --info: var(--blue); /* Discord, links, AI source */
+  /* Public score chip and public ScoreGauge: the same for everyone, no tier colour. */
+  --score-chip-bg: var(--panel-2);
+  --score-chip-fg: var(--text);
+
+  /* --- Layers & layout primitives (consumed by Modal / Toast from P0-2, P0-3) --- */
+  --z-modal: 100;
+  --z-toast: 200;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --sheet-max-h: 92dvh;
+  --tap-min: 44px;
 
   /* --- Glow / shadow --- */
   --glow-gold: 0 0 0 1px rgba(245, 197, 66, 0.35), 0 0 28px -6px rgba(245, 197, 66, 0.45);
@@ -44,11 +80,25 @@
   --r-pill: 999px;
 
   /* --- Typography --- */
-  --font-display: 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
-  --font-body: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
-    Roboto, Helvetica, Arial, sans-serif;
+  /* Rajdhani has no CJK glyphs: Chinese falls through to the system fonts. */
+  --font-display: 'Rajdhani', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans SC',
+    'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
   --font-num: 'Rajdhani', ui-monospace, 'SF Mono', 'Menlo', monospace;
 
+  /* Type scale — six steps plus hero (spec §6.3). Chinese never goes below --fs-xs,
+     and only timestamps use it; inputs use --fs-md or more (iOS zooms below 16px). */
+  --fs-xs: 0.75rem; /* 12px */
+  --fs-sm: 0.875rem; /* 14px */
+  --fs-md: 1rem; /* 16px — body, inputs */
+  --fs-lg: 1.125rem; /* 18px */
+  --fs-xl: 1.375rem; /* 22px */
+  --fs-2xl: 1.75rem; /* 28px */
+  --fs-hero: 3rem; /* 48px — MyScoreCard and the player page score only */
+
+  /* Deprecated: the v4 fluid sizes. Components move to --fs-* as each is reskinned;
+     don't use these in new CSS. */
   --text-hero: clamp(2.6rem, 1.2rem + 5.5vw, 5.5rem);
   --text-h1: clamp(1.6rem, 1.1rem + 2vw, 2.6rem);
   --text-h2: clamp(1.15rem, 0.95rem + 0.9vw, 1.5rem);
@@ -138,14 +188,12 @@ h3 {
   letter-spacing: 0.01em;
 }
 
-:root {
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue);
-}
-
+/* Keyboard focus is a real outline (H9): box-shadows such as the gold button's
+   can't paint over it, it follows each element's own border-radius, and
+   forced-colors mode keeps it. Never remove it — restyle the outline instead. */
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--r-sm);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* --- Reusable primitives -------------------------------------------------- */
@@ -205,9 +253,11 @@ h3 {
     border-color var(--dur-fast), box-shadow var(--dur-fast), color var(--dur-fast);
 }
 
-.btn:hover {
-  border-color: var(--border-strong);
-  background: #1c2536;
+@media (hover: hover) {
+  .btn:hover {
+    border-color: var(--border-strong);
+    background: #1c2536;
+  }
 }
 
 .btn:active {
@@ -227,10 +277,12 @@ h3 {
   box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.2), 0 8px 24px -12px rgba(245, 197, 66, 0.6);
 }
 
-.btn--gold:hover {
-  background: linear-gradient(180deg, #ffe083, #ffce4c);
-  border-color: var(--gold);
-  box-shadow: var(--glow-gold);
+@media (hover: hover) {
+  .btn--gold:hover {
+    background: linear-gradient(180deg, #ffe083, #ffce4c);
+    border-color: var(--gold);
+    box-shadow: var(--glow-gold);
+  }
 }
 
 .btn--danger {
@@ -239,8 +291,26 @@ h3 {
   border-color: var(--red-dim);
 }
 
-.btn--danger:hover {
-  box-shadow: var(--glow-red);
+@media (hover: hover) {
+  .btn--danger:hover {
+    box-shadow: var(--glow-red);
+  }
+}
+
+/* The quieter danger button: inline confirms such as ConfirmInline's 「确认取消」,
+   where a solid red block would shout louder than the choice deserves. */
+.btn--danger-outline {
+  color: var(--danger-text);
+  background: transparent;
+  border-color: var(--danger);
+}
+
+@media (hover: hover) {
+  /* Restate the edge: .btn:hover would otherwise grey it out. */
+  .btn--danger-outline:hover {
+    border-color: var(--danger);
+    background: color-mix(in oklab, var(--danger) 14%, transparent);
+  }
 }
 
 .btn--ghost {
@@ -248,8 +318,10 @@ h3 {
   border-color: var(--border);
 }
 
-.btn--ghost:hover {
-  background: var(--panel-2);
+@media (hover: hover) {
+  .btn--ghost:hover {
+    background: var(--panel-2);
+  }
 }
 
 .btn--sm {
@@ -313,5 +385,36 @@ h3 {
   .modal__close {
     min-width: 44px;
     min-height: 44px;
+  }
+}
+
+/* --- Forced colors (Windows high contrast) ---------------------------------
+ * The browser swaps our palette and drops backgrounds: the focus ring takes the
+ * system highlight, controls keep an edge, and status chips that were only a
+ * tinted fill get a border so they don't vanish. The chips carry an `html`
+ * prefix: theme.css loads first, so it needs one more selector to beat the
+ * components' own single-class rules (e.g. .feed-row__status--escalate). */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+
+  .btn,
+  input,
+  select,
+  textarea {
+    border-color: ButtonText;
+  }
+
+  html .feed-row__status,
+  html .sdt__chip,
+  html .sdt-player__rsvp,
+  html .sdt-player__att,
+  html .srow__game,
+  html .srow__count,
+  html .srow__status,
+  html .rc-row__tag,
+  html .tier-badge {
+    border: 1px solid CanvasText;
   }
 }

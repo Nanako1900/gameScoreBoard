@@ -15,7 +15,7 @@
   flex-direction: column;
   align-items: center;
   gap: 1rem;
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .pd__header {
@@ -94,7 +94,7 @@
 .pd__score-input {
   width: 4.5rem;
   padding: 0.3rem 0.45rem;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-input);
   border-radius: var(--r-sm);
   background: var(--panel-2);
   color: var(--text);
@@ -179,21 +179,23 @@
 }
 
 .pd__revoke-btn {
-  color: var(--red);
+  color: var(--danger-text);
   border-color: color-mix(in oklab, var(--red) 40%, transparent);
 }
 
-.pd__revoke-btn:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--red) 14%, transparent);
-  border-color: color-mix(in oklab, var(--red) 55%, transparent);
+@media (hover: hover) {
+  .pd__revoke-btn:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--red) 14%, transparent);
+    border-color: color-mix(in oklab, var(--red) 55%, transparent);
+  }
 }
 
 .pd__inline-error {
-  color: var(--red);
+  color: var(--danger-text);
   font-size: var(--text-sm);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .pd__header {
     flex-direction: column;
     text-align: center;
@@ -248,7 +250,7 @@
   font-size: var(--text-sm);
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
 }
 
 .pd__override-field:not(.pd__override-field--grow) .pd__override-input {

@@ -40,6 +40,14 @@
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
+/* theme.css loads first now (H8), so its coarse-pointer 40px loses to the 36px
+   above: restate the touch size here, after the rule it has to beat. */
+@media (pointer: coarse) {
+  .sessions__tab {
+    min-height: 40px;
+  }
+}
+
 .sessions__tab--active {
   color: var(--text);
   background: var(--panel-2);
@@ -55,7 +63,7 @@
 
 .sessions__error {
   padding: 0.5rem 0;
-  color: var(--red);
+  color: var(--danger-text);
   text-align: left;
 }
 
@@ -80,9 +88,11 @@
   transition: border-color var(--dur-fast), background var(--dur-fast);
 }
 
-.srow:hover {
-  border-color: var(--border-strong);
-  background: rgba(0, 0, 0, 0.28);
+@media (hover: hover) {
+  .srow:hover {
+    border-color: var(--border-strong);
+    background: rgba(0, 0, 0, 0.28);
+  }
 }
 
 .srow--cancelled,
@@ -170,8 +180,10 @@
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
-.srow__rsvp-btn:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .srow__rsvp-btn:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 
 .srow__rsvp-btn--active {
@@ -184,7 +196,7 @@
   cursor: not-allowed;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .srow {
     flex-wrap: wrap;
   }

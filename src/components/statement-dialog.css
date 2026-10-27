@@ -82,13 +82,15 @@
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   resize: vertical;
   transition: border-color var(--dur-fast);
 }
 
-.sd__textarea:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .sd__textarea:hover {
+    border-color: var(--muted);
+  }
 }
 
 .sd__textarea:disabled {
@@ -104,12 +106,12 @@
 .sd__notice {
   font-size: var(--text-xs);
   line-height: 1.6;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .sd__error {
   font-size: var(--text-sm);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .sd__actions {
@@ -123,7 +125,7 @@
   font-size: max(16px, var(--text-sm));
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   /* 主操作在底部，最靠拇指 */
   .sd__actions {
     flex-direction: column;

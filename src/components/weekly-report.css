@@ -61,9 +61,11 @@
   transition: color var(--dur-fast);
 }
 
-.wr__regen:hover,
-.wr__close:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .wr__regen:hover,
+  .wr__close:hover {
+    color: var(--text);
+  }
 }
 
 .wr__close {
@@ -178,7 +180,7 @@
   color: var(--gold);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .wr__stats {
     grid-template-columns: repeat(2, 1fr);
   }

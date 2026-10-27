@@ -39,7 +39,7 @@
   padding: 0.65rem 0.75rem;
   color: var(--text);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   border-radius: var(--r-md);
   transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
@@ -47,7 +47,6 @@
 .cd__select:focus-visible,
 .cd__textarea:focus-visible {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--blue) 25%, transparent);
 }
 
 .cd__textarea {
@@ -58,7 +57,7 @@
 
 .cd__hint {
   font-size: var(--text-xs);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 
@@ -76,7 +75,7 @@
 
 
 .cd__error {
-  color: var(--red);
+  color: var(--danger-text);
   font-size: var(--text-sm);
   padding: 0.6rem 0.75rem;
   border-radius: var(--r-md);
@@ -141,19 +140,22 @@
   font-size: var(--text-sm);
   color: var(--muted);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   cursor: pointer;
   transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
 }
 
 /* checkbox 是 visually-hidden 的，焦点环得画在 label 上 */
 .cd-chip:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
-.cd-chip:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
+@media (hover: hover) {
+  .cd-chip:hover {
+    border-color: var(--muted);
+    color: var(--text);
+  }
 }
 
 .cd-chip--on {
@@ -208,8 +210,10 @@
   text-align: left;
 }
 
-.cd-extra__toggle:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .cd-extra__toggle:hover {
+    color: var(--text);
+  }
 }
 
 .cd-extra__chev {
@@ -235,7 +239,7 @@
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   resize: vertical;
 }
 
@@ -259,7 +263,7 @@
   font-size: max(16px, var(--text-sm));
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   /* 主操作在底部，最靠拇指 */
   .cd__actions {
     flex-direction: column;

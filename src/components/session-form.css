@@ -78,21 +78,24 @@
   color: var(--muted);
   white-space: nowrap;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
     background var(--dur-fast) var(--ease);
 }
 
-.sf-slot:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--panel-2);
+@media (hover: hover) {
+  .sf-slot:hover {
+    color: var(--text);
+    border-color: var(--muted);
+    background: var(--panel-2);
+  }
 }
 
 /* 隐藏的 radio 拿到键盘焦点时，把焦点环画在 label 上 */
 .sf-slot:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .sf-slot--on {
@@ -102,10 +105,12 @@
   box-shadow: 0 6px 18px -10px rgba(245, 197, 66, 0.9);
 }
 
-.sf-slot--on:hover {
-  color: #17130a;
-  background: linear-gradient(180deg, #ffe083, #ffce4c);
-  border-color: var(--gold);
+@media (hover: hover) {
+  .sf-slot--on:hover {
+    color: #17130a;
+    background: linear-gradient(180deg, #ffe083, #ffce4c);
+    border-color: var(--gold);
+  }
 }
 
 .sf-slot--custom {
@@ -118,7 +123,7 @@
   color: var(--text);
   background: var(--panel-2);
   border-style: solid;
-  border-color: var(--border-strong);
+  border-color: var(--muted);
   box-shadow: none;
 }
 
@@ -133,14 +138,16 @@
   font-size: max(16px, var(--text-base));
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   transition: border-color var(--dur-fast);
 }
 
-.sf__input:hover,
-.sf__textarea:hover,
-.sf__select:hover {
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .sf__input:hover,
+  .sf__textarea:hover,
+  .sf__select:hover {
+    border-color: var(--muted);
+  }
 }
 
 .sf__input--custom {
@@ -170,19 +177,22 @@
   font-size: var(--text-sm);
   color: var(--muted);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
     background var(--dur-fast) var(--ease);
 }
 
-.sf-person:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .sf-person:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
 }
 
 .sf-person:has(:focus-visible) {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .sf-person--on {
@@ -204,7 +214,7 @@
 
 .sf__error {
   font-size: var(--text-sm);
-  color: var(--red);
+  color: var(--danger-text);
 }
 
 .sf__actions {
@@ -213,7 +223,7 @@
   gap: 0.6rem;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   /* 竖排铺满；DOM 顺序是 [取消, 主操作]，用 column 让主操作落在底部 ——
      手机上最靠拇指的位置该给主操作，不是给「取消」。 */
   .sf__actions {
