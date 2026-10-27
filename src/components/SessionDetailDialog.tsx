@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ATTENDANCE_MAP,
-  RSVP_LABEL,
-  SELF_RSVPS,
+  DEFAULT_DURATION_MIN,
   SESSION_STATUS_LABEL,
   isSelfRsvp,
 } from '@shared/attendance';
@@ -12,12 +10,18 @@ import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { PAGE_BACK_LABEL, SESSION_NOT_FOUND } from '../lib/routeCopy';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
 import { inviteToast } from '../lib/invitePicker';
-import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
+import { formatBoardDateTime, formatDateTime, formatTimeLeft, formatViewerAside, formatWhen, parseTimestamp } from '../lib/time';
+import { COUNTDOWN_TICK_MS } from '../lib/constants';
+import { sessionPhase } from '../lib/lobbySessions';
+import { onSession } from '../lib/sessionEvents';
+import { useNow } from '../lib/useNow';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
 import { useInvitable } from '../lib/useInvitable';
 import { useUndo } from '../lib/useUndo';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
+import { RsvpControl } from './RsvpControl';
+import { RosterGroups } from './RosterGroups';
 import { ConfirmInline } from './ConfirmInline';
 import { NotFound } from './NotFound';
 import { PageBar } from './PageBar';
@@ -42,9 +46,9 @@ interface SessionDetailDialogProps {
   resumeRsvp?: SelfRsvp | null;
   /** P1-3: the question above was answered, dismissed, or does not apply here. */
   onResumeDone?: () => void;
+  boardTzOffsetHours?: number;
 }
 
-const RSVP_ORDER = SELF_RSVPS;
 const TITLE_ID = 'session-detail-title';
 const NOT_FOUND_STATUS = 404;
 
@@ -56,6 +60,7 @@ export function SessionDetailDialog({
   variant = 'center',
   resumeRsvp = null,
   onResumeDone,
+  boardTzOffsetHours,
 }: SessionDetailDialogProps): JSX.Element {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -71,6 +76,7 @@ export function SessionDetailDialog({
   const titleFocused = useRef(false);
   const toast = useToast();
   const offerUndo = useUndo();
+  const now = useNow(COUNTDOWN_TICK_MS);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -90,6 +96,10 @@ export function SessionDetailDialog({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => onSession((updated) => {
+    if (updated.id === sessionId) setSession(updated);
+  }), [sessionId]);
 
   // The page form: once the session is in, focus its title (spec §6.4) — only the first time.
   useEffect(() => {
@@ -179,7 +189,7 @@ export function SessionDetailDialog({
     onChanged();
   };
 
-  const started = session !== null && parseTimestamp(session.starts_at) <= Date.now();
+  const started = session !== null && parseTimestamp(session.starts_at) <= now;
   const isOrganizer = me !== null && session !== null && session.organizer.id === me.id;
   const canManage = isOrganizer || me?.is_admin === true;
   const canRsvp =
@@ -226,7 +236,7 @@ export function SessionDetailDialog({
         ) : (
           <div className="sdt">
             <header className="sdt__head">
-              <p className="sdt__when tabular">{formatDateTime(session.starts_at)}</p>
+              <SessionTime session={session} now={now} offset={boardTzOffsetHours} />
               <h2 id={TITLE_ID} className="sdt__title" ref={titleRef} tabIndex={-1}>
                 {session.title}
               </h2>
@@ -239,7 +249,7 @@ export function SessionDetailDialog({
                 {session.organizer.username} 组局
                 {session.game && <span className="sdt__chip">{session.game}</span>}
                 {session.duration_min && <span className="sdt__chip">{session.duration_min} 分钟</span>}
-                {session.status !== 'open' && (
+                {session.status !== 'open' && session.status !== 'cancelled' && (
                   <span className="sdt__chip sdt__chip--status">
                     {SESSION_STATUS_LABEL[session.status]}
                   </span>
@@ -247,6 +257,9 @@ export function SessionDetailDialog({
               </p>
               {session.note && <p className="sdt__note">{session.note}</p>}
             </header>
+
+            {session.status === 'cancelled' && <div className="sdt__cancelled"><p>已取消</p>
+              {session.cancel_reason && <p>{session.organizer.username}：{session.cancel_reason}</p>}</div>}
 
             {error && (
               <p className="sdt__error" role="alert">
@@ -257,7 +270,7 @@ export function SessionDetailDialog({
 
             {resumeAsk && <ResumeHint rsvp={resumeAsk} onDismiss={dismissResume} />}
             {canRsvp && (
-              <RsvpControls
+              <DetailRsvp
                 session={session}
                 busy={busy}
                 suggested={resumeAsk ?? undefined}
@@ -265,35 +278,9 @@ export function SessionDetailDialog({
               />
             )}
             {canVisitorRsvp && <VisitorRsvpPrompt sessionId={session.id} />}
+            {!canManage && ['live', 'due'].includes(sessionPhase(session, now)) && <p className="sdt__rsvp-note">开局后不能改报名</p>}
 
-            <section className="sdt__section">
-              <h3 className="sdt__section-title">
-                报名 <span className="tabular">{session.counts.going}</span>
-                {session.capacity !== null && (
-                  <span className="tabular"> / {session.capacity}</span>
-                )}
-              </h3>
-              <ul className="sdt__players">
-                {session.players.map((p) => {
-                  const att = p.attendance ? ATTENDANCE_MAP[p.attendance] : null;
-                  return (
-                    <li key={p.user.id} className={`sdt-player sdt-player--${p.rsvp}`}>
-                      <Avatar name={p.user.username} src={p.user.avatar_url} size={24} />
-                      <span className="sdt-player__name">{p.user.username}</span>
-                      <span className="sdt-player__rsvp">{RSVP_LABEL[p.rsvp]}</span>
-                      {att && (
-                        <span className={`sdt-player__att sdt-player__att--${p.attendance}`}>
-                          {att.emoji} {att.label}
-                          {p.attendance === 'late' && p.late_minutes !== null && (
-                            <span className="tabular"> {p.late_minutes}′</span>
-                          )}
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+            <RosterGroups session={session} />
 
             {records.length > 0 && (
               <section className="sdt__section">
@@ -362,65 +349,26 @@ export function SessionDetailDialog({
   );
 }
 
-const FULL_NOTICE_ID = 'session-detail-full';
-
-/** aria-describedby from the ids that apply, or undefined when none does. */
-function describedBy(...ids: (string | null)[]): string | undefined {
-  const present = ids.filter((id): id is string => id !== null);
-  return present.length > 0 ? present.join(' ') : undefined;
+interface SessionTimeProps { session: SessionDetail; now: number; offset?: number }
+function SessionTime({ session, now, offset }: SessionTimeProps): JSX.Element {
+  if (offset === undefined) return <p className="sdt__when tabular">{formatDateTime(session.starts_at)}</p>;
+  const details = [formatTimeLeft(session.starts_at, now), `约 ${(session.duration_min ?? DEFAULT_DURATION_MIN) / 60} 小时`,
+    formatViewerAside(session.starts_at, offset)].filter(Boolean).join(' · ');
+  return <><p className="sdt__when tabular">{formatBoardDateTime(session.starts_at, offset)}</p>
+    <p className="sdt__time-detail">{details}</p></>;
 }
-
-interface RsvpControlsProps {
-  session: SessionDetail;
-  busy: boolean;
-  /** P1-3: ringed in gold — the answer clicked before login. Only clicking it answers. */
-  suggested?: SelfRsvp;
-  onAnswer: (rsvp: SelfRsvp) => void;
-}
-
-/**
- * The panel's one set of 来 / 待定 / 不来 (session-rsvp-moved pins a single 来)
- * and what an answer commits to. 来 closes once the seats are taken — the
- * server refuses it anyway — and the notice says what to do instead.
- */
-function RsvpControls({ session, busy, suggested, onAnswer }: RsvpControlsProps): JSX.Element {
-  const closed = goingClosed(session);
+interface DetailRsvpProps { session: SessionDetail; busy: boolean; suggested?: SelfRsvp; onAnswer: (rsvp: SelfRsvp) => void }
+function DetailRsvp({ session, busy, suggested, onAnswer }: DetailRsvpProps): JSX.Element {
   const notice = fullNotice(session);
-  return (
-    <div className="sdt__rsvp-block">
-      <div className="sdt__rsvp" role="group" aria-label="我的报名">
-        <span className="sdt__rsvp-label">我：</span>
-        {RSVP_ORDER.map((r) => {
-          const shut = r === 'going' && closed;
-          return (
-            <button
-              key={r}
-              type="button"
-              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}${
-                suggested === r ? ' sdt__rsvp-btn--suggested' : ''
-              }`}
-              disabled={busy || shut}
-              aria-pressed={session.my_rsvp === r}
-              aria-describedby={describedBy(
-                shut && notice ? FULL_NOTICE_ID : null,
-                suggested === r ? RESUME_HINT_TEXT_ID : null,
-              )}
-              onClick={() => onAnswer(r)}
-            >
-              {RSVP_LABEL[r]}
-            </button>
-          );
-        })}
-      </div>
-      <p className="sdt__rsvp-note">来 = 承诺，没来会被记一笔；待定不算承诺。</p>
-      <p className="sdt__rsvp-note">开局前说不来，点名结算不会记你。</p>
-      {notice && (
-        <p id={FULL_NOTICE_ID} className="sdt__rsvp-full">
-          {notice}
-        </p>
-      )}
-    </div>
-  );
+  return <div className="sdt__rsvp-block">
+    <p id="session-rsvp-q">你去吗？</p>
+    <RsvpControl labelledBy="session-rsvp-q" value={session.my_rsvp} busy={busy} suggested={suggested}
+      onAnswer={onAnswer} goingClosed={goingClosed(session)} goingClosedNoteId="session-detail-full"
+      suggestedNoteId={RESUME_HINT_TEXT_ID} />
+    <p className="sdt__rsvp-note">来 = 承诺，没来会被记一笔；待定不算承诺。</p>
+    <p className="sdt__rsvp-note">开局前说不来，点名结算不会记你。</p>
+    {notice && <p id="session-detail-full" className="sdt__rsvp-full">{notice}</p>}
+  </div>;
 }
 
 interface OrganizerActionsProps {

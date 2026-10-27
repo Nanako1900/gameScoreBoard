@@ -247,3 +247,22 @@ export function formatTimeLeft(targetIso: string, now: number = Date.now()): str
   if (remaining < DAY) return `还有 ${Math.floor(remaining / HOUR)} 小时`;
   return `还有 ${Math.floor(remaining / DAY)} 天`;
 }
+
+// --- P3-1 ---
+/** Midnight on the board's clock, or the browser's clock when no offset was supplied. */
+export function dayStartOn(ms: number, offsetHours?: number): number {
+  return wallClock(ms, offsetHours).dayStart;
+}
+
+/** Monday midnight of the week containing this instant, on the same clock. */
+export function weekStartOn(ms: number, offsetHours?: number): number {
+  const days = (wallClock(ms, offsetHours).weekday + 6) % 7;
+  if (offsetHours !== undefined) return dayStartOn(ms, offsetHours) - days * DAY;
+  const local = new Date(dayStartOn(ms));
+  local.setDate(local.getDate() - days);
+  return local.getTime();
+}
+
+export function clockOn(ms: number, offsetHours?: number): string {
+  return clockTime(wallClock(ms, offsetHours));
+}

@@ -1,0 +1,19 @@
+/* Time and people first; action order follows the DOM. */
+.scard { display: grid; gap: 0.5rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel-2); padding: 0.75rem; }
+.scard__main { display: grid; gap: 0.4rem; min-width: 0; padding: 0; text-align: left; border-radius: var(--r-sm); }
+.scard__when { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+.scard__title { font-family: var(--font-display); font-weight: 600; overflow-wrap: anywhere; }
+.scard__meta, .scard__preview, .scard__preview > span, .scard__answers, .scard__badge { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.65rem; }
+.scard__meta, .scard__preview, .scard__state, .scard__note { font-size: var(--text-xs); color: var(--muted); }
+.scard__state { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.scard__state > span:last-child { flex-basis: auto; }
+.scard__actions:empty { display: none; }
+.scard__answers { gap: 0.5rem; }
+.scard__note { flex-basis: 100%; }
+.scard__chip, .scard__badge { padding: 0.15em 0.55em; border: 1px solid var(--border-strong); border-radius: var(--r-pill); }
+.scard__chip { font-size: var(--text-sm); color: var(--text); }
+.scard--cancelled .scard__when, .scard--settled .scard__when { color: var(--muted); }
+.scard__login { display: inline-flex; align-items: center; min-height: 40px; padding: 0.3rem 0.8rem; border: 1px solid var(--gold-dim); border-radius: var(--r-pill); color: var(--gold); font-size: var(--text-sm); }
+@media (hover: hover) { .scard:hover { border-color: var(--border-strong); } .scard__login:hover { border-color: var(--gold); } }
+@media (pointer: coarse) { .scard__login, .scard__answers > button { min-height: 44px; } }
+@media (forced-colors: active) { .scard__chip, .scard__badge { border: 1px solid ButtonText; } }

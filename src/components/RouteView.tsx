@@ -135,6 +135,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
             me={props.me}
             onClose={close}
             onChanged={props.onChanged}
+            boardTzOffsetHours={props.config.boardTzOffsetHours}
             resumeRsvp={resumeRsvpFor(props.resume, route.sessionId)}
             onResumeDone={props.onResumeDone}
           />

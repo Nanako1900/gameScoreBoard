@@ -409,6 +409,7 @@ describe('App — tab title', () => {
         '/api/sessions?scope=upcoming',
         '/api/records?limit=20&mine=pending',
         '/api/me/invites',
+        '/api/sessions?scope=mine',
       ]),
     );
     unmount();

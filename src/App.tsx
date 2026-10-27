@@ -35,6 +35,8 @@ import { PendingBanner } from './components/PendingBanner';
 import { MyScoreLine } from './components/MyScoreLine';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { SessionsPanel } from './components/SessionsPanel';
+import { RecentSessions } from './components/RecentSessions';
+import { useLobbySessions } from './lib/useLobbySessions';
 import { SessionFormDialog } from './components/SessionFormDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { InviteBanner } from './components/InviteBanner';
@@ -197,6 +199,7 @@ function AppMain(): JSX.Element {
     [ready],
   );
   const counts = useMemo(() => (ready ? computeCounts(ready.records) : {}), [ready]);
+  const lobby = useLobbySessions({ enabled: ready !== null, me: ready?.me ?? null, refreshKey: sessionsKey });
 
   if (state.status === 'loading') {
     return (
@@ -288,11 +291,14 @@ function AppMain(): JSX.Element {
             game happening, and it used to sit under a 520px leaderboard where
             nobody scrolled to it. */}
         <SessionsPanel
+          lobby={lobby}
+          boardTzOffsetHours={config.boardTzOffsetHours}
           me={me}
           refreshKey={sessionsKey}
           onOpenSession={openSession}
           onCreate={() => setSessionFormOpen(true)}
         />
+        <RecentSessions refreshKey={sessionsKey} boardTzOffsetHours={config.boardTzOffsetHours} onOpenSession={openSession} />
 
         {report && (
           <WeeklyReportCard

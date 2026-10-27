@@ -53,3 +53,7 @@ export const HISTORY_SHEET_NAME_MAX = 32;
 export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
 /** edg.return.path upper bound. */
 export const RETURN_PATH_MAX = 512;
+
+// --- P3-1 ---
+export const LOBBY_CANCELLED_KEEP_MS = 24 * 60 * 60 * 1000;
+export const RECENT_SESSIONS_SHOWN = 10;
