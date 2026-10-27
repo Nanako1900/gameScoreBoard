@@ -229,6 +229,30 @@ fields) and answer `Cache-Control: private, no-store`.
 - `GET /api/me` → `{ user: User | null, pending: { statements: number, appeals: number } }` (200 either way).
 - `POST /api/me/roles` `{ is_participant?, is_judge? }` → `{ user }`.
 - `POST /api/me/display-name` `{ display_name: string | null }` → `{ user }`.
+
+**Discord binding (Node-only)**
+
+These authenticated endpoints are served by `server/src/link-routes.ts`, not the Worker.
+When Discord binding is disabled, they return 404; the SPA hides unsupported controls.
+
+- `GET /api/me/discord` → `{ link }`, unchanged. An unbound caller gets `link: null`;
+  a bound caller receives their existing private binding view, including `discord_username`,
+  `notify_dm` and `dm_ok`. The nickname is visible only to its owner; no Discord user ID
+  or channel ID is returned. Responses are `Cache-Control: no-store`.
+- `POST /api/me/discord/notify` `{ on: boolean }` → `{ link }`. The same switch as `/notify`;
+  unbound is 409, a missing or invalid `on` is 400. Enabling also reopens `dm_ok` for another try.
+- `POST /api/me/discord/unlink` → `{ ok: true, removed: boolean }`.
+- `POST /api/me/discord/welcome` → `{ ok: true }`. Queue a new welcome guide for the caller;
+  401 if signed out, 409 if unbound or notifications are off (「先打开私信通知」),
+  429 after 3 manual retries per rolling 24 hours (「24 小时内已经重发 3 次，稍后再试」),
+  and 503 in read-only mode. Automatic binding welcomes do not count toward this quota;
+  manual attempts count whether queued, sent, skipped or dead. PostgreSQL atomically checks
+  the quota, sets `dm_ok = 1`, emits `dm.welcome` and wakes the dispatcher, so concurrent
+  requests cannot spend the same remaining slot. Success means queued, not delivered.
+
+All three POST endpoints return 503 in read-only mode and enforce the existing CSRF policy.
+No per-message delivery tracking or onboarding completion field is added to the GET response.
+
 **Cases**
 - `POST /api/records` — two shapes, both requiring `is_judge`:
   - **v3 default (batch, AI classifies):** `{ subject_ids: string[], claim, extras?, note? }`
@@ -370,8 +394,25 @@ reaches `decided` rather than stranding a player's score.
   `previewCount={5}`, retain 「看更多」 and add 「全部动态」 to `/board/feed` below it.
 - Navigation calls the home page 「首页」; no create-session entry remains. Phone bottom tabs are
   exactly 「首页·N」「信誉榜」「我的」. Judges and admins keep 「记一笔」 in the avatar menu.
-  Todos include statements, escalation, appeal outcomes / admin review, unbound Discord and failed
-  DMs. S1 retains `OnboardingDialog` and these Discord status cards; the welcome wizard is S2.
+  Todos include statements, escalation, appeal outcomes / admin review and one onboarding card.
+  「还差 N 步完成入户」 replaces the old unbound / failed-DM cards and comes first; 「继续」 links
+  to `/welcome`. N counts the missing server-derived steps 2–4, using the same pure function as
+  the welcome page. The onboarding card contributes neither a todo badge count nor an attention dot.
+  Closing it stores account, timestamp and missing step IDs in `edg.todo.onboarding-dismissed` for
+  7 days. A newly missing step makes it reappear even when the missing count stays the same;
+  completing steps does not undo the dismissal. This local preference never proves completion.
+- `/welcome` has five ordered, expandable cards: login; join and bind Discord; enable DMs;
+  name and identity; guide. Only login is actionable for visitors. Completed cards fold and the
+  first unfinished one opens. Step 2 requires a binding; step 3 requires both `notify_dm` and
+  `dm_ok`; step 4 requires `is_participant` or `is_judge`. The last step has no persisted viewed flag.
+  Names and roles retain their existing `IdentityForm` save flow and tab-local draft;
+  「裁判资格由管理员授予」 remains. Drafts never mark a step complete.
+  A Discord GET 404 never marks steps 2 or 3 complete: controls hide and 「完成，去首页」 stays
+  disabled. Loading or failed reads also cannot establish completion.
+- The visitor welcome card's 「开始」 and both account-menu entries 「编辑身份」「通知与 Discord」
+  link to `/welcome`; `OnboardingDialog` is retired. `/guide` is available without login.
+  Both pages are full pages at every viewport size. `GuideContent`, `/help` and `dm.welcome`
+  share `shared/guide.ts`; S2 does not yet add voice recording or an information-board channel.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
@@ -387,9 +428,17 @@ reaches `decided` rather than stranding a player's score.
   opens — what it shows and which controls come from the API and `/api/me` as
   always. A link never writes. A case that is gone leaves you on `/` with
   「链接里的案件不存在了。」 (any other failure: 「打不开链接里的案件，稍后再试。」).
-  These parameters are read on `/` only. `?linked=discord` is stripped and shows
-  the Discord-linked notice; `?onboarding=1` (on any path) opens the first-login
-  dialog first; the case target opens or the retired-session Toast appears once it is closed.
+  Case and session parameters are read on `/` only. `?onboarding=1` on any app path first
+  replaces the route with `/welcome`; `?linked=discord` also replaces it with `/welcome` and
+  shows the existing 「Discord 绑定成功」 notice there. Both markers remain permanently compatible;
+  the backend callback URLs stay unchanged. After 「完成，去首页」 returns to `/`, the original
+  read-only destination continues: legacy case / session target first, then a valid `edg.return`,
+  then the non-home app path that the welcome entry temporarily replaced. A retired-session
+  destination still produces the S1 home Toast; it never opens a session or replays an action.
+  `edg.welcome.return` in sessionStorage keeps only that validated destination in the same tab,
+  expiring after 30 minutes, across Discord OAuth and welcome-page reloads. A current explicit app
+  destination or legacy deep link wins over an older pending value. Completing welcome or
+  logging out clears it. Unknown / external / overlong paths and old action intents cannot be replayed.
 - Routes (`src/lib/routes.ts` parses, `src/lib/router.ts` owns `history`; no
   router library). Only these exist; every other path renders the front-end
   page 「这页不存在」 with a 「回大厅」 link:
@@ -397,6 +446,8 @@ reaches `decided` rather than stranding a player's score.
   | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
   |---|---|---|
   | `/` | the home page | the home page |
+  | `/welcome` | full page: five-step onboarding and account settings | same full page |
+  | `/guide` | full page: shared bot guide | same full page |
   | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | the same page |
   | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the home page |
@@ -434,13 +485,14 @@ reaches `decided` rather than stranding a player's score.
   `sessionStorage['edg.return']` (a page not worth coming back to — `/` or an
   unknown path — saves nothing and drops any old value), e.g.
   `{"v":1,"path":"/players/player-5","savedAt":1761500000000}`.
-  On the first signed-in load (the OAuth callback lands on `/`; after the first-login dialog,
-  if one opens) it is read once and always deleted; a valid one saved less than 30 minutes ago
+  On the first signed-in load (the OAuth callback lands on `/`; after welcome finishes,
+  if it was requested) it is read once and always deleted; a valid one saved less than 30 minutes ago
   opens that address. It is only ever an in-app path — at most 512 characters, starts with `/`
   but not `//`, no `\` or `#`, an app route other than `/` — so it can never become an open
   redirect. Old values with an `intent` field still yield the validated address, with the
   field ignored; a stored `/sessions` or child path resolves to `/`. No RSVP hint or automatic
   business action remains. A legacy `?case=` / `?session=` link wins over the saved address;
-  logging out clears it.
+  a stored welcome page (including its trailing-slash alias) is not reopened when finishing welcome.
+  Logging out clears the login return and pending welcome destination.
 - A case with `redacted: true` says a statement exists (when `statement_at` is
   set) rather than calling it a verdict in absence, and shows no verdict words.
