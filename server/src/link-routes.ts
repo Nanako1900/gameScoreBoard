@@ -6,6 +6,7 @@
 //   POST /link/discord/confirm   the user's explicit click → linkAccounts()
 //   GET  /api/me/discord         the SPA's view of the caller's own binding
 //   POST /api/me/discord/unlink
+//   POST /api/me/discord/notify  {on} the caller's DM switch — the bot's /notify
 //
 // Each side proves its own identity: Discord through its OAuth, Nanako through
 // the session cookie. Nothing is written until the user presses the button on
@@ -18,10 +19,17 @@ import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { getUserById, toUser } from '../../worker/db';
 import { ApiError } from '../../worker/errors';
-import { allowedOrigins, cookieConfig, isReadOnly, parseCsvList } from '../../worker/http';
+import { allowedOrigins, cookieConfig, isReadOnly, optBool, parseCsvList, readJsonBody } from '../../worker/http';
 import { cookieNames, getCookie, verifySession } from '../../worker/session';
 import type { Env, User } from '../../worker/types';
-import { linkAccounts, linkByDiscordId, linkByUserId, unlinkAccounts } from './discord/links';
+import {
+  linkAccounts,
+  linkByDiscordId,
+  linkByUserId,
+  setNotifyDm,
+  unlinkAccounts,
+  type DiscordLink,
+} from './discord/links';
 import { authorizeUrl, exchangeCode, fetchMe, type DiscordIdentity } from './discord/oauth';
 
 export interface LinkRouteDeps {
@@ -44,6 +52,18 @@ const STATE_PREFIX = 'link.';
 const CONFIRM_PREFIX = 'linkconfirm.';
 const STATE_COOKIE = 'edg_link';
 const READ_ONLY_MESSAGE = '系统维护中（只读），请稍后再试';
+const NOTIFY_ON_MISSING = '缺少 on（true 或 false）';
+const NOT_BOUND = '还没有绑定 Discord';
+
+/** What the SPA may see of the caller's own binding. Never the Discord id: the SPA has no use for it. */
+function linkView(link: DiscordLink) {
+  return {
+    discord_username: link.discord_username,
+    linked_at: link.linked_at,
+    notify_dm: link.notify_dm === 1,
+    dm_ok: link.dm_ok === 1,
+  };
+}
 
 // --- signed tokens ------------------------------------------------------------
 
@@ -274,8 +294,7 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     if (!session) throw new ApiError(401, '未登录');
     const link = await linkByUserId(db, session.user.id);
     c.header('Cache-Control', 'no-store');
-    // Never the Discord id: the SPA has no use for it.
-    return c.json({ link: link ? { discord_username: link.discord_username, linked_at: link.linked_at } : null });
+    return c.json({ link: link ? linkView(link) : null });
   });
 
   app.post('/api/me/discord/unlink', async (c) => {
@@ -284,6 +303,20 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     if (!session) throw new ApiError(401, '未登录');
     const removed = await unlinkAccounts(db, { userId: session.user.id }, 'web');
     return c.json({ ok: true, removed: removed !== null });
+  });
+
+  // Same switch as the bot's /notify, found by the session's user instead.
+  // Unbound is 409, not 404: the SPA reads 404 as "this backend has no Discord".
+  app.post('/api/me/discord/notify', async (c) => {
+    if (isReadOnly(env)) throw new ApiError(503, READ_ONLY_MESSAGE);
+    const session = await readSession(c.req.raw);
+    if (!session) throw new ApiError(401, '未登录');
+    const on = optBool((await readJsonBody(c.req.raw)).on);
+    if (on === undefined) throw new ApiError(400, NOTIFY_ON_MISSING);
+    const link = await setNotifyDm(db, { userId: session.user.id }, on);
+    if (!link) throw new ApiError(409, NOT_BOUND);
+    c.header('Cache-Control', 'no-store');
+    return c.json({ link: linkView(link) });
   });
 
   // --- binding pages ----------------------------------------------------------

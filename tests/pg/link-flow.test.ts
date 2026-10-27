@@ -617,7 +617,7 @@ describe('/api/me/discord', () => {
     const text = await after.text();
     expect(text).not.toContain(ALICE_ID);
     const body = JSON.parse(text) as { link: Record<string, unknown> };
-    expect(Object.keys(body.link).sort()).toEqual(['discord_username', 'linked_at']);
+    expect(Object.keys(body.link).sort()).toEqual(['discord_username', 'dm_ok', 'linked_at', 'notify_dm']);
     expect(body.link.discord_username).toBe('alice');
     expect(typeof body.link.linked_at).toBe('string');
   });
@@ -788,5 +788,138 @@ describe('setNotifyDm', () => {
       ephemeral: true,
     });
     expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
+  });
+});
+
+describe('the DM switch: /api/me/discord and /api/me/discord/notify', () => {
+  const ON_MISSING = { error: '缺少 on（true 或 false）' };
+
+  async function setNotify(
+    host: Host,
+    cookie: string | null,
+    body?: string,
+    origin = SPA,
+    contentType = 'application/json',
+  ): Promise<Response> {
+    const headers: Record<string, string> = { Origin: origin, 'Content-Type': contentType };
+    if (cookie) headers.Cookie = cookie;
+    return host(new Request(`${API}/api/me/discord/notify`, { method: 'POST', headers, body }));
+  }
+
+  async function getLink(host: Host, cookie: string): Promise<Response> {
+    return host(new Request(`${API}/api/me/discord`, { headers: { Cookie: cookie, Origin: SPA } }));
+  }
+
+  async function dmState(userId: string): Promise<{ notify_dm: number; dm_ok: number } | null> {
+    return pgEnv.DB.prepare('SELECT notify_dm, dm_ok FROM discord_links WHERE user_id = ?')
+      .bind(userId)
+      .first<{ notify_dm: number; dm_ok: number }>();
+  }
+
+  /** a ↔ alice, b ↔ bob; alice's last DM bounced (dm_ok = 0). */
+  async function twoBound(): Promise<void> {
+    await seedUser({ id: 'a' });
+    await seedUser({ id: 'b' });
+    await linkAccounts(pgEnv.DB, { userId: 'a', discordUserId: ALICE_ID, discordUsername: 'alice', replace: false, via: 'web' });
+    await linkAccounts(pgEnv.DB, { userId: 'b', discordUserId: BOB_ID, discordUsername: 'bob', replace: false, via: 'web' });
+    await pgEnv.DB.prepare("UPDATE discord_links SET dm_ok = 0 WHERE user_id = 'a'").run();
+  }
+
+  it('GET tells the caller their own switch and whether DMs get through', async () => {
+    await twoBound();
+    const { host } = makeHost();
+    const res = await getLink(host, await session('a'));
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(await res.json()).toEqual({
+      link: { discord_username: 'alice', linked_at: expect.any(String), notify_dm: true, dm_ok: false },
+    });
+    expect(((await (await getLink(host, await session('b'))).json()) as { link: unknown }).link).toMatchObject({
+      discord_username: 'bob',
+      notify_dm: true,
+      dm_ok: true,
+    });
+  });
+
+  it('turns the caller\'s DMs off and on, each time giving a closed DM one more try', async () => {
+    await twoBound();
+    const { host } = makeHost();
+    const sess = await session('a');
+    const off = await setNotify(host, sess, JSON.stringify({ on: false }));
+    expect(off.status).toBe(200);
+    expect(off.headers.get('Cache-Control')).toBe('no-store');
+    expect(off.headers.get('Access-Control-Allow-Origin')).toBe(SPA);
+    const text = await off.text();
+    expect(text).not.toContain(ALICE_ID);
+    expect(JSON.parse(text)).toEqual({
+      link: { discord_username: 'alice', linked_at: expect.any(String), notify_dm: false, dm_ok: true },
+    });
+    expect(await dmState('a')).toEqual({ notify_dm: 0, dm_ok: 1 });
+
+    await pgEnv.DB.prepare("UPDATE discord_links SET dm_ok = 0 WHERE user_id = 'a'").run();
+    const on = await setNotify(host, sess, JSON.stringify({ on: true }));
+    expect(((await on.json()) as { link: unknown }).link).toMatchObject({ notify_dm: true, dm_ok: true });
+    expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
+    // Only the caller's own binding; and no binding change to audit.
+    expect(await dmState('b')).toEqual({ notify_dm: 1, dm_ok: 1 });
+    expect((await audit()).map((r) => r.action)).toEqual(['link', 'link']);
+  });
+
+  it('is 401 without a session, 400 without a boolean on, 409 when not bound', async () => {
+    await twoBound();
+    await seedUser({ id: 'c' });
+    const { host } = makeHost();
+    const none = await setNotify(host, null, JSON.stringify({ on: false }));
+    expect(none.status).toBe(401);
+    expect(await none.json()).toEqual({ error: '未登录' });
+
+    const sess = await session('b');
+    for (const body of [undefined, '', 'not json', '{}', '{"on":"false"}', '{"on":0}', '{"on":null}', '[false]']) {
+      const res = await setNotify(host, sess, body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(ON_MISSING);
+    }
+    expect(await dmState('b')).toEqual({ notify_dm: 1, dm_ok: 1 });
+
+    const unbound = await setNotify(host, await session('c'), JSON.stringify({ on: true }));
+    expect(unbound.status).toBe(409);
+    expect(await unbound.json()).toEqual({ error: '还没有绑定 Discord' });
+  });
+
+  it('refuses a switch posted from a foreign site', async () => {
+    await twoBound();
+    const { host } = makeHost();
+    // What a cross-site <form enctype="text/plain"> can send without a preflight; the body still parses as JSON.
+    const res = await setNotify(host, await session('b'), JSON.stringify({ on: false }), 'https://evil.example', 'text/plain');
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: '请求来源不被允许' });
+    expect(await dmState('b')).toEqual({ notify_dm: 1, dm_ok: 1 });
+  });
+
+  it('answers the CORS preflight for the SPA origin only', async () => {
+    const { host } = makeHost();
+    const preflight = (origin: string) =>
+      host(
+        new Request(`${API}/api/me/discord/notify`, {
+          method: 'OPTIONS',
+          headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
+        }),
+      );
+    const ok = await preflight(SPA);
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get('Access-Control-Allow-Origin')).toBe(SPA);
+    expect(ok.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+    expect(ok.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toContain('content-type');
+    expect((await preflight('https://evil.example')).headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('is 503 in READ_ONLY maintenance, while GET still answers', async () => {
+    await twoBound();
+    const { host } = makeHost({ READ_ONLY: '1' });
+    const sess = await session('b');
+    const res = await setNotify(host, sess, JSON.stringify({ on: false }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: '系统维护中（只读），请稍后再试' });
+    expect(await dmState('b')).toEqual({ notify_dm: 1, dm_ok: 1 });
+    expect(((await (await getLink(host, sess)).json()) as { link: unknown }).link).toMatchObject({ notify_dm: true, dm_ok: true });
   });
 });
