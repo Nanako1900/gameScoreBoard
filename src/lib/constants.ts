@@ -75,6 +75,5 @@ export const BOARD_MINI_ROWS_PHONE = 5;
 export const BOARD_MINI_ROWS_DESKTOP = 9;
 export const SKELETON_DEFAULT_LINES = 3;
 export const TODO_RANKS = {
-  'dm-broken': 1, 'urgent-statement': 2, rollcall: 3, moved: 4, statement: 5, invite: 6,
-  soon: 7, escalation: 8, appeals: 9, cancelled: 11, unbound: 12,
+  'dm-broken': 1, 'urgent-statement': 2, statement: 5, escalation: 8, appeals: 9, unbound: 12,
 } as const;

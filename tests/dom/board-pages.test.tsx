@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BoardPage, type BoardData } from '../../src/components/BoardPage';
 import { App } from '../../src/App';
-import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
 import { PlayerDetail } from '../../src/components/PlayerDetail';
 import { useDesktopViewport } from './viewport';
 import type { Config, WeeklyReport } from '../../src/types';
@@ -23,7 +22,6 @@ function mockApp() {
   const routes: Record<string, unknown> = {
     '/api/config': CONFIG, '/api/leaderboard': { participants: [] }, '/api/records?limit=50': { records: [] },
     '/api/me': { user: null, pending: { statements: 0, appeals: 0 } }, '/api/report/latest': { report: REPORT },
-    '/api/sessions?scope=upcoming': { sessions: [] }, '/api/sessions?scope=history': { sessions: [] },
   };
   const fetch = vi.fn((input: RequestInfo | URL) => {
     const path = String(input); const status = routes[path] === undefined ? 404 : 200;
@@ -91,13 +89,10 @@ describe('board route integration', () => {
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
     expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus();
   });
-  it('links the hall to full report and history; history opens with the existing API', async () => {
+  it('links home to the full report and all recent activity', async () => {
     mockApp(); render(<App />);
     expect(await screen.findByRole('link', { name: '读全文' })).toHaveAttribute('href', '/board/report');
-    expect(screen.getByRole('link', { name: '历史' })).toHaveAttribute('href', '/sessions/history');
-    await userEvent.setup().click(screen.getByRole('link', { name: '历史' }));
-    expect(await screen.findByText('还没有开过的局。')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '约局历史' })).toHaveFocus();
+    expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
   });
   it.each(['/board', '/board/report', '/board/rules'])('keeps block labels unique over the hidden hall: %s', async (path) => {
     window.history.replaceState(null, '', path); mockApp(); render(<App />);
@@ -106,11 +101,8 @@ describe('board route integration', () => {
     const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
-  it('offers secondary destinations for missing sessions and players', async () => {
+  it('offers a board destination for a missing player', async () => {
     mockApp();
-    const first = render(<SessionDetailDialog sessionId={99} me={null} variant="page" onClose={() => {}} onChanged={() => {}} />);
-    expect(await screen.findByRole('link', { name: '看约局历史' })).toHaveAttribute('href', '/sessions/history');
-    expect(screen.getAllByRole('link', { name: '回大厅' })).toHaveLength(1); first.unmount();
     render(<PlayerDetail userId="gone" me={null} config={CONFIG} variant="page" onClose={() => {}} onChanged={() => {}} onOpenStatement={() => {}} />);
     expect(await screen.findByRole('link', { name: '看信誉榜' })).toHaveAttribute('href', '/board');
     expect(screen.getAllByRole('link', { name: '回大厅' })).toHaveLength(1);

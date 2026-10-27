@@ -399,7 +399,7 @@ describe('App — the board on the home page', () => {
   it('signed out: welcome card first, one /约局/ heading, stars in the board, no 鸽王 anywhere', async () => {
     mockFetch(routes(null));
     render(<App />);
-    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '最近案件' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
     expect(screen.getByText('⭐', { exact: false }).closest('.lb')).not.toBeNull();
     expect(document.body.textContent).not.toContain('鸽王');
@@ -423,7 +423,7 @@ describe('App — the board on the home page', () => {
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {
     mockFetch(routes(ME));
     render(<App />);
-    await screen.findByRole('heading', { name: /约局/ });
+    await screen.findByRole('heading', { name: '最近案件' });
     await settle();
     expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);

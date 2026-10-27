@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RecordItem, SessionDetail, User } from './types';
+import type { RecordItem, User } from './types';
 import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
 import { bootRouter, navigate, useLocation } from './lib/router';
-import { playerPath, routeCoversHome, sessionNewPath, sessionPath } from './lib/routes';
+import { playerPath, routeCoversHome } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
 import type { PinnedCase } from './lib/useCaseLookup';
@@ -26,9 +26,6 @@ import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
 import { MyScoreLine } from './components/MyScoreLine';
 import { OnboardingDialog } from './components/OnboardingDialog';
-import { SessionsPanel } from './components/SessionsPanel';
-import { RecentSessions } from './components/RecentSessions';
-import { useLobbySessions } from './lib/useLobbySessions';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
@@ -37,15 +34,16 @@ import { RouteView } from './components/RouteView';
 import type { BoardData } from './components/BoardPage';
 import { boardPath } from './lib/routes';
 import { COUNTDOWN_TICK_MS, BOARD_MINI_ROWS_PHONE, BOARD_MINI_ROWS_DESKTOP } from './lib/constants';
-import { buildTodo, handledSessionIds, meNeedsAttention, todoBadgeCount } from './lib/todo';
-import { readSeenCancelled, readUnboundDismissed, markCancelledSeen, dismissUnbound, clearTodoMarks } from './lib/todoMarks';
+import { buildTodo, meNeedsAttention, todoBadgeCount } from './lib/todo';
+import { readUnboundDismissed, dismissUnbound, clearTodoMarks } from './lib/todoMarks';
 import { useTodoSources } from './lib/useTodoSources';
-import { useRsvpAnswer } from './lib/useRsvpAnswer';
 import { useNow } from './lib/useNow';
 import { TodoInbox } from './components/TodoInbox';
 import { BoardMini } from './components/BoardMini';
-import { BottomTabs, showsBottomTabs } from './components/BottomTabs';
+import { BottomTabs } from './components/BottomTabs';
 import { Skeleton } from './components/Skeleton';
+import { RecordsFeed } from './components/RecordsFeed';
+import { Link } from './components/Link';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -67,14 +65,9 @@ function AppMain(): JSX.Element {
   const [caseOpen, setCaseOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
-  const [created, setCreated] = useState<number | null>(null);
-  useEffect(() => {
-    if (created !== null && (location.route.name !== 'session' || location.route.sessionId !== created)) setCreated(null);
-  }, [created, location.route]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [sessionsKey, setSessionsKey] = useState(0);
+  const [todoRefreshKey, setTodoRefreshKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
-  const [seenCancelled, setSeenCancelled] = useState(readSeenCancelled);
   const [unboundDismissed, setUnboundDismissed] = useState(readUnboundDismissed);
   // ?linked=discord is where the API lands the browser after a successful bind.
   // Read once at mount; the effect below strips it so a reload doesn't repeat it.
@@ -135,7 +128,6 @@ function AppMain(): JSX.Element {
     [layout],
   );
   const openPlayer = useCallback((id: string): void => openRoute(playerPath(id)), [openRoute]);
-  const openSession = useCallback((id: number): void => openRoute(sessionPath(id)), [openRoute]);
 
   const handleLogout = useCallback(async (): Promise<void> => {
     try {
@@ -159,13 +151,13 @@ function AppMain(): JSX.Element {
   // invalidates the board, the feed and me; config and the report stay.
   const handleChanged = useCallback((): void => {
     void refresh(CHANGE_KEYS);
-    setSessionsKey((n) => n + 1);
+    setTodoRefreshKey((n) => n + 1);
   }, [refresh]);
 
   const handleVisible = useCallback((): void => {
     if (!ready) return;
     void refresh(visibleRefreshKeys(ready.config.nextResetAt, Date.now()));
-    setSessionsKey((n) => n + 1);
+    setTodoRefreshKey((n) => n + 1);
   }, [ready, refresh]);
   useVisibleRefresh(handleVisible);
 
@@ -212,19 +204,17 @@ function AppMain(): JSX.Element {
       regenerating, onSelectUser: openPlayer,
       onRegenerate: ready.me?.is_admin && ready.report ? () => handleRegenerate(ready.report!.week_start) : undefined };
   }, [ready, trends, counts, regenerating, openPlayer, handleRegenerate]);
-  const lobby = useLobbySessions({ enabled: ready !== null, me: ready?.me ?? null, refreshKey: sessionsKey });
 
   const now = useNow(COUNTDOWN_TICK_MS);
-  const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: sessionsKey });
+  const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: todoRefreshKey });
   const items = useMemo(() => ready?.me ? buildTodo({ me: ready.me, now, pending: ready.pending, myPending: ready.myPending,
-    invites: ready.invites, feed: ready.records, mine: lobby.mine, appealed: extra.appealed, discord: extra.discord,
-    seenCancelled, unboundDismissed }) : [], [ready, now, lobby.mine, extra.appealed, extra.discord, seenCancelled, unboundDismissed]);
-  const rsvp = useRsvpAnswer({ reload: lobby.reload, onAnswered: handleChanged });
+    feed: ready.records, appealed: extra.appealed, discord: extra.discord,
+    unboundDismissed }) : [], [ready, now, extra.appealed, extra.discord, unboundDismissed]);
   useTabTitle(todoBadgeCount(items));
   if (state.status === 'loading') {
     return <div className="app"><Header pending config={null} me={null} onLogout={() => {}} onOpenOnboarding={() => {}} />
       <main className="app__main" aria-busy="true"><span className="visually-hidden" role="status">信誉分加载中…</span>
-        <Skeleton label="要你处理加载中" /><Skeleton label="约局加载中" /><Skeleton label="信誉榜加载中" />
+        <Skeleton label="要你处理加载中" /><Skeleton label="最近案件加载中" /><Skeleton label="信誉榜加载中" />
       </main></div>;
   }
 
@@ -250,23 +240,20 @@ function AppMain(): JSX.Element {
   const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
 
-  const tabs = layout === 'page' && showsBottomTabs(location.route);
+  const tabs = layout === 'page';
   const myPath = me ? playerPath(me.id) : '/';
-  const primary = me ? <TodoInbox items={lobby.loading || !extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
-    busyId={rsvp.busyId} error={rsvp.error} onAnswer={(session, answer) => void rsvp.answer(session, answer)} onOpenSession={openSession}
+  const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
     onOpenStatement={setStatementCase} onOpenNotify={() => setOnboardingOpen(true)}
-    onSeenCancelled={(id) => { markCancelledSeen(id); setSeenCancelled((old) => [...new Set([...old, id])]); }}
     onDismissUnbound={() => { dismissUnbound(); setUnboundDismissed(true); }} />
     : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
       rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
-  const score = me && <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} />;
-  const sessions = <SessionsPanel lobby={lobby} hideCreate handledElsewhere={handledSessionIds(items)} boardTzOffsetHours={config.boardTzOffsetHours}
-    me={me} refreshKey={sessionsKey} onOpenSession={openSession} onCreate={() => navigate(sessionNewPath())} />;
+  const score = me?.is_participant ? <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} /> : null;
   const mini = <BoardMini participants={participants} trends={trends} counts={counts} records={records} nextResetAt={config.nextResetAt}
     meId={me?.id} rows={layout === 'page' ? BOARD_MINI_ROWS_PHONE : BOARD_MINI_ROWS_DESKTOP} onSelect={openPlayer} />;
   const weekly = report && <WeeklyReportCard report={report} compact moreTo={boardPath('report')} stale={board?.reportStale}
     regenerating={regenerating} onRegenerate={board?.onRegenerate} />;
-  const recent = <RecentSessions refreshKey={sessionsKey} boardTzOffsetHours={config.boardTzOffsetHours} onOpenSession={openSession} />;
+  const recent = <div className="app__recent"><RecordsFeed records={records} title="最近案件" previewCount={5} onSelectUser={openPlayer} />
+    <Link to={boardPath('feed')} className="app__all-activity">全部动态</Link></div>;
   return (
     <div className={`app${tabs ? ' app--tabs' : ''}`}>
 
@@ -285,16 +272,16 @@ function AppMain(): JSX.Element {
         {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
-        {layout === 'page' ? <>{primary}{score}{sessions}{mini}{weekly}{recent}</>
-          : <div className="app__lobby"><div className="app__lobby-main">{primary}{sessions}{recent}</div>
-            <aside className="app__lobby-side">{score}{mini}{weekly}</aside></div>}
+        <div className={`app__home${layout === 'drawer' ? ' app__home--desktop' : ''}${score === null ? ' app__home--without-score' : ''}`}>
+          <div className="app__primary">{primary}</div>
+          {score && <div className="app__score">{score}</div>}
+          <div className="app__board">{mini}</div>
+          {recent}
+          {weekly}
+        </div>
       </main>
 
       <RouteView
-        participants={participants}
-        created={created}
-        onCreated={(session: SessionDetail) => { setCreated(session.id); handleChanged(); navigate(sessionPath(session.id), { replace: true }); }}
-        mySessions={lobby.mine}
         board={board}
         location={location}
         layout={layout}

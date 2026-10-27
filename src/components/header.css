@@ -216,7 +216,6 @@
 .hdr__nav a { display: inline-flex; align-items: center; min-height: var(--tap-min); padding: 0.45rem 0.65rem;
   color: var(--muted); border: 1px solid transparent; border-radius: var(--r-pill); white-space: nowrap; }
 .hdr__nav a[aria-current="page"] { color: var(--action); border-color: var(--action); }
-.hdr__create { gap: 0.35rem; white-space: nowrap; font-size: var(--fs-sm); }
 .hdr__attention { width: 0.45rem; height: 0.45rem; border: 1px solid currentColor; border-radius: var(--r-pill); background: currentColor; }
 @media (hover: hover) { .hdr__nav a:hover { color: var(--text); background: var(--panel); } }
 @media (forced-colors: active) { .hdr__nav a[aria-current="page"] { border-color: Highlight; }

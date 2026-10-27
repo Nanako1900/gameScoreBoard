@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cancelSession, getMyInvites, getSessionHistory } from '../../src/api';
+import { cancelSession, getSessionHistory } from '../../src/api';
 import type { HistorySessionItem, SessionItem } from '../../src/types';
 
 // P2-3: the client side of a cancel reason, scope=history and the invite context.
@@ -87,15 +87,5 @@ describe('getSessionHistory', () => {
   it('is an empty page when there is nothing more', async () => {
     mockFetch(() => json(200, { sessions: [] }));
     expect(await getSessionHistory(3)).toEqual([]);
-  });
-});
-
-describe('getMyInvites', () => {
-  it('passes the invite context through, and still reads an older API without it', async () => {
-    const moved = { ...ITEM, status: 'open', invite_reason: 'moved', prev_rsvp: 'going', prev_starts_at: '2026-10-27T11:00:00.000Z' };
-    mockFetch(() => json(200, { sessions: [moved, ITEM] }));
-    const { sessions } = await getMyInvites();
-    expect(sessions[0]).toMatchObject({ invite_reason: 'moved', prev_rsvp: 'going' });
-    expect(sessions[1].invite_reason ?? 'new').toBe('new');
   });
 });

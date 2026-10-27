@@ -121,7 +121,7 @@ afterEach(() => {
 });
 
 describe('MyScoreLine in the app', () => {
-  it('sits after the to-dos and before 约局, with the numbers from config', async () => {
+  it('sits after the to-dos and before the board, with the numbers from config', async () => {
     const board: PublicUser[] = [
       { id: 'x', username: '阿杰', avatar_url: null, is_participant: true, is_judge: false, score: 90, created_at: 'x' },
       { id: 'me', username: '我', avatar_url: null, is_participant: true, is_judge: false, score: 82, created_at: 'x' },
@@ -139,9 +139,9 @@ describe('MyScoreLine in the app', () => {
 
     const standing = await screen.findByRole('button', { name: '82 分 · 第 2 名' });
     expect(screen.getByText('周一 0 点回血 +5 → 预计 87 · 还有 2 天')).toBeInTheDocument();
-    const sessions = await screen.findByRole('heading', { name: /约局/ });
-    // DOM order = visual order (spec §2.4): MyScoreLine, then SessionsPanel.
-    expect(standing.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const boardHeading = await screen.findByRole('heading', { name: '信誉榜' });
+    // The score precedes the board in the home reading order.
+    expect(standing.compareDocumentPosition(boardHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await settle();
   });
 
@@ -155,7 +155,7 @@ describe('MyScoreLine in the app', () => {
       'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
     });
     render(<App />);
-    await screen.findByRole('heading', { name: /约局/ });
+    await screen.findByRole('heading', { name: '最近案件' });
     await settle();
     expect(screen.queryByText(/周一 0 点回血/)).not.toBeInTheDocument();
   });

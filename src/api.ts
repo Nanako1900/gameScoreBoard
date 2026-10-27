@@ -283,9 +283,7 @@ export function settleSession(
 }
 
 /** Sessions the caller was invited to and has not answered. Drives the banner. */
-export function getMyInvites(): Promise<InvitesResponse> {
-  return request<InvitesResponse>('/api/me/invites');
-}
+
 
 type MaybeHistoryItem = SessionItem & { attendance_summary?: HistorySessionItem['attendance_summary'] };
 
