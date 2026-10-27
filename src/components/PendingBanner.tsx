@@ -1,5 +1,5 @@
-import { VIOLATION_MAP } from '@shared/scoring';
 import type { RecordItem } from '../types';
+import { violationLabel } from '../lib/recordView';
 import { formatRemaining, isUrgent, parseTimestamp } from '../lib/time';
 import './pending-banner.css';
 
@@ -35,7 +35,7 @@ export function PendingBanner({ cases, onOpen }: PendingBannerProps): JSX.Elemen
           你有 <strong className="tabular">{cases.length}</strong> 起案件等你说明情况
         </p>
         <p className="pending__sub">
-          最早一起「{VIOLATION_MAP[next.type]?.label ?? next.type}」
+          最早一起「{violationLabel(next.type)}」
           {next.deadline_at && ` · ${formatRemaining(next.deadline_at)}`}
           ，超时会按缺席裁决。
         </p>

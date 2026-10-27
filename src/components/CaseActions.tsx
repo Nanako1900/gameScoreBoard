@@ -3,7 +3,7 @@
 // Moved out of PlayerDetail.tsx; class names stay in player-detail.css.
 
 import { useState } from 'react';
-import type { RecordItem, User } from '../types';
+import type { RecordItem, SentencingRange, User } from '../types';
 import { formatRevokeLeft, revokeMsLeft } from '../lib/revoke';
 
 interface RevokeState {
@@ -54,8 +54,16 @@ interface CaseActionsProps {
 
 export function CaseActions(props: CaseActionsProps): JSX.Element | null {
   const { record, me, isSelf, busy, overriding, now, note } = props;
-  if (overriding) {
-    return <OverrideForm record={record} onCancel={props.onCancelOverride} onSubmit={props.onOverride} />;
+  // Only an admin re-sentences, and an admin always gets the full case: range is null only for a hidden one.
+  if (overriding && record.range) {
+    return (
+      <OverrideForm
+        record={record}
+        range={record.range}
+        onCancel={props.onCancelOverride}
+        onSubmit={props.onOverride}
+      />
+    );
   }
   const revoke = revokeState(record, me, now);
   const shown = {
@@ -101,12 +109,13 @@ export function CaseActions(props: CaseActionsProps): JSX.Element | null {
 
 interface OverrideFormProps {
   record: RecordItem;
+  range: SentencingRange;
   onCancel: () => void;
   onSubmit: (delta: number, reason: string) => void;
 }
 
 /** Admin re-sentencing. The delta is bounded server-side by the same clamp. */
-function OverrideForm({ record, onCancel, onSubmit }: OverrideFormProps): JSX.Element {
+function OverrideForm({ record, range, onCancel, onSubmit }: OverrideFormProps): JSX.Element {
   const [delta, setDelta] = useState(String(record.delta));
   const [reason, setReason] = useState('');
   const value = Number(delta);
@@ -122,13 +131,13 @@ function OverrideForm({ record, onCancel, onSubmit }: OverrideFormProps): JSX.El
     >
       <label className="pd__override-field">
         <span className="pd__override-label">
-          改判为（{record.range.min} ~ {record.range.max}）
+          改判为（{range.min} ~ {range.max}）
         </span>
         <input
           className="pd__override-input tabular"
           type="number"
-          min={record.range.min}
-          max={record.range.max}
+          min={range.min}
+          max={range.max}
           value={delta}
           onChange={(e) => setDelta(e.target.value)}
         />

@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { MAX_NARRATIVE_LEN, VIOLATION_MAP, affectsScore, clampScore } from '@shared/scoring';
+import { MAX_NARRATIVE_LEN, affectsScore, clampScore } from '@shared/scoring';
 import type { Config, RecordItem } from '../types';
 import { ApiError, submitStatement } from '../api';
 import { COUNTDOWN_TICK_MS } from '../lib/constants';
 import { isBlankText, validateStatementDraft } from '../lib/draftShapes';
+import { violationLabel } from '../lib/recordView';
 import { formatRemaining, formatWhen, isUrgent } from '../lib/time';
 import { useDraft, type DraftState } from '../lib/useDraft';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
@@ -144,7 +145,6 @@ interface StatementFormProps {
 }
 
 function StatementForm({ record, config, draft, guard, submission, onRequestClose }: StatementFormProps): JSX.Element {
-  const def = VIOLATION_MAP[record.type];
   const now = useNow(COUNTDOWN_TICK_MS);
   return (
     <div className="sd">
@@ -152,7 +152,7 @@ function StatementForm({ record, config, draft, guard, submission, onRequestClos
         说明情况
       </h2>
       <p className="sd__subtitle">
-        {record.reporter.username} 给你记了一笔「{def?.label ?? record.type}」。
+        {record.reporter.username} 给你记了一笔「{violationLabel(record.type)}」。
         扣多少分由 AI 裁判在下面这个区间里决定 —— 你说的话会直接影响结果。
       </p>
       {record.deadline_at && <StatementDeadline deadline={record.deadline_at} now={now} />}
@@ -160,7 +160,7 @@ function StatementForm({ record, config, draft, guard, submission, onRequestClos
         <span className="sd__claim-who">立案经过</span>
         <p>{record.claim ?? '（未填写）'}</p>
       </blockquote>
-      <SentencingScale range={record.range} />
+      {record.range && <SentencingScale range={record.range} />}
       <div className="sd__form">
         <StatementField draft={draft} disabled={submission.submitting} />
         <StatementPrivacy aiEnabled={config.aiEnabled} />

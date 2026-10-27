@@ -67,7 +67,8 @@ export interface RecordItem {
   id: number;
   subject: UserRef;
   reporter: UserRef;
-  type: ViolationType;
+  /** null only when `pending_hidden`. */
+  type: ViolationType | null;
   delta: number; // signed, actually applied (0 until decided)
   note: string | null;
   claim: string | null;
@@ -83,7 +84,8 @@ export interface RecordItem {
   deadline_at: string | null;
   status: CaseStatus;
   verdict: Verdict | null;
-  range: SentencingRange;
+  /** null only when `pending_hidden`. */
+  range: SentencingRange | null;
   created_at: string;
   /**
    * The statement, the appeal reason and the verdict's words are only for the
@@ -91,6 +93,13 @@ export interface RecordItem {
    * them and sets this. (Absent from an older API: nothing was hidden.)
    */
   redacted?: boolean;
+  /**
+   * B1-1: before the verdict, for anyone but the subject, the reporter, judges
+   * and admins, the API also hides the type, the claim, its summary, the note
+   * and the range (`type` and `range` are then null) — only that a case is in
+   * progress. statement_at stays. (Absent from an older API.)
+   */
+  pending_hidden?: boolean;
 }
 
 export interface HistoryPoint {

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
-import { APPEAL_MAX, VIOLATION_MAP } from '@shared/scoring';
+import { APPEAL_MAX } from '@shared/scoring';
 import type { RecordItem } from '../types';
 import { ApiError, appealCase } from '../api';
 import { isBlankText, validateAppealDraft } from '../lib/draftShapes';
+import { violationLabel } from '../lib/recordView';
 import { useDraft, type DraftState } from '../lib/useDraft';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
 import { useLeaveGuard, type LeaveGuard } from '../lib/useLeaveGuard';
@@ -62,7 +63,7 @@ function useAppealSubmit(recordId: number, text: string, onAppealed: (record: Re
 
 /** 「大迟到 · -6 · AI 裁决」 — the same ASCII minus as VerdictCard. */
 function caseLine(record: RecordItem): string {
-  const label = VIOLATION_MAP[record.type]?.label ?? record.type;
+  const label = violationLabel(record.type);
   const source = record.verdict ? ` · ${verdictSourceLabel(record.verdict.source)}` : '';
   return `${label} · ${record.delta}${source}`;
 }

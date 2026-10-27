@@ -1,5 +1,5 @@
-import { VIOLATION_MAP } from '@shared/scoring';
 import type { RecordItem, VerdictSource } from '../types';
+import { violationDef } from '../lib/recordView';
 import { formatRemaining, isUrgent, relativeTime } from '../lib/time';
 import { SentencingScale } from './SentencingScale';
 import './verdict-card.css';
@@ -40,7 +40,7 @@ export function VerdictCard({
   escalation,
   focused = false,
 }: VerdictCardProps): JSX.Element {
-  const def = VIOLATION_MAP[record.type];
+  const def = violationDef(record.type);
   const { verdict, status } = record;
   const pending = status === 'awaiting_statement';
   const judging = status === 'judging';
@@ -143,7 +143,7 @@ export function VerdictCard({
               ))}
             </ul>
           )}
-          {!voided && <SentencingScale range={record.range} delta={record.delta} />}
+          {!voided && record.range && <SentencingScale range={record.range} delta={record.delta} />}
         </div>
       )}
 

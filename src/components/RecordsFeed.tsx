@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { CASE_STATUS_LABEL, VIOLATION_MAP } from '@shared/scoring';
+import { CASE_STATUS_LABEL } from '@shared/scoring';
 import type { RecordItem } from '../types';
+import { violationDef, violationLabel } from '../lib/recordView';
 import { relativeTime } from '../lib/time';
 import { Avatar } from './Avatar';
 import './records-feed.css';
@@ -99,7 +100,7 @@ interface RecordRowProps {
 }
 
 function RecordRow({ record, onSelectUser, rowRef }: RecordRowProps): JSX.Element {
-  const emoji = VIOLATION_MAP[record.type]?.emoji ?? '•';
+  const emoji = violationDef(record.type)?.emoji ?? '•';
   return (
     <li
       ref={rowRef}
@@ -121,7 +122,7 @@ function RecordRow({ record, onSelectUser, rowRef }: RecordRowProps): JSX.Elemen
 }
 
 function RecordLine({ record, onSelectUser }: Omit<RecordRowProps, 'rowRef'>): JSX.Element {
-  const label = VIOLATION_MAP[record.type]?.label ?? record.type;
+  const label = violationLabel(record.type);
   const statusLabel = CASE_STATUS_LABEL[record.status];
   return (
     <p className="feed-row__line">
