@@ -1,0 +1,103 @@
+/* Toasts — short feedback after an action (P0-3). Portaled to <body>, so they
+   sit above every Modal (--z-toast > --z-modal). */
+
+.toasts {
+  position: fixed;
+  z-index: var(--z-toast);
+  inset-inline: 0.75rem;
+  bottom: calc(0.75rem + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  /* The empty region must not swallow taps on the page under it. */
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: var(--tap-min);
+  padding: 0.5rem 0.5rem 0.5rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-inline-start: 3px solid var(--info);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  pointer-events: auto;
+  animation: toast-in var(--dur) var(--ease);
+}
+
+.toast--ok {
+  border-inline-start-color: var(--ok);
+}
+
+.toast--error {
+  border-inline-start-color: var(--danger);
+}
+
+.toast__msg {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.toast__action {
+  flex: none;
+  min-height: var(--tap-min);
+}
+
+.toast__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .toast__close:hover {
+    color: var(--text);
+    background: var(--panel);
+  }
+}
+
+@media (min-width: 601px) {
+  .toasts {
+    inset-inline: auto 1.25rem;
+    bottom: calc(1.25rem + var(--safe-bottom));
+    width: min(400px, calc(100vw - 2.5rem));
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .toast {
+    border: 1px solid CanvasText;
+  }
+}
