@@ -145,7 +145,7 @@
 
 ## 6. 需要改代码时
 
-- 只有第 4 节里有要修的项才提交代码修复。本轮每期一个分支、一个 PR，P1 修复继续在 `claude/p1-rest` 按顺序提交；旧计划的 `claude/p1-4-docs`、`claude/p1-5-device-fixes` 不作为本轮执行分支。
+- 需要修时从最新的 origin/main 开 claude/p1-5-device-fixes，每个修复一个 `fix: …（P1-5）` commit，单独开 PR。
 - 每个修复一个 commit，提交信息 `fix: …（P1-5）`（例：`fix: sheet 底部按钮让出 Home 指示条（P1-5）`），不加署名行；把 commit 短 hash 填回第 4 节。
 - 每个 commit 之前跑 `npm run typecheck`、`npm run test:unit`、`npm run test:dom`，全过再提交；spec §6.5 锁定的文案和断言一个不改，只能追加断言。
 - 每期从最新 `origin/main` 开本期分支，按计划顺序提交，全量验证通过后 push 并开本期一个 PR；不自行合并、不开 auto-merge、不直接推 main、不部署。由机主在 CI 全绿并审阅后合并。
@@ -154,6 +154,7 @@
 
 - **安全区**：`index.html` 的 viewport 现在是 `width=device-width, initial-scale=1.0`，没有 `viewport-fit=cover`。iOS 上这时 `env(safe-area-inset-bottom)` 通常是 0，`--safe-bottom`（`src/theme.css`）就不起作用。R-06 不通过时先查这里；加 `viewport-fit=cover` 会让整页内容延伸到刘海和 Home 指示条下面，顶栏和底部要一起留安全区，属于 P1-5 的修复范围，改之前先在第 4 节写清楚。
 - **`history.length` 不会变小**：见第 0 节。关浮层时的静默后退留下一个可以「前进」的条目，这是正常的。
+- **Chrome 的 history manipulation intervention**：不只影响 M-28 垫的 `/`。登录回来后跳回原页的那次 push，以及自动弹出首登引导写的历史记录，也是在用户还没碰页面时写进去的；用户不点页面就按返回，可能直接离开本站。执行 M-23、M-26 时，回到站内上一层或直接离开本站这两种结果都如实记录。
 - **开着浮层刷新**：之后第一次返回页面看起来没变（回到同一地址的无浮层条目），这是 spec §2.2 接受的代价，不记为缺陷。
 - **桌面跨过 1024px**：整页和抽屉切换时组件会重新挂载、重新请求一次详情，可以接受（P1 契约 4.5）。
 - **大厅被整页盖住时仍在后台定时刷新**：这是为了返回时不重拉、滚动位置能恢复（P1 契约第 8 节第 6 条），不记为缺陷。

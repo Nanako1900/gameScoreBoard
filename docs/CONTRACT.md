@@ -34,6 +34,9 @@
 | `worker/case-reads.ts` | case reads + row→JSON mapping |
 | `worker/case-limits.ts` | write-side validation and the per-day filing caps |
 | `worker/sessions.ts` | 约局: create / RSVP / roll call / settle |
+| `worker/invitable.ts` | invite candidates, including friends who are not on the board |
+| `worker/session-invites.ts` | invite more people to an existing session without changing existing replies |
+| `worker/session-extras.ts` | batch reads for invitation context, attendance summaries and going-player previews |
 | `worker/ai/config.ts` | runtime AI config resolution (`app_settings` > env > default) |
 | `worker/ai/prompt.ts` | prompt building, input sanitisation, verdict parsing |
 | `worker/ai/provider.ts` | sentencing client (OpenAI-compatible), never throws |
