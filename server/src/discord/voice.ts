@@ -38,7 +38,7 @@ export function renderVoiceHistory(history: VoiceHistoryResponse, offsetHours: n
     const qualifications = notes(day.segments);
     return `${daily[index]}${qualifications.length ? `（${qualifications.join('；')}）` : ''}`;
   });
-  const gaps = history.gaps.map((gap) => `${voiceTime(gap.from, offsetHours, true)}–${voiceTime(gap.to, offsetHours, true)}`);
+  const gaps = history.gaps.map((gap) => `${voiceTime(gap.from, offsetHours, true, true)}–${voiceTime(gap.to, offsetHours, true, true)}`);
   const body = (days: string[], warning = true): string => [days.join('\n'),
     ...(gaps.length ? ['未覆盖时段', ...(warning ? [VOICE_GAP_NOTICE] : []), gaps.join('\n')] : [])].filter(Boolean).join('\n\n');
   const footer = `保留 ${history.retention_days} 天 · 时间按${boardTzLabel(offsetHours)}`;

@@ -57,6 +57,11 @@ describe('voice history embed', () => {
     expect(out).toContain('北京时间'); expect(out).toContain('90 天');
     expect(out).not.toContain('private-nanako-id'); expect(out).not.toContain(FULL); limits(history());
   });
+  it('keeps second-level gap boundaries visible even inside one minute', () => {
+    const data = history({ gaps: [{ from: '2026-10-27 02:00:10', to: '2026-10-27 02:00:30' }] });
+    expect(text(data)).toContain('10-27 10:00:10–10-27 10:00:30');
+    expect(voiceTime('2026-10-27 00:30:15', -3.5, true, true)).toBe('10-26 21:00:15');
+  });
   it('marks cross-midnight continuation without inventing a first join that day', () => {
     const data = history({ days: [{ date: '2026-10-27', first_join: null, total_min: 30,
       segments: [segment({ joined_at: '2026-10-26 15:30:00', left_at: '2026-10-26 16:30:00', continued: true })] }] });

@@ -10,6 +10,7 @@ import { PlayerDetail } from './PlayerDetail';
 import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
+import { AdminPage } from './AdminPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -136,6 +137,8 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} notice={props.welcomeNotice} /></PageShell>;
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
+    case 'admin':
+      return <PageShell><AdminPage me={props.me} config={props.config} /></PageShell>;
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':

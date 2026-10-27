@@ -3,7 +3,7 @@ import type { VoiceStatus } from '../voice/recorder';
 
 export type GatewayState = 'ready' | 'connecting' | 'disabled';
 const VOICE_FAILURE = '语音记录暂不可用，请查看机器人日志';
-const EMPTY: VoiceStatus = { coverage_since: null, degraded: false, open_segments: 0, last_error: null };
+const EMPTY: VoiceStatus = { coverage_since: null, degraded: false, open_segments: null, last_error: null };
 
 /** Only public status fields leave the process; database errors may contain IDs. */
 async function publicVoice(read: () => Promise<VoiceStatus>): Promise<VoiceStatus> {

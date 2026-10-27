@@ -14,10 +14,10 @@ function utcMillis(value: string): number {
 }
 
 /** UTC text → the board's clock, never the viewer's or server's local zone. */
-export function voiceTime(value: string, offsetHours: number, includeDate = false): string {
+export function voiceTime(value: string, offsetHours: number, includeDate = false, includeSeconds = false): string {
   const at = new Date(utcMillis(value) + offsetHours * HOUR_MS);
   if (!Number.isFinite(offsetHours) || !Number.isFinite(at.getTime())) return '—';
-  const clock = `${pad2(at.getUTCHours())}:${pad2(at.getUTCMinutes())}`;
+  const clock = `${pad2(at.getUTCHours())}:${pad2(at.getUTCMinutes())}${includeSeconds ? `:${pad2(at.getUTCSeconds())}` : ''}`;
   return includeDate ? `${pad2(at.getUTCMonth() + 1)}-${pad2(at.getUTCDate())} ${clock}` : clock;
 }
 

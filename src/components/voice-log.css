@@ -1,0 +1,26 @@
+.voice-log { display: grid; gap: 1rem; min-width: 0; }
+.voice-log > h3 { font-size: var(--text-h2); overflow-wrap: anywhere; }
+.voice-log__hint, .voice-log__empty { color: var(--muted); }
+.voice-log__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem; }
+.voice-log__controls label { font-weight: 600; }
+.voice-log__controls input, .voice-log__controls select { min-height: var(--tap-min); max-width: 100%; padding: 0.5rem 0.75rem;
+  color: var(--text); background: var(--bg-elevated); border: 1px solid var(--border-input); border-radius: var(--r-md); }
+.voice-log__controls p { flex-basis: 100%; color: var(--muted); font-size: var(--text-sm); }
+.voice-log__gaps { display: grid; gap: 0.6rem; padding: 1rem; border: 1px solid var(--attn); border-inline-start-width: 3px;
+  border-radius: var(--r-md); background: var(--panel); overflow-wrap: anywhere; }
+.voice-log__gaps > h3 { font-size: var(--text-base); }
+.voice-log__gaps > ul, .voice-log__notes { margin: 0; padding-left: 1.25rem; }
+.voice-log__gaps > ul { display: grid; gap: 0.35rem; font-variant-numeric: tabular-nums; }
+.voice-log__people, .voice-log__segments { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+.voice-log__person { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 1rem;
+  border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); }
+.voice-log__person > strong { flex-basis: 100%; color: var(--action); overflow-wrap: anywhere; }
+.voice-log__presence { color: var(--action); }
+.voice-log__uncertain { color: var(--attn); }
+.voice-log__days { display: grid; gap: 1rem; }
+.voice-log__day { display: grid; gap: 0.75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-md); min-width: 0; }
+.voice-log__day > h4 { font-size: var(--text-base); }
+.voice-log__summary, .voice-log__segment-head { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.voice-log__summary { color: var(--muted); }
+.voice-log__segment-head > strong { overflow-wrap: anywhere; }
+.voice-log__notes { color: var(--muted); font-size: var(--text-sm); line-height: 1.7; }

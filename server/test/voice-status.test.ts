@@ -44,11 +44,11 @@ describe('voice health status', () => {
       expect(JSON.stringify(body)).not.toContain('private-channel');
     });
   });
-  it('serves disabled status without constructing a recorder or connecting to PostgreSQL', async () => {
+  it('serves disabled status with an unknown count without connecting to PostgreSQL', async () => {
     const server = createHealthServer(() => 'disabled'); server.listen(0, '127.0.0.1'); await once(server, 'listening');
     try {
       expect(await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/status`)).json())
-        .toEqual({ gateway: 'disabled', voice: { coverage_since: null, degraded: false, open_segments: 0, last_error: null } });
+        .toEqual({ gateway: 'disabled', voice: { coverage_since: null, degraded: false, open_segments: null, last_error: null } });
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 });

@@ -37,8 +37,9 @@ function MenuActions({ props, close }: { props: AccountMenuProps; close: () => v
     <Link className="hdr__dropdown-item" to={WELCOME_PATH} onClick={close}>通知与 Discord</Link>
     {(props.me.is_judge || props.me.is_admin) && props.onRecord && <button type="button" className="hdr__dropdown-item"
       onClick={() => run(props.onRecord!)}>记一笔</button>}
+    {(props.me.is_judge || props.me.is_admin) && <Link className="hdr__dropdown-item" to="/admin" onClick={close}>管理</Link>}
     {props.me.is_admin && props.onOpenAdmin && <button type="button" className="hdr__dropdown-item"
-      onClick={() => run(props.onOpenAdmin!)}>管理</button>}
+      onClick={() => run(props.onOpenAdmin!)}>AI 设置</button>}
     <button type="button" className="hdr__dropdown-item hdr__dropdown-item--danger" onClick={() => run(props.onLogout)}>退出登录</button>
   </>;
 }

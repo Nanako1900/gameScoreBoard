@@ -15,7 +15,7 @@ export function RulesGuide({ config }: { config: Config }): JSX.Element {
   return <section className="guide panel" aria-labelledby="guide-title">
     <h2 id="guide-title">30 秒看懂</h2>
     <div className="guide__cards">
-      <article><h3>守约</h3><p>说了来就来；来不了，提前说一声。迟到、放鸽子由裁判记一笔。</p></article>
+      <article><h3>守约</h3><p>说了来就来；来不了，提前说一声。迟到、放鸽子由裁判记一笔。机器人会记录语音进出时间作为参考。</p></article>
       <article><h3>分数与回血</h3><p>每人从 100 分起；放鸽子会被记一笔；每周一 0 点自动回血 +{config.weeklyHeal}{zone}，最多回到 100。</p></article>
       <article><h3>出事了怎么办</h3><p>先写说明 → AI 裁决 → 不服可以申诉</p></article>
     </div>

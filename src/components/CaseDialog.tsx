@@ -9,6 +9,8 @@ import { ConfirmInline } from './ConfirmInline';
 import { DraftNote } from './DraftNote';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
+import { Link } from './Link';
+import { adminVoicePath } from '../lib/routes';
 import './case-dialog.css';
 
 interface CaseDialogProps {
@@ -155,22 +157,26 @@ export function CaseDialog({
               {candidates.map((p) => {
                 const on = picked.includes(p.id);
                 return (
-                  <label
-                    key={p.id}
-                    className={`cd-chip${on ? ' cd-chip--on' : ''}`}
-                    aria-disabled={!on && atLimit}
-                  >
-                    <input
-                      type="checkbox"
-                      className="visually-hidden"
-                      checked={on}
-                      disabled={!on && atLimit}
-                      onChange={() => toggle(p.id)}
-                    />
-                    <Avatar name={p.username} src={p.avatar_url} size={24} />
-                    <span className="cd-chip__name">{p.username}</span>
-                    <span className="cd-chip__score tabular">{p.score}</span>
-                  </label>
+                  <div className="cd-person" key={p.id}>
+                    <label
+                      className={`cd-chip${on ? ' cd-chip--on' : ''}`}
+                      aria-disabled={!on && atLimit}
+                    >
+                      <input
+                        type="checkbox"
+                        className="visually-hidden"
+                        checked={on}
+                        disabled={!on && atLimit}
+                        onChange={() => toggle(p.id)}
+                      />
+                      <Avatar name={p.username} src={p.avatar_url} size={24} />
+                      <span className="cd-chip__name">{p.username}</span>
+                      <span className="cd-chip__score tabular">{p.score}</span>
+                    </label>
+                    {on && <Link className="cd-person__voice" to={adminVoicePath(p.id)} target="_blank" rel="noopener">
+                      看 TA 的语音记录
+                    </Link>}
+                  </div>
                 );
               })}
             </div>

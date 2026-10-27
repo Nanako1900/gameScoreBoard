@@ -19,6 +19,8 @@ import type {
   WeeklyReport,
 } from './types';
 
+import type { VoiceDayResponse, VoiceHistoryResponse } from '@shared/voiceApi';
+
 export class ApiError extends Error {
   readonly status: number;
   constructor(message: string, status: number) {
@@ -317,4 +319,21 @@ export async function setDiscordNotify(on: boolean): Promise<DiscordLinkInfo | u
 /** Queue another private welcome guide; the server limits manual retries. */
 export async function resendWelcome(): Promise<{ ok: true }> {
   return post<{ ok: true }>('/api/me/discord/welcome');
+}
+
+
+// --- Private voice evidence -----------------------------------------------
+
+export function getVoiceDay(date?: string): Promise<VoiceDayResponse> {
+  const params = new URLSearchParams();
+  if (date !== undefined) params.set('date', date);
+  const search = params.toString();
+  return request<VoiceDayResponse>(`/api/voice/day${search ? `?${search}` : ''}`);
+}
+
+export function getVoiceHistory(userId: string, from?: string, to?: string): Promise<VoiceHistoryResponse> {
+  const params = new URLSearchParams({ user: userId });
+  if (from !== undefined) params.set('from', from);
+  if (to !== undefined) params.set('to', to);
+  return request<VoiceHistoryResponse>(`/api/voice?${params.toString()}`);
 }
