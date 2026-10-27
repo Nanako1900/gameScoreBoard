@@ -33,6 +33,8 @@ import {
 import type {
   CaseDraft,
   Env,
+  InviteReason,
+  InvitedSessionItem,
   RecordItem,
   SessionDetail,
   SessionItem,
@@ -48,6 +50,7 @@ import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limit
 import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 import { goingPreviews, previewOfPlayers } from './session-extras';
+import { inviteContexts } from './session-extras';
 
 const MAX_ROLLCALL_ENTRIES = MAX_SESSION_ROSTER;
 const MAX_LATE_MINUTES = 24 * 60;
@@ -408,7 +411,7 @@ export interface InviteItem {
 export async function listMyInvites(
   db: D1Database,
   callerId: string,
-): Promise<SessionItem[]> {
+): Promise<InvitedSessionItem[]> {
   const now = new Date().toISOString();
   const rows = await db
     .prepare(
@@ -420,8 +423,14 @@ export async function listMyInvites(
     )
     .bind(now, callerId)
     .all<SessionJoinRow>();
-  const previews = await goingPreviews(db, rows.results.map((r) => r.id));
-  return rows.results.map((r) => toSessionItem(r, 'invited', previews.get(r.id) ?? []));
+  const ids = rows.results.map((r) => r.id);
+  const previews = await goingPreviews(db, ids);
+  const contexts = await inviteContexts(db, callerId, ids);
+  return rows.results.map((r) => {
+    const ctx = contexts.get(r.id) ?? { prev_rsvp: null, prev_starts_at: null };
+    const reason: InviteReason = ctx.prev_starts_at === null ? 'new' : 'moved';
+    return { ...toSessionItem(r, 'invited', previews.get(r.id) ?? []), invite_reason: reason, ...ctx };
+  });
 }
 
 export async function updateSession(
@@ -474,14 +483,17 @@ export async function updateSession(
       // An answer to one time is not an answer to another: everyone but the
       // organizer answers again — a yes (so nobody can be roll-called for a
       // time they did not agree to: a no-show penalty needs a 'going'), and a
-      // no too (a no to 20:00 is not a no to 23:00).
+      // no too (a no to 20:00 is not a no to 23:00). What they had said, and to
+      // which time, stays for their own /api/me/invites (P2-3). Rows still
+      // 'invited' are not touched, so a second move keeps the time they answered.
       statements.push(
         db
           .prepare(
-            `UPDATE session_players SET rsvp = 'invited', rsvp_at = datetime('now')
+            `UPDATE session_players
+                SET rsvp = 'invited', rsvp_at = datetime('now'), prev_rsvp = rsvp, prev_starts_at = ?
               WHERE session_id = ? AND user_id <> ? AND rsvp IN ('going', 'maybe', 'out')`,
           )
-          .bind(id, row.organizer_id),
+          .bind(row.starts_at, id, row.organizer_id),
       );
     }
     await db.batch(statements);
@@ -588,7 +600,7 @@ export async function setRsvp(
          SELECT ?, ?, ?, datetime('now')
           WHERE EXISTS (SELECT 1 FROM game_sessions WHERE id = ? AND status = 'open' ${sameTime}) AND ${seatFree}
          ON CONFLICT(session_id, user_id) DO UPDATE SET
-           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at`,
+           rsvp = excluded.rsvp, rsvp_at = excluded.rsvp_at, prev_rsvp = NULL, prev_starts_at = NULL`,
       )
       .bind(id, caller.id, rawRsvp, id, ...timeBinds, ...seatBinds),
   ]);

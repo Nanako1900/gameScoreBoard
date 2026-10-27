@@ -12,7 +12,7 @@ import { SESSION_COOKIE, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
 import { noAiEnv, seedUser } from './helpers';
 import { createSession, setRsvp, updateSession } from '../../worker/sessions';
-import type { SessionItem } from '../../worker/types';
+import type { InvitedSessionItem, SessionItem } from '../../worker/types';
 import { OFFSET_HOURS } from './helpers';
 
 const BASE = 'https://score.example.com';
@@ -270,5 +270,17 @@ describe('P2-3 over HTTP: cancel reasons, invite context, history', () => {
     });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { session: SessionItem }).session.cancel_reason).toBe('临时加班，改天');
+  });
+  it('GET /api/me/invites carries invite_reason and what the caller had said', async () => {
+    const org = await seedUser({ id: 'org' });
+    const a = await seedUser({ id: 'a' });
+    const session = await createSession(env.DB, org, { starts_at: inHours(3), invite: [a.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await updateSession(env.DB, org, session.id, { starts_at: inHours(26) });
+    const res = await call('/api/me/invites', { headers: await asUser('a') });
+    expect(res.status).toBe(200);
+    const { sessions } = (await res.json()) as { sessions: InvitedSessionItem[] };
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ invite_reason: 'moved', prev_rsvp: 'going', prev_starts_at: session.starts_at });
   });
 });

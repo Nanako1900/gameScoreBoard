@@ -3,7 +3,7 @@
 
 import type { CaseStatus, VerdictSource, ViolationType } from '../shared/scoring';
 import type { ClassifiedBy } from './ai/classify';
-import type { Attendance, Rsvp, SessionStatus } from '../shared/attendance';
+import type { Attendance, Rsvp, SelfRsvp, SessionStatus } from '../shared/attendance';
 
 /** Worker runtime bindings (see docs/CONTRACT.md → Env). */
 export interface Env {
@@ -157,6 +157,8 @@ export interface SessionPlayerJoinRow {
   late_minutes: number | null;
   attendance_note: string | null;
   record_id: number | null;
+  prev_rsvp: string | null;
+  prev_starts_at: string | null;
   u_username: string;
   u_avatar: string | null;
   u_score: number;
@@ -314,6 +316,27 @@ export interface SessionItem {
 
 export interface SessionDetail extends SessionItem {
   players: SessionPlayer[];
+}
+
+// --- P2-3 ---
+/** Roll-call outcomes of one session, by kind: all five keys, zeros included. */
+export type AttendanceSummary = Record<Attendance, number>;
+
+/** One row of GET /api/sessions?scope=history. */
+export interface HistorySessionItem extends SessionItem {
+  attendance_summary: AttendanceSummary;
+}
+
+export type InviteReason = 'new' | 'moved';
+
+/** One row of GET /api/me/invites. The context is the caller's own: never shown to anyone else. */
+export interface InvitedSessionItem extends SessionItem {
+  /** 'moved' when prev_starts_at is set: they had answered, then the time changed. */
+  invite_reason: InviteReason;
+  /** What they had said to the old time. */
+  prev_rsvp: SelfRsvp | null;
+  /** The old time (ISO), as they answered it. */
+  prev_starts_at: string | null;
 }
 
 /** A proposed case produced by roll call — nothing is filed until settle. */

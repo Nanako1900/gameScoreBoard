@@ -6,6 +6,7 @@
 
 import { GOING_PREVIEW_MAX } from '../shared/attendance';
 import type { RecordActor, SessionPlayer } from './types';
+import { isSelfRsvp, type SelfRsvp } from '../shared/attendance';
 
 /** `?, ?, …` for `count` values. Built from the count only — the values stay bound. */
 function holes(count: number): string {
@@ -71,4 +72,38 @@ export function previewOfPlayers(players: readonly SessionPlayer[]): RecordActor
     .sort(byAnswerTime)
     .slice(0, GOING_PREVIEW_MAX)
     .map((p) => ({ id: p.user.id, username: p.user.username, avatar_url: p.user.avatar_url }));
+}
+
+// --- P2-3 ---
+
+/** What a move left behind for one person: what they had said, and to which time. */
+export interface InviteContext {
+  prev_rsvp: SelfRsvp | null;
+  prev_starts_at: string | null;
+}
+
+/** The caller's own context in each of `sessionIds` (rows they are not in are simply absent). */
+export async function inviteContexts(
+  db: D1Database,
+  callerId: string,
+  sessionIds: number[],
+): Promise<Map<number, InviteContext>> {
+  if (sessionIds.length === 0) return new Map();
+  // holes() is P2-6's private helper in this file: placeholders from the count only.
+  const rows = await db
+    .prepare(
+      `SELECT session_id, prev_rsvp, prev_starts_at FROM session_players
+        WHERE user_id = ? AND session_id IN (${holes(sessionIds.length)})`,
+    )
+    .bind(callerId, ...sessionIds)
+    .all<{ session_id: number; prev_rsvp: string | null; prev_starts_at: string | null }>();
+  return new Map(
+    rows.results.map((r) => [
+      r.session_id,
+      {
+        prev_rsvp: r.prev_rsvp !== null && isSelfRsvp(r.prev_rsvp) ? r.prev_rsvp : null,
+        prev_starts_at: r.prev_starts_at,
+      },
+    ]),
+  );
 }

@@ -125,3 +125,83 @@ describe('cancelSession with a reason', () => {
     expect((await getSessionDetail(env.DB, session.id, null)).cancel_reason).toBe('下雨');
   });
 });
+
+describe('a move remembers what each person had said, and to which time', () => {
+  it('writes prev_rsvp / prev_starts_at for those who had answered — not the invited, not the organizer', async () => {
+    const { org, a, b, c, d } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: minuteFromNow(3), invite: [a.id, b.id, c.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'maybe');
+    await setRsvp(env.DB, d, session.id, 'out');
+
+    await updateSession(env.DB, org, session.id, { starts_at: minuteFromNow(26) });
+
+    const old = session.starts_at;
+    expect(await contextRows(session.id)).toEqual([
+      { user_id: 'a', rsvp: 'invited', prev_rsvp: 'going', prev_starts_at: old },
+      { user_id: 'b', rsvp: 'invited', prev_rsvp: 'maybe', prev_starts_at: old },
+      { user_id: 'c', rsvp: 'invited', prev_rsvp: null, prev_starts_at: null },
+      { user_id: 'd', rsvp: 'invited', prev_rsvp: 'out', prev_starts_at: old },
+      { user_id: 'org', rsvp: 'going', prev_rsvp: null, prev_starts_at: null },
+    ]);
+  });
+
+  it('a second move keeps the time they actually answered', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: minuteFromNow(3), invite: [a.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await updateSession(env.DB, org, session.id, { starts_at: minuteFromNow(26) });
+    await updateSession(env.DB, org, session.id, { starts_at: minuteFromNow(50) });
+    const [row] = (await contextRows(session.id)).filter((r) => r.user_id === 'a');
+    expect(row).toEqual({ user_id: 'a', rsvp: 'invited', prev_rsvp: 'going', prev_starts_at: session.starts_at });
+  });
+
+  it('answering again clears it; a change that is not a move writes none', async () => {
+    const { org, a, b } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: minuteFromNow(3), invite: [a.id, b.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await setRsvp(env.DB, b, session.id, 'out');
+    await updateSession(env.DB, org, session.id, { title: '只改名字', note: '老地方' });
+    expect((await contextRows(session.id)).every((r) => r.prev_rsvp === null && r.prev_starts_at === null)).toBe(true);
+
+    await updateSession(env.DB, org, session.id, { starts_at: minuteFromNow(26) });
+    await setRsvp(env.DB, a, session.id, 'out');
+    const rows = await contextRows(session.id);
+    expect(rows.find((r) => r.user_id === 'a')).toEqual({ user_id: 'a', rsvp: 'out', prev_rsvp: null, prev_starts_at: null });
+    expect(rows.find((r) => r.user_id === 'b')).toMatchObject({ rsvp: 'invited', prev_rsvp: 'out' });
+  });
+});
+
+describe('/api/me/invites says why each invitation is there', () => {
+  it("'new' for a first invitation, 'moved' with what they had said and the old time", async () => {
+    const { org, a, c } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: minuteFromNow(3), invite: [a.id, c.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'maybe');
+    const later = minuteFromNow(26);
+    await updateSession(env.DB, org, session.id, { starts_at: later });
+
+    const [forA] = await listMyInvites(env.DB, a.id);
+    expect(forA).toMatchObject({
+      id: session.id,
+      starts_at: later,
+      my_rsvp: 'invited',
+      invite_reason: 'moved',
+      prev_rsvp: 'maybe',
+      prev_starts_at: session.starts_at,
+    });
+    const [forC] = await listMyInvites(env.DB, c.id);
+    expect(forC).toMatchObject({ id: session.id, invite_reason: 'new', prev_rsvp: null, prev_starts_at: null });
+  });
+
+  it('keeps the context out of everything but the person’s own invites', async () => {
+    const { org, a } = await cast();
+    const session = await createSession(env.DB, org, { starts_at: minuteFromNow(3), invite: [a.id] }, OFFSET_HOURS);
+    await setRsvp(env.DB, a, session.id, 'going');
+    await updateSession(env.DB, org, session.id, { starts_at: minuteFromNow(26) });
+    const detail = await getSessionDetail(env.DB, session.id, a.id);
+    const [listed] = await listSessions(env.DB, 'upcoming', a.id);
+    for (const shown of [detail, listed, ...detail.players]) {
+      expect(JSON.stringify(shown)).not.toMatch(/prev_rsvp|prev_starts_at|invite_reason/);
+    }
+  });
+});
