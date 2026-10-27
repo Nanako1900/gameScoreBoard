@@ -208,3 +208,88 @@ describe('LoginLink — every way into the login page', () => {
     expect(window.location.pathname).toBe('/');
   });
 });
+
+describe('the session page — ResumeHint and the visitor prompt', () => {
+  function renderDetail(resumeRsvp: 'going' | null, myRsvp: SessionDetail['my_rsvp'] = null) {
+    const stub = stubApi({ myRsvp });
+    stub.signIn();
+    const onResumeDone = vi.fn();
+    render(
+      <SessionDetailDialog
+        sessionId={5}
+        me={ME}
+        onClose={() => {}}
+        onChanged={() => {}}
+        resumeRsvp={resumeRsvp}
+        onResumeDone={onResumeDone}
+      />,
+    );
+    return { stub, onResumeDone };
+  }
+
+  it('asks about the earlier click and rings that button — without answering', async () => {
+    const { stub, onResumeDone } = renderDetail('going');
+    const hint = (await screen.findByText(QUESTION)).closest('.resume-hint');
+    expect(hint).toHaveAttribute('role', 'status');
+    expect(screen.getByRole('button', { name: '来' })).toHaveClass(SUGGESTED);
+    expect(screen.getByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'false');
+    // Focusing the ringed button reads the question too (a status region inserted with its text may go unannounced).
+    expect(screen.getByRole('button', { name: '来' })).toHaveAccessibleDescription(QUESTION);
+    expect(screen.getByRole('button', { name: '待定' })).not.toHaveClass(SUGGESTED);
+    expect(screen.getByRole('button', { name: '待定' })).not.toHaveAttribute('aria-describedby');
+    expect(screen.getAllByRole('button', { name: '来' })).toHaveLength(1);
+    await settle();
+    expect(onResumeDone).not.toHaveBeenCalled();
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('不用了 forgets the click without answering, and focus lands on the title', async () => {
+    const { stub, onResumeDone } = renderDetail('going');
+    const user = userEvent.setup();
+    await screen.findByText(QUESTION);
+    await user.click(screen.getByRole('button', { name: '不用了' }));
+    expect(onResumeDone).toHaveBeenCalled();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: '周五五排' }));
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('clicking the ringed 来 again is what answers — once', async () => {
+    const { stub, onResumeDone } = renderDetail('going');
+    const user = userEvent.setup();
+    await screen.findByText(QUESTION);
+    await user.click(screen.getByRole('button', { name: '来' }));
+    await waitFor(() => expect(onResumeDone).toHaveBeenCalled());
+    expect(writes(stub.calls)).toEqual([{ method: 'POST', path: '/api/sessions/5/rsvp' }]);
+  });
+
+  it('already that answer: nothing to ask, and the hint is done', async () => {
+    const { stub, onResumeDone } = renderDetail('going', 'going');
+    expect(await screen.findByRole('button', { name: '来' })).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(onResumeDone).toHaveBeenCalled());
+    expect(screen.queryByText(QUESTION)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '来' })).not.toHaveClass(SUGGESTED);
+    expect(writes(stub.calls)).toEqual([]);
+  });
+
+  it('a visitor gets 登录后报名: three login links that remember the answer, and the login button', async () => {
+    stubApi();
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/sessions/5');
+    render(<SessionDetailDialog sessionId={5} me={null} onClose={() => {}} onChanged={() => {}} />);
+    const prompt = await screen.findByRole('group', { name: '登录后报名' });
+    expect(within(prompt).getByText('登录后就能回『来 / 待定 / 不来』，没绑 Discord 也行。')).toBeInTheDocument();
+    for (const name of ['来', '待定', '不来', '用 Nanako 账号登录']) {
+      expect(within(prompt).getByRole('link', { name })).toHaveAttribute('href', '/auth/login');
+    }
+    expect(screen.queryByRole('button', { name: '来' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: '我的报名' })).not.toBeInTheDocument();
+
+    await user.click(within(prompt).getByRole('link', { name: '待定' }));
+    expect(stored()).toEqual({
+      v: 1,
+      path: '/sessions/5',
+      savedAt: expect.any(Number),
+      intent: { kind: 'rsvp', sessionId: 5, rsvp: 'maybe' },
+    });
+  });
+});
