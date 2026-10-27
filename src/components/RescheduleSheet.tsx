@@ -94,7 +94,7 @@ export function RescheduleSheet({ session, onClose, onRescheduled }: RescheduleS
   };
 
   return (
-    <Modal open onClose={onClose} labelledBy="reschedule-title" variant="sheet" title="改到什么时候？">
+    <Modal open onClose={onClose} labelledBy="reschedule-title" variant="sheet" title="改到什么时候？" historyKey="reschedule">
       <div className="rss">
         <p className="rss__now">
           现在：<span className="tabular">{formatDateTime(session.starts_at)}</span>（本地时间）

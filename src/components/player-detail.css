@@ -272,3 +272,17 @@
   font-size: var(--fs-sm);
   color: var(--ok);
 }
+
+/* --- The case a link pointed at (P1-1, spec §3.8) ------------------------------ */
+
+.pd__pinned {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pd__pinned-eyebrow {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}

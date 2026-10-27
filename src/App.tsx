@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
-import { ApiError, AUTH_LOGIN_URL, getRecord, logout as apiLogout, regenerateReport } from './api';
+import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
-import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './lib/deepLink';
+import { bootRouter, navigate, useLocation } from './lib/router';
+import { playerPath, routeCoversHome, sessionPath } from './lib/routes';
+import { useRouteLayout } from './lib/useRouteLayout';
+import { useEntryTarget } from './lib/useEntryTarget';
+import type { PinnedCase } from './lib/useCaseLookup';
 import { computeCounts, computeTrends } from './lib/feedStats';
 import { FEED_PREVIEW_COUNT } from './lib/constants';
 import { DISCORD_INVITE_URL } from './lib/env';
@@ -15,6 +19,7 @@ import { useResetWatch } from './lib/useResetWatch';
 import { todoCount } from './lib/tabTitle';
 import { useTabTitle } from './lib/useTabTitle';
 import { clearAllDrafts } from './lib/drafts';
+import { clearLoginReturn } from './lib/loginReturn';
 import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
@@ -29,15 +34,14 @@ import { StatementDialog } from './components/StatementDialog';
 import { PendingBanner } from './components/PendingBanner';
 import { MyScoreLine } from './components/MyScoreLine';
 import { OnboardingDialog } from './components/OnboardingDialog';
-import { PlayerDetail } from './components/PlayerDetail';
 import { SessionsPanel } from './components/SessionsPanel';
 import { SessionFormDialog } from './components/SessionFormDialog';
-import { SessionDetailDialog } from './components/SessionDetailDialog';
 import { AdminAiPanel } from './components/AdminAiPanel';
 import { InviteBanner } from './components/InviteBanner';
 import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
+import { RouteView } from './components/RouteView';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -50,14 +54,16 @@ export function App(): JSX.Element {
 }
 
 function AppMain(): JSX.Element {
+  // Before anything reads the address: mark the entry this tab landed on (router.ts).
+  useState(bootRouter);
+  const location = useLocation();
+  const layout = useRouteLayout();
   const { state, refresh, setMe } = useCoreData();
   const toast = useToast();
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [caseOpen, setCaseOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
   const [sessionFormOpen, setSessionFormOpen] = useState(false);
-  const [sessionId, setSessionId] = useState<number | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [sessionsKey, setSessionsKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
@@ -68,28 +74,13 @@ function AppMain(): JSX.Element {
   const [discordLinked, setDiscordLinked] = useState(
     () => new URLSearchParams(window.location.search).get('linked') === 'discord',
   );
-  // ?case= / ?session= (links from Discord): read once, opened once data is in.
-  const [deepLink] = useState(() => readDeepLink(window.location.search));
-  const deepLinkDone = useRef(false);
   // Set by the effects that open the first-run dialog (state they set is not
   // visible to an effect in the same commit): the link waits for it to close.
   const onboardingAsked = useRef(false);
-  const [focusCaseId, setFocusCaseId] = useState<number | null>(null);
-  const [linkMissing, setLinkMissing] = useState<string | null>(null);
-
-  useEffect(() => {
-    // One-off parameters: stripped at once, so a reload does not repeat them.
-    const params = new URLSearchParams(window.location.search);
-    const oneOff = [...(params.get('linked') === 'discord' ? ['linked'] : []), ...DEEP_LINK_PARAMS];
-    if (!oneOff.some((name) => params.has(name))) {
-      return;
-    }
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}${withoutParams(window.location.search, oneOff)}`,
-    );
-  }, []);
+  // The case an old ?case= link or /cases/:id resolved: its page shows it without a second GET.
+  const [pinned, setPinned] = useState<PinnedCase | null>(null);
+  // Bumped when a statement is judged: the player page behind the dialog reloads its cases.
+  const [playerRefreshKey, setPlayerRefreshKey] = useState(0);
 
   // Handle ?onboarding=1 once data is ready and the user is logged in.
   const ready = state.status === 'ready' ? state.data : null;
@@ -103,11 +94,7 @@ function AppMain(): JSX.Element {
       setOnboardingOpen(true);
       params.delete('onboarding');
       const qs = params.toString();
-      window.history.replaceState(
-        null,
-        '',
-        `${window.location.pathname}${qs ? `?${qs}` : ''}`,
-      );
+      navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, { replace: true });
     }
   }, [ready?.me]);
 
@@ -125,26 +112,23 @@ function AppMain(): JSX.Element {
     }
   }, [discordLinked, ready?.me]);
 
-  // Open what the link points at, once: a case in its subject's page, or a
-  // session. Through the same reads as clicking there — so the same rules.
-  useEffect(() => {
-    if (!ready || !deepLink || deepLinkDone.current || onboardingOpen || onboardingAsked.current) return;
-    deepLinkDone.current = true;
-    if (deepLink.kind === 'session') {
-      setSessionId(deepLink.id);
-      return;
-    }
-    getRecord(deepLink.id)
-      .then(({ record }) => {
-        setFocusCaseId(record.id);
-        setSelectedUserId(record.subject.id);
-      })
-      .catch((err: unknown) => {
-        setLinkMissing(
-          err instanceof ApiError && err.status === 404 ? '链接里的案件不存在了。' : '打不开链接里的案件，稍后再试。',
-        );
-      });
-  }, [ready, deepLink, onboardingOpen]);
+  // Old ?case= / ?session= links, once the data is in and the first-run dialog is done
+  // (declared after the onboarding effects: it reads onboardingAsked after they ran).
+  const entryBlocked = useCallback(() => onboardingOpen || onboardingAsked.current, [onboardingOpen]);
+  const { linkMissing, dismissLinkMissing, resume, clearResume } = useEntryTarget({
+    ready: ready !== null,
+    me: ready?.me ?? null,
+    blocked: entryBlocked,
+    onPinned: setPinned,
+  });
+
+  // Opening a view is navigating to its address; a desktop drawer keeps the lobby's scroll.
+  const openRoute = useCallback(
+    (path: string): void => navigate(path, { keepScroll: layout === 'drawer' }),
+    [layout],
+  );
+  const openPlayer = useCallback((id: string): void => openRoute(playerPath(id)), [openRoute]);
+  const openSession = useCallback((id: number): void => openRoute(sessionPath(id)), [openRoute]);
 
   const handleLogout = useCallback(async (): Promise<void> => {
     try {
@@ -154,6 +138,7 @@ function AppMain(): JSX.Element {
     }
     // Drafts are this person's: whoever signs in next on this device must not find them.
     clearAllDrafts();
+    clearLoginReturn();
     window.location.reload();
   }, []);
 
@@ -239,6 +224,8 @@ function AppMain(): JSX.Element {
   }
 
   const { config, participants, records, me, myPending, invites, report } = state.data;
+  // A page (phone) or NotFound replaces the lobby; it stays mounted, only hidden (contract §8 #6).
+  const covered = routeCoversHome(location.route, layout);
   const canRecord = me?.is_judge === true;
   const showRules = (): void => {
     setRulesOpen(true);
@@ -269,7 +256,7 @@ function AppMain(): JSX.Element {
        *
        * The two banners self-hide when empty, so a quiet day collapses straight
        * to 约局 without leaving gaps. */}
-      <main className="app__main">
+      <main className="app__main" hidden={covered}>
         {state.stale && (
           <StaleNotice
             message={state.stale.message}
@@ -279,7 +266,7 @@ function AppMain(): JSX.Element {
 
         {discordLinked && <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} />}
 
-        {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={() => setLinkMissing(null)} />}
+        {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
 
         {!me && (
           <WelcomeCard
@@ -290,12 +277,12 @@ function AppMain(): JSX.Element {
           />
         )}
 
-        <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={setSessionId} />
+        <InviteBanner invites={invites} onAnswered={handleChanged} onOpen={openSession} />
 
         <PendingBanner cases={myPending} onOpen={setStatementCase} />
 
         {/* Your score and Monday's heal, right after what you have to do (spec §2.4). */}
-        {me && <MyScoreLine me={me} rank={myRank} config={config} onOpen={() => setSelectedUserId(me.id)} />}
+        {me && <MyScoreLine me={me} rank={myRank} config={config} onOpen={() => openPlayer(me.id)} />}
 
         {/* Above the board: this is the only block on the page that leads to a new
             game happening, and it used to sit under a 520px leaderboard where
@@ -303,7 +290,7 @@ function AppMain(): JSX.Element {
         <SessionsPanel
           me={me}
           refreshKey={sessionsKey}
-          onOpenSession={setSessionId}
+          onOpenSession={openSession}
           onCreate={() => setSessionFormOpen(true)}
         />
 
@@ -330,13 +317,13 @@ function AppMain(): JSX.Element {
               participants={participants}
               trends={trends}
               counts={counts}
-              onSelect={setSelectedUserId}
+              onSelect={openPlayer}
               meId={me?.id ?? null}
               highlights={
                 <WeekHighlights
                   records={records}
                   nextResetAt={config.nextResetAt}
-                  onSelectUser={setSelectedUserId}
+                  onSelectUser={openPlayer}
                 />
               }
             />
@@ -347,7 +334,7 @@ function AppMain(): JSX.Element {
             <RecordsFeed
               records={records}
               title="最新动态"
-              onSelectUser={setSelectedUserId}
+              onSelectUser={openPlayer}
               emptyHint="还没有任何记录，等待第一笔。"
               previewCount={FEED_PREVIEW_COUNT}
             />
@@ -355,7 +342,21 @@ function AppMain(): JSX.Element {
         </div>
       </main>
 
-      <footer className="app__footer">
+      <RouteView
+        location={location}
+        layout={layout}
+        me={me}
+        config={config}
+        pinned={pinned}
+        playerRefreshKey={playerRefreshKey}
+        onPinned={setPinned}
+        onChanged={handleChanged}
+        onOpenStatement={setStatementCase}
+        resume={resume}
+        onResumeDone={clearResume}
+      />
+
+      <footer className="app__footer" hidden={covered}>
         <p>EDG 信誉分 · 开黑守约，从不放鸽开始</p>
       </footer>
 
@@ -392,7 +393,10 @@ function AppMain(): JSX.Element {
           config={config}
           score={me?.score}
           onClose={() => setStatementCase(null)}
-          onDecided={handleChanged}
+          onDecided={() => {
+            handleChanged();
+            setPlayerRefreshKey((n) => n + 1);
+          }}
         />
       )}
 
@@ -416,40 +420,12 @@ function AppMain(): JSX.Element {
           onClose={() => setSessionFormOpen(false)}
           onCreated={(session) => {
             handleChanged();
-            setSessionId(session.id);
+            openSession(session.id);
           }}
-        />
-      )}
-
-      {sessionId !== null && (
-        <SessionDetailDialog
-          sessionId={sessionId}
-          me={me}
-          onClose={() => setSessionId(null)}
-          onChanged={handleChanged}
         />
       )}
 
       {aiPanelOpen && <AdminAiPanel open onClose={() => setAiPanelOpen(false)} />}
-
-      {selectedUserId && (
-        <PlayerDetail
-          userId={selectedUserId}
-          me={me}
-          config={config}
-          focusRecordId={focusCaseId}
-          onClose={() => {
-            setSelectedUserId(null);
-            setFocusCaseId(null);
-          }}
-          onOpenStatement={(record) => {
-            setSelectedUserId(null);
-            setFocusCaseId(null);
-            setStatementCase(record);
-          }}
-          onChanged={handleChanged}
-        />
-      )}
     </div>
   );
 }

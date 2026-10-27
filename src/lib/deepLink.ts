@@ -9,13 +9,14 @@ export type DeepLink = { kind: 'case' | 'session'; id: number };
 
 export const DEEP_LINK_PARAMS = ['case', 'session'] as const;
 
-const ID = /^[1-9]\d{0,14}$/;
+/** A positive integer id, at most 15 digits: the only id a link may carry (the router reuses it). */
+export const ID_PATTERN = /^[1-9]\d{0,14}$/;
 
 export function readDeepLink(search: string): DeepLink | null {
   const params = new URLSearchParams(search);
   for (const kind of DEEP_LINK_PARAMS) {
     const raw = params.get(kind);
-    if (raw !== null && ID.test(raw)) return { kind, id: Number(raw) };
+    if (raw !== null && ID_PATTERN.test(raw)) return { kind, id: Number(raw) };
   }
   return null;
 }

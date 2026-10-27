@@ -35,3 +35,21 @@ export const FEED_PREVIEW_COUNT = 10;
 export const REVOKE_TICK_MS = 30_000;
 /** Debounce between a keystroke and the draft write. */
 export const DRAFT_SAVE_DEBOUNCE_MS = 400;
+
+// --- P1-1 ---
+/** The one breakpoint JS needs: page vs drawer for /sessions/:id and /players/:id. Same as the CSS (min-width: 1024px). */
+export const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
+/** /players/:id — OAuth subjects are free-form; anything longer is not one of ours. */
+export const USER_ID_MAX = 128;
+
+// --- P1-2 ---
+/** An overlay's silent step back whose popstate never arrives stops holding navigations after this long. */
+export const SILENT_BACK_TIMEOUT_MS = 1_000;
+/** The `sheet` mark on an overlay's history entry (its historyKey), kept short. */
+export const HISTORY_SHEET_NAME_MAX = 32;
+
+// --- P1-3 ---
+/** edg.return older than this is ignored: a login that took longer is not the same visit. */
+export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
+/** edg.return.path upper bound. */
+export const RETURN_PATH_MAX = 512;

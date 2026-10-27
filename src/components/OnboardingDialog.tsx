@@ -121,7 +121,7 @@ export function OnboardingDialog({
   };
 
   return (
-    <Modal open={open} onClose={dismiss} labelledBy="onboarding-title" size="md">
+    <Modal open={open} onClose={dismiss} labelledBy="onboarding-title" size="md" historyKey="onboarding">
       <span className="ob__eyebrow eyebrow">欢迎，{me.oauth_username}</span>
       <h2 id="onboarding-title" className="ob__title">
         设置你的显示名字与身份

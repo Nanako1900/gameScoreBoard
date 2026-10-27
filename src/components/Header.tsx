@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Config, User } from '../types';
-import { AUTH_LOGIN_URL } from '../api';
 import { COUNTDOWN_TICK_MS } from '../lib/constants';
 import { formatResetCountdown } from '../lib/time';
 import { useNow } from '../lib/useNow';
 import { Avatar } from './Avatar';
+import { LoginLink } from './LoginLink';
+import { Link } from './Link';
 import './header.css';
 
 interface HeaderProps {
@@ -56,7 +57,7 @@ export function Header({
   return (
     <header className="hdr">
       <div className="hdr__inner">
-        <a className="hdr__brand" href="/" aria-label="EDG 信誉分 首页">
+        <Link to="/" className="hdr__brand" aria-label="EDG 信誉分 首页">
           <span className="hdr__logo" aria-hidden="true">
             <span className="hdr__logo-mark">EDG</span>
           </span>
@@ -64,7 +65,7 @@ export function Header({
             <span className="hdr__title">信誉分</span>
             <span className="hdr__subtitle">开黑守约计分板</span>
           </span>
-        </a>
+        </Link>
 
         <div className="hdr__reset" aria-label="距离每周恢复">
           <span className="hdr__reset-label eyebrow">每周恢复</span>
@@ -140,9 +141,7 @@ export function Header({
               )}
             </div>
           ) : (
-            <a className="btn btn--gold" href={AUTH_LOGIN_URL}>
-              登录
-            </a>
+            <LoginLink className="btn btn--gold">登录</LoginLink>
           )}
         </div>
       </div>

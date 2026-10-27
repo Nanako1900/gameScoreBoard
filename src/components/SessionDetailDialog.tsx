@@ -9,6 +9,7 @@ import {
 import type { Rsvp, SelfRsvp } from '@shared/attendance';
 import type { RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
+import { PAGE_BACK_LABEL, SESSION_NOT_FOUND } from '../lib/routeCopy';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
 import { formatDateTime, formatWhen, parseTimestamp } from '../lib/time';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
@@ -16,9 +17,13 @@ import { useUndo } from '../lib/useUndo';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';
 import { ConfirmInline } from './ConfirmInline';
+import { NotFound } from './NotFound';
+import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
 import { RollCallDialog } from './RollCallDialog';
 import { RescheduleSheet } from './RescheduleSheet';
+import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
+import { VisitorRsvpPrompt } from './VisitorRsvpPrompt';
 import { useToast } from './Toast';
 import './session-detail.css';
 
@@ -28,15 +33,26 @@ interface SessionDetailDialogProps {
   onClose: () => void;
   /** Called after any mutation so parent lists and the leaderboard refresh. */
   onChanged: () => void;
+  /** Default 'center' — today's dialog, byte for byte. 'page' / 'drawer': the /sessions/:id route (P1-1). */
+  variant?: 'center' | 'page' | 'drawer';
+  /** P1-3: the answer clicked before logging in — only pointed at, never submitted. */
+  resumeRsvp?: SelfRsvp | null;
+  /** P1-3: the question above was answered, dismissed, or does not apply here. */
+  onResumeDone?: () => void;
 }
 
 const RSVP_ORDER = SELF_RSVPS;
+const TITLE_ID = 'session-detail-title';
+const NOT_FOUND_STATUS = 404;
 
 export function SessionDetailDialog({
   sessionId,
   me,
   onClose,
   onChanged,
+  variant = 'center',
+  resumeRsvp = null,
+  onResumeDone,
 }: SessionDetailDialogProps): JSX.Element {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -45,7 +61,10 @@ export function SessionDetailDialog({
   const [rollCallOpen, setRollCallOpen] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // A 404 on the page / drawer forms: NotFound instead of the bare error line (spec §2.2).
+  const [missing, setMissing] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const titleFocused = useRef(false);
   const toast = useToast();
   const offerUndo = useUndo();
 
@@ -56,13 +75,24 @@ export function SessionDetailDialog({
       setRecords(res.records);
       setError(null);
     } catch (err) {
+      if (variant !== 'center' && err instanceof ApiError && err.status === NOT_FOUND_STATUS) {
+        setMissing(true);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : '加载失败');
     }
-  }, [sessionId]);
+  }, [sessionId, variant]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The page form: once the session is in, focus its title (spec §6.4) — only the first time.
+  useEffect(() => {
+    if (variant !== 'page' || session === null || titleFocused.current) return;
+    titleFocused.current = true;
+    titleRef.current?.focus();
+  }, [variant, session]);
 
   /** Runs a write, then reloads. Resolves false — with the reason on screen — when it failed. */
   const mutate = async (fn: () => Promise<unknown>): Promise<boolean> => {
@@ -144,10 +174,35 @@ export function SessionDetailDialog({
     me !== null && session?.status === 'open' && !started && !isOrganizer;
   const canRollCall = canManage && session?.status === 'open' && started;
 
+  // P1-3: a visitor answers through the login page; back here, the click is asked about.
+  const canVisitorRsvp = me === null && session?.status === 'open' && !started;
+  const resumeAsk: SelfRsvp | null =
+    resumeRsvp !== null && canRsvp && session?.my_rsvp !== resumeRsvp ? resumeRsvp : null;
+
+  // Nothing to ask (already that answer, the organizer, started…): forget the click.
+  useEffect(() => {
+    if (resumeRsvp !== null && session !== null && resumeAsk === null) onResumeDone?.();
+  }, [resumeRsvp, session, resumeAsk, onResumeDone]);
+
+  /** An answer clicked here, with or without the hint: the hint is done either way. */
+  const answerHere = async (next: SelfRsvp): Promise<void> => {
+    await answer(next);
+    if (resumeRsvp !== null) onResumeDone?.();
+  };
+
+  const dismissResume = (): void => {
+    onResumeDone?.();
+    // The hint (and its focused button) leaves: focus the title, not <body>.
+    titleRef.current?.focus();
+  };
+
   return (
     <>
-      <Modal open onClose={onClose} labelledBy="session-detail-title" size="lg">
-        {!session ? (
+      <Modal open onClose={onClose} labelledBy={TITLE_ID} size="lg" variant={variant}>
+        {variant === 'page' && <PageBar backLabel={PAGE_BACK_LABEL} title={session?.title} onBack={onClose} />}
+        {missing ? (
+          <NotFound title={SESSION_NOT_FOUND} headingId={TITLE_ID} />
+        ) : !session ? (
           <p className="sdt__status" aria-live="polite">
             {error ?? '加载中…'}
           </p>
@@ -155,7 +210,7 @@ export function SessionDetailDialog({
           <div className="sdt">
             <header className="sdt__head">
               <p className="sdt__when tabular">{formatDateTime(session.starts_at)}</p>
-              <h2 id="session-detail-title" className="sdt__title" ref={titleRef} tabIndex={-1}>
+              <h2 id={TITLE_ID} className="sdt__title" ref={titleRef} tabIndex={-1}>
                 {session.title}
               </h2>
               <p className="sdt__meta">
@@ -183,9 +238,16 @@ export function SessionDetailDialog({
             )}
             {flash && <p className="sdt__flash">{flash}</p>}
 
+            {resumeAsk && <ResumeHint rsvp={resumeAsk} onDismiss={dismissResume} />}
             {canRsvp && (
-              <RsvpControls session={session} busy={busy} onAnswer={(r) => void answer(r)} />
+              <RsvpControls
+                session={session}
+                busy={busy}
+                suggested={resumeAsk ?? undefined}
+                onAnswer={(r) => void answerHere(r)}
+              />
             )}
+            {canVisitorRsvp && <VisitorRsvpPrompt sessionId={session.id} />}
 
             <section className="sdt__section">
               <h3 className="sdt__section-title">
@@ -275,9 +337,17 @@ export function SessionDetailDialog({
 
 const FULL_NOTICE_ID = 'session-detail-full';
 
+/** aria-describedby from the ids that apply, or undefined when none does. */
+function describedBy(...ids: (string | null)[]): string | undefined {
+  const present = ids.filter((id): id is string => id !== null);
+  return present.length > 0 ? present.join(' ') : undefined;
+}
+
 interface RsvpControlsProps {
   session: SessionDetail;
   busy: boolean;
+  /** P1-3: ringed in gold — the answer clicked before login. Only clicking it answers. */
+  suggested?: SelfRsvp;
   onAnswer: (rsvp: SelfRsvp) => void;
 }
 
@@ -286,7 +356,7 @@ interface RsvpControlsProps {
  * and what an answer commits to. 来 closes once the seats are taken — the
  * server refuses it anyway — and the notice says what to do instead.
  */
-function RsvpControls({ session, busy, onAnswer }: RsvpControlsProps): JSX.Element {
+function RsvpControls({ session, busy, suggested, onAnswer }: RsvpControlsProps): JSX.Element {
   const closed = goingClosed(session);
   const notice = fullNotice(session);
   return (
@@ -299,10 +369,15 @@ function RsvpControls({ session, busy, onAnswer }: RsvpControlsProps): JSX.Eleme
             <button
               key={r}
               type="button"
-              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}`}
+              className={`btn btn--sm${session.my_rsvp === r ? ' btn--gold' : ' btn--ghost'}${
+                suggested === r ? ' sdt__rsvp-btn--suggested' : ''
+              }`}
               disabled={busy || shut}
               aria-pressed={session.my_rsvp === r}
-              aria-describedby={shut && notice ? FULL_NOTICE_ID : undefined}
+              aria-describedby={describedBy(
+                shut && notice ? FULL_NOTICE_ID : null,
+                suggested === r ? RESUME_HINT_TEXT_ID : null,
+              )}
               onClick={() => onAnswer(r)}
             >
               {RSVP_LABEL[r]}
