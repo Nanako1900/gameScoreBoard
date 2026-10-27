@@ -38,6 +38,8 @@ const dispatcher = (api: ChannelApi) =>
 async function player(score = 70): Promise<void> {
   await seedUser({ id: 'p', username: '选手', score });
   await linkAccounts(env.DB, { userId: 'p', discordUserId: PLAYER_DC.id, discordUsername: PLAYER_DC.username, replace: false, via: 'web' });
+  // This suite exercises score DMs; automatic welcomes have their own suite.
+  await pool.query("DELETE FROM outbox WHERE kind = 'dm.welcome' AND entity_id = 'p'");
 }
 
 async function scoreEvents() {

@@ -14,7 +14,7 @@
 
 import type pg from 'pg';
 import { getRecordItemById } from '../../../worker/case-reads';
-import { dmStillRelevant, isDmKind, removedDm, renderDm, STATEMENT_DMS, type DmKind } from '../discord/dm';
+import { dmStillRelevant, isDmKind, removedDm, renderDm, renderWelcomeDm, STATEMENT_DMS, type DmKind } from '../discord/dm';
 import { isPenalty, isPostable, verdictPost, type ChannelMessage } from '../discord/verdict';
 import {
   CANNOT_DM,
@@ -427,6 +427,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   async function deliverDm(row: OutboxRow): Promise<Outcome> {
+    if (row.kind === 'dm.welcome') {
+      const to = await recipient(row.entity_id);
+      if (isOutcome(to)) return to;
+      const sent = await sendDm(row, to, renderWelcomeDm(config.frontendUrl));
+      return isOutcome(sent) ? sent : { result: 'sent', note: null };
+    }
     if (row.kind === 'dm.removed') return deliverDmRemoved(row);
     if (row.kind === SCORE_KIND) return deliverScoreAdjusted(row, { config, recipient, sendDm });
     if (row.kind === 'dm.recharged' || ESCALATION_KINDS.has(row.kind)) {

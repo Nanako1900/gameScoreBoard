@@ -110,6 +110,8 @@ function dispatcher(api: ChannelApi) {
 
 async function bind(userId: string, who: { id: string; username: string }): Promise<void> {
   await linkAccounts(env.DB, { userId, discordUserId: who.id, discordUsername: who.username, replace: false, via: 'web' });
+  // This suite exercises case DMs; automatic welcomes have their own suite.
+  await pool.query("DELETE FROM outbox WHERE kind = 'dm.welcome' AND entity_id = $1", [userId]);
 }
 
 async function people(): Promise<{ judge: User; admin: User; subject: User }> {

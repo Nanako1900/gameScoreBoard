@@ -10,6 +10,7 @@ import { ButtonStyle, ComponentType, type APIActionRowComponent, type APIButtonC
 import type { RecordItem } from '../../../worker/types';
 import { toEmbed } from './client';
 import { violationLabel } from './commands';
+import { renderGuideEmbed } from './guide';
 import {
   clampEmbed,
   discordTime,
@@ -83,6 +84,11 @@ export function dmMessage(embed: BotEmbed, buttons: DmButton[]): ChannelMessage 
 }
 
 const message = dmMessage;
+
+/** Shared onboarding guide, sent privately without any account details. */
+export function renderWelcomeDm(frontendUrl: string): ChannelMessage {
+  return dmMessage({ ...renderGuideEmbed(), title: '欢迎加入 EDG' }, [linkButton('打开网页', webUrl(frontendUrl))]);
+}
 
 export function web(frontendUrl: string, recordId: number): Button {
   return linkButton('在网页查看', webUrl(frontendUrl, { case: recordId }));
