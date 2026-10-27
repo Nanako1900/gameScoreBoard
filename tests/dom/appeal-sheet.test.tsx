@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppealSheet } from '../../src/components/AppealSheet';
-import type { RecordItem } from '../../src/types';
+import { PlayerDetail } from '../../src/components/PlayerDetail';
+import type { Config, RecordItem, User } from '../../src/types';
 
 // 申诉（spec §3.10, H14）: the reason may be left out, is capped at
 // APPEAL_MAX = 500 like the bot's, is kept as a draft, and nothing is posted
@@ -176,5 +177,111 @@ describe('AppealSheet', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('只有已判决的案件可以申诉');
     expect(screen.getByRole('button', { name: '提交申诉' })).toHaveFocus();
     expect(onAppealed).not.toHaveBeenCalled();
+  });
+});
+
+const CONFIG: Config = {
+  violations: [],
+  tiers: [],
+  weeklyHeal: 5,
+  weeklyBonusCap: 6,
+  statementWindowHours: 12,
+  aiEnabled: false,
+  maxBatchSubjects: 5,
+  nextResetAt: new Date(Date.now() + 2 * DAY + 3_600_000).toISOString(),
+};
+
+const SUBJECT: User = {
+  id: 'p',
+  username: '选手',
+  oauth_username: '选手',
+  avatar_url: null,
+  is_participant: true,
+  is_judge: false,
+  is_admin: false,
+  score: 82,
+  created_at: '2026-10-01 00:00:00',
+};
+const REPORTER: User = { ...SUBJECT, id: 'j', username: '裁判', is_judge: true };
+
+function stubPlayer(records: RecordItem[]): Call[] {
+  return mockFetch({
+    'GET /api/users/p': () =>
+      json(200, {
+        user: { id: 'p', username: '选手', avatar_url: null, is_participant: true, is_judge: false, score: 82, created_at: 'x' },
+        records,
+        history: [],
+      }),
+    'POST /api/records/9/appeal': () => json(200, { record: penalty({ status: 'appealed' }) }),
+  });
+}
+
+describe('PlayerDetail — the subject’s own page', () => {
+  it('opens the appeal sheet instead of appealing at once', async () => {
+    const calls = stubPlayer([penalty()]);
+    const user = userEvent.setup();
+    render(<PlayerDetail userId="p" me={SUBJECT} onClose={() => {}} config={CONFIG} />);
+
+    await user.click(await screen.findByRole('button', { name: '申诉' }));
+    expect(screen.getByRole('dialog', { name: '申诉这一起' })).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: '提交申诉' }));
+    await user.click(screen.getByRole('button', { name: '确认申诉' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '申诉这一起' })).not.toBeInTheDocument());
+    // The page reloads the player after the appeal.
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/users/p')).toHaveLength(2));
+  });
+
+  it('shows how far Monday’s heal takes you, from config', async () => {
+    stubPlayer([penalty()]);
+    render(<PlayerDetail userId="p" me={SUBJECT} onClose={() => {}} config={CONFIG} />);
+    expect(await screen.findByText('周一 0 点回血 +5 → 预计 87 · 还有 2 天')).toBeInTheDocument();
+    expect(screen.getByText('这次 -6。每周一 0 点回血 +5，预计下周一后回到 87。')).toBeInTheDocument();
+    // One way to appeal per card: here the note brings no second button.
+    expect(screen.queryByRole('button', { name: '觉得不公平？可以申诉' })).not.toBeInTheDocument();
+  });
+
+  it('shows none of it to anyone else, or without config', async () => {
+    stubPlayer([penalty()]);
+    const { unmount } = render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} config={CONFIG} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByText(/周一 0 点回血/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^这次 /)).not.toBeInTheDocument();
+    unmount();
+
+    render(<PlayerDetail userId="p" me={SUBJECT} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByText(/周一 0 点回血/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayerDetail — 撤销 for the reporter', () => {
+  it('counts the 15 minutes down from filing, and hides the button after', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      stubPlayer([penalty({ created_at: sqlTime(Date.now() - 2.5 * MINUTE) })]);
+      render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} />);
+      expect(await screen.findByRole('button', { name: '撤销 · 还剩 12 分钟' })).toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(13 * MINUTE);
+      });
+      expect(screen.queryByRole('button', { name: /^撤销/ })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows no button once the window is long gone', async () => {
+    stubPlayer([penalty({ created_at: sqlTime(Date.now() - 20 * MINUTE) })]);
+    render(<PlayerDetail userId="p" me={REPORTER} onClose={() => {}} />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('button', { name: /^撤销/ })).not.toBeInTheDocument();
+  });
+
+  it('gives an admin a plain 撤销, with no clock', async () => {
+    stubPlayer([penalty()]);
+    render(<PlayerDetail userId="p" me={{ ...REPORTER, id: 'admin', is_admin: true }} onClose={() => {}} />);
+    expect(await screen.findByRole('button', { name: '撤销' })).toBeInTheDocument();
   });
 });

@@ -266,3 +266,9 @@
 .pd__override-input {
   font-size: max(16px, var(--text-sm));
 }
+
+/* Only on your own page: what Monday's heal does for you (P0-5, M7). */
+.pd__heal {
+  font-size: var(--fs-sm);
+  color: var(--ok);
+}

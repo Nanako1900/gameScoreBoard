@@ -3,18 +3,27 @@
 // Moved out of PlayerDetail.tsx; class names stay in player-detail.css.
 
 import { useState } from 'react';
-import { REVOKE_WINDOW_MS } from '@shared/scoring';
 import type { RecordItem, User } from '../types';
-import { parseTimestamp } from '../lib/time';
+import { formatRevokeLeft, revokeMsLeft } from '../lib/revoke';
 
-/** Post-verdict reversal: any admin, or the reporter within 15 minutes. */
-function canRevoke(record: RecordItem, me: User | null): boolean {
-  if (!me) return false;
-  if (record.status !== 'decided' && record.status !== 'appealed') return false;
-  if (me.is_admin) return true;
-  if (record.reporter.id !== me.id) return false;
-  const created = parseTimestamp(record.created_at);
-  return !Number.isNaN(created) && Date.now() - created <= REVOKE_WINDOW_MS;
+interface RevokeState {
+  allowed: boolean;
+  /** Time left for the reporter; null for an admin, who has no clock. */
+  msLeft: number | null;
+}
+
+/** Post-verdict reversal: any admin at any time, or the reporter while REVOKE_WINDOW_MS lasts. */
+function revokeState(record: RecordItem, me: User | null, now: number): RevokeState {
+  if (!me || (record.status !== 'decided' && record.status !== 'appealed')) return { allowed: false, msLeft: null };
+  if (me.is_admin) return { allowed: true, msLeft: null };
+  if (record.reporter.id !== me.id) return { allowed: false, msLeft: null };
+  const msLeft = revokeMsLeft(record.created_at, now);
+  return { allowed: msLeft > 0, msLeft };
+}
+
+/** 「撤销 · 还剩 12 分钟」 for the reporter (spec §5 #6); a plain 「撤销」 for an admin. */
+function revokeLabel(msLeft: number | null): string {
+  return msLeft === null ? '撤销' : `撤销 · ${formatRevokeLeft(msLeft)}`;
 }
 
 /** Pre-verdict withdrawal: no score has moved, so the reporter may just drop it. */
@@ -30,6 +39,10 @@ interface CaseActionsProps {
   isSelf: boolean;
   busy: boolean;
   overriding: boolean;
+  /** The page's clock (useNow(REVOKE_TICK_MS)): the revoke countdown reads it. */
+  now: number;
+  /** Rendered first, full width: the self view's ForgivenessNote. */
+  note?: React.ReactNode;
   onStartOverride: () => void;
   onCancelOverride: () => void;
   onStatement: () => void;
@@ -39,79 +52,46 @@ interface CaseActionsProps {
   onOverride: (delta: number, reason: string) => void;
 }
 
-export function CaseActions({
-  record,
-  me,
-  isSelf,
-  busy,
-  overriding,
-  onStartOverride,
-  onCancelOverride,
-  onStatement,
-  onAppeal,
-  onWithdraw,
-  onRevoke,
-  onOverride,
-}: CaseActionsProps): JSX.Element | null {
-  const showStatement = isSelf && record.status === 'awaiting_statement';
-  const showAppeal = isSelf && record.status === 'decided';
-  const showWithdraw = canWithdraw(record, me);
-  const showRevoke = canRevoke(record, me);
-  const showOverride =
-    me?.is_admin === true && (record.status === 'appealed' || record.status === 'decided');
-
+export function CaseActions(props: CaseActionsProps): JSX.Element | null {
+  const { record, me, isSelf, busy, overriding, now, note } = props;
   if (overriding) {
-    return <OverrideForm record={record} onCancel={onCancelOverride} onSubmit={onOverride} />;
+    return <OverrideForm record={record} onCancel={props.onCancelOverride} onSubmit={props.onOverride} />;
   }
-
-  if (!showStatement && !showAppeal && !showWithdraw && !showRevoke && !showOverride) {
-    return null;
-  }
+  const revoke = revokeState(record, me, now);
+  const shown = {
+    statement: isSelf && record.status === 'awaiting_statement',
+    appeal: isSelf && record.status === 'decided',
+    withdraw: canWithdraw(record, me),
+    revoke: revoke.allowed,
+    override: me?.is_admin === true && (record.status === 'appealed' || record.status === 'decided'),
+  };
+  if (!note && !Object.values(shown).some(Boolean)) return null;
 
   return (
     <>
-      {showStatement && (
-        <button type="button" className="btn btn--gold btn--sm" onClick={onStatement}>
+      {note}
+      {shown.statement && (
+        <button type="button" className="btn btn--gold btn--sm" onClick={props.onStatement}>
           说明情况
         </button>
       )}
-      {showAppeal && (
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={onAppeal}
-          disabled={busy}
-        >
-          {busy ? '提交中…' : '申诉'}
+      {shown.appeal && (
+        <button type="button" className="btn btn--ghost btn--sm" onClick={props.onAppeal} disabled={busy}>
+          申诉
         </button>
       )}
-      {showWithdraw && (
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={onWithdraw}
-          disabled={busy}
-        >
+      {shown.withdraw && (
+        <button type="button" className="btn btn--ghost btn--sm" onClick={props.onWithdraw} disabled={busy}>
           {busy ? '撤案中…' : '撤案'}
         </button>
       )}
-      {showRevoke && (
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm pd__revoke-btn"
-          onClick={onRevoke}
-          disabled={busy}
-        >
-          {busy ? '撤销中…' : '撤销'}
+      {shown.revoke && (
+        <button type="button" className="btn btn--ghost btn--sm pd__revoke-btn" onClick={props.onRevoke} disabled={busy}>
+          {busy ? '撤销中…' : revokeLabel(revoke.msLeft)}
         </button>
       )}
-      {showOverride && (
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={onStartOverride}
-          disabled={busy}
-        >
+      {shown.override && (
+        <button type="button" className="btn btn--ghost btn--sm" onClick={props.onStartOverride} disabled={busy}>
           改判
         </button>
       )}
