@@ -35,3 +35,9 @@ export const FEED_PREVIEW_COUNT = 10;
 export const REVOKE_TICK_MS = 30_000;
 /** Debounce between a keystroke and the draft write. */
 export const DRAFT_SAVE_DEBOUNCE_MS = 400;
+
+// --- P1-1 ---
+/** The one breakpoint JS needs: page vs drawer for /sessions/:id and /players/:id. Same as the CSS (min-width: 1024px). */
+export const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
+/** /players/:id — OAuth subjects are free-form; anything longer is not one of ours. */
+export const USER_ID_MAX = 128;
