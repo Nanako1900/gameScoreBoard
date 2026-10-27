@@ -112,7 +112,7 @@ describe('App — links into the app', () => {
       const calls = mockFetch(appRoutes);
       window.history.replaceState(null, '', `/?case=${bad}`);
       const { unmount } = render(<App />);
-      await screen.findByRole('heading', { name: /约局/ });
+      await screen.findByRole('heading', { name: '信誉榜' });
       await settle();
       expect(calls.some((c) => c.path.startsWith('/api/records/')), bad).toBe(false);
       expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
@@ -131,12 +131,24 @@ describe('App — links into the app', () => {
     expect(window.location.pathname).toBe('/');
   });
 
-  it('?session= opens the session', async () => {
+  it('?session= remains home, announces retirement in a toast and strips only its parameters', async () => {
     const calls = mockFetch(appRoutes);
-    window.history.replaceState(null, '', '/?session=3');
+    window.history.replaceState(null, '', '/?session=3&utm=dc');
     render(<App />);
-    await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.path === '/api/sessions/3')).toBe(true));
-    expect(window.location.search).toBe('');
-    expect(window.location.pathname).toBe('/sessions/3');
+    const notice = await screen.findByText('约局功能已下线');
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(window.location.search).toBe('?utm=dc');
+    expect(window.location.pathname).toBe('/');
+    expect(calls.some((c) => c.path === '/api/sessions/3')).toBe(false);
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+  it('a case still takes priority when a session parameter is also present', async () => {
+    mockFetch(appRoutes);
+    window.history.replaceState(null, '', '/?session=3&case=7&utm=dc');
+    render(<App />);
+    await screen.findByRole('heading', { name: '选手' });
+    expect(window.location.pathname).toBe('/players/p/cases/7');
+    expect(window.location.search).toBe('?utm=dc');
+    expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
   });
 });

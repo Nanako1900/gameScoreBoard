@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readDeepLink, withoutParams } from '../../src/lib/deepLink';
 
 describe('readDeepLink', () => {
-  it('reads a case or a session by a positive id', () => {
+  it('reads a case by a positive id', () => {
     expect(readDeepLink('?case=7')).toEqual({ kind: 'case', id: 7 });
-    expect(readDeepLink('?session=3&x=1')).toEqual({ kind: 'session', id: 3 });
+    expect(readDeepLink('?session=3&x=1')).toBeNull();
+    expect(readDeepLink('?session=3&case=7')).toEqual({ kind: 'case', id: 7 });
     expect(readDeepLink('?case=123456789012345')).toEqual({ kind: 'case', id: 123456789012345 });
   });
 

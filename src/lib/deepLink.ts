@@ -1,11 +1,11 @@
 // Links into the app (P8): `?case=<id>` opens a case in its subject's page,
-// `?session=<id>` a session. The bot's DMs and replies use them.
+// `?session=<id>` remains supported as a retirement notice on the home page.
 //
 // Only a positive integer id is read — nothing from the URL is ever rendered —
 // and a link only chooses which ordinary view opens: what is shown, and which
 // controls, still come from the API and `/api/me`. A link never writes.
 
-export type DeepLink = { kind: 'case' | 'session'; id: number };
+export type DeepLink = { kind: 'case'; id: number };
 
 export const DEEP_LINK_PARAMS = ['case', 'session'] as const;
 
@@ -13,12 +13,14 @@ export const DEEP_LINK_PARAMS = ['case', 'session'] as const;
 export const ID_PATTERN = /^[1-9]\d{0,14}$/;
 
 export function readDeepLink(search: string): DeepLink | null {
-  const params = new URLSearchParams(search);
-  for (const kind of DEEP_LINK_PARAMS) {
-    const raw = params.get(kind);
-    if (raw !== null && ID_PATTERN.test(raw)) return { kind, id: Number(raw) };
-  }
-  return null;
+  const raw = new URLSearchParams(search).get('case');
+  return raw !== null && ID_PATTERN.test(raw) ? { kind: 'case', id: Number(raw) } : null;
+}
+
+/** A valid retired link still wins over a stored login return. */
+export function hasRetiredSessionLink(search: string): boolean {
+  const raw = new URLSearchParams(search).get('session');
+  return raw !== null && ID_PATTERN.test(raw);
 }
 
 /** `search` without these parameters, others kept ('' when none are left). */

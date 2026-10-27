@@ -5,9 +5,8 @@ import { App } from '../../src/App';
 import { NotFound } from '../../src/components/NotFound';
 import { PageBar } from '../../src/components/PageBar';
 import { PlayerDetail } from '../../src/components/PlayerDetail';
-import { SessionDetailDialog } from '../../src/components/SessionDetailDialog';
 import { useRouteLayout } from '../../src/lib/useRouteLayout';
-import type { PublicUser, RecordItem, SessionDetail, User } from '../../src/types';
+import type { PublicUser, RecordItem, User } from '../../src/types';
 import { useDesktopViewport } from './viewport';
 
 // P1-1: the routes of spec §2.2 inside the app — pages on a phone, drawers on a
@@ -73,23 +72,6 @@ const PLAYER: PublicUser = {
 };
 const SELF: User = { ...PLAYER, oauth_username: 'p', is_admin: false };
 const ROW = '第 1 名 选手，88 分';
-const SESSION: SessionDetail = {
-  id: 5,
-  organizer: { id: 'org', username: '组织者', avatar_url: null },
-  title: '周五五排',
-  game: null,
-  starts_at: '2026-10-30T13:00:00.000Z',
-  duration_min: null,
-  capacity: null,
-  note: null,
-  status: 'open',
-  settled_at: null,
-  created_at: '2026-10-01 00:00:00',
-  counts: { invited: 0, going: 1, maybe: 0, out: 0 },
-  my_rsvp: null,
-  players: [],
-};
-
 function routes(me: User | null = null): Record<string, () => Response> {
   return {
     'GET /api/config': () =>
@@ -109,7 +91,6 @@ function routes(me: User | null = null): Record<string, () => Response> {
     'GET /api/me/invites': () => json(200, { sessions: [] }),
     'GET /api/report/latest': () => json(200, { report: null }),
     'GET /api/sessions?scope=upcoming': () => json(200, { sessions: [] }),
-    'GET /api/sessions/5': () => json(200, { session: SESSION, records: [] }),
     'GET /api/records/7': () => json(200, { record: CASE }),
     'GET /api/records/9': () => json(500, { error: 'boom' }),
     'GET /api/users/p': () => json(200, { user: PLAYER, records: [{ ...CASE, id: 6 }, CASE], history: [] }),
@@ -166,43 +147,6 @@ describe('building blocks', () => {
     useDesktopViewport();
     render(<Layout />);
     expect(screen.getByText('drawer')).toBeInTheDocument();
-  });
-});
-
-describe('SessionDetailDialog — page and drawer', () => {
-  it('page: PageBar first, no dialog, the title focused once loaded', async () => {
-    mockFetch(routes());
-    const onClose = vi.fn();
-    render(<SessionDetailDialog variant="page" sessionId={5} me={null} onClose={onClose} onChanged={() => {}} />);
-    const title = await screen.findByRole('heading', { name: '周五五排' });
-    await waitFor(() => expect(document.activeElement).toBe(title));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(document.querySelector('.modal-page')?.firstElementChild).toHaveClass('pagebar');
-    await userEvent.setup().click(screen.getByRole('button', { name: '返回' }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('drawer: a dialog with Modal’s own ✕ and no PageBar', async () => {
-    mockFetch(routes());
-    render(<SessionDetailDialog variant="drawer" sessionId={5} me={null} onClose={() => {}} onChanged={() => {}} />);
-    const dialog = await screen.findByRole('dialog', { name: '周五五排' });
-    expect(dialog).toHaveClass('modal__panel--drawer');
-    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '返回' })).not.toBeInTheDocument();
-  });
-
-  it('a 404 is NotFound on a page — and still today’s line in the center dialog', async () => {
-    mockFetch(routes());
-    const page = render(
-      <SessionDetailDialog variant="page" sessionId={999} me={null} onClose={() => {}} onChanged={() => {}} />,
-    );
-    const heading = await screen.findByRole('heading', { name: '找不到这局，链接可能写错了。' });
-    expect(heading).toHaveAttribute('id', 'session-detail-title');
-    page.unmount();
-
-    render(<SessionDetailDialog sessionId={999} me={null} onClose={() => {}} onChanged={() => {}} />);
-    expect(await screen.findByText('unrouted GET /api/sessions/999')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '找不到这局，链接可能写错了。' })).not.toBeInTheDocument();
   });
 });
 
@@ -289,17 +233,34 @@ describe('unknown addresses', () => {
     expect(home).toHaveAttribute('href', '/');
     await user.click(home);
     expect(window.location.pathname).toBe('/');
-    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '信誉榜' })).toBeInTheDocument();
   });
 
-  it('say which thing is missing on a session or player that does not exist', async () => {
-    mockFetch(routes());
-    window.history.replaceState(null, '', '/sessions/999');
-    const first = render(<App />);
-    expect(await screen.findByRole('heading', { name: '找不到这局，链接可能写错了。' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '回大厅' })).toHaveAttribute('href', '/');
-    first.unmount();
+  it.each(['/sessions', '/sessions/5', '/sessions/new', '/sessions/history', '/sessions/5/rollcall', '/sessions/x/y'])
+    ('keeps retired address %s readable without fetching a session', async (path) => {
+      const calls = mockFetch(routes());
+      window.history.replaceState(null, '', path);
+      render(<App />);
+      const title = await screen.findByRole('heading', { name: '约局功能已下线' });
+      expect(title).toHaveFocus();
+      expect(screen.getByText('约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: '回首页' })).toHaveAttribute('href', '/');
+      expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
+      expect(calls.some((call) => call.path === '/api/sessions/5')).toBe(false);
+    });
 
+  it('keeps the retirement notice as a full page on a desktop', async () => {
+    useDesktopViewport();
+    mockFetch(routes());
+    window.history.replaceState(null, '', '/sessions/5');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '约局功能已下线' })).toHaveFocus();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
+  });
+
+  it('still identifies a player that no longer exists', async () => {
+    mockFetch(routes());
     window.history.replaceState(null, '', '/players/ghost');
     render(<App />);
     expect(await screen.findByRole('heading', { name: '找不到这位选手。' })).toBeInTheDocument();
@@ -315,41 +276,6 @@ describe('unknown addresses', () => {
     window.history.replaceState(null, '', '/cases/9');
     render(<App />);
     expect(await screen.findByRole('heading', { name: '打不开链接里的案件，稍后再试。' })).toBeInTheDocument();
-  });
-});
-
-describe('/sessions/:id', () => {
-  it('on a phone is a page: PageBar, no dialog, the lobby hidden, the title focused', async () => {
-    mockFetch(routes());
-    window.history.replaceState(null, '', '/sessions/5');
-    const user = userEvent.setup();
-    render(<App />);
-    const title = await screen.findByRole('heading', { name: '周五五排' });
-    await waitFor(() => expect(document.activeElement).toBe(title));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(lobbyHidden()).toBe(true);
-    // Opened straight from outside: 返回 has nothing of ours behind it, so it replaces with '/'.
-    const before = window.history.length;
-    await user.click(screen.getByRole('button', { name: '返回' }));
-    expect(window.location.pathname).toBe('/');
-    expect(window.history.length).toBe(before);
-    expect(await screen.findByRole('heading', { name: /约局/ })).toBeInTheDocument();
-  });
-
-  it('on a desktop is a drawer over the lobby; ✕ closes it', async () => {
-    useDesktopViewport();
-    mockFetch(routes());
-    window.history.replaceState(null, '', '/sessions/5');
-    const user = userEvent.setup();
-    render(<App />);
-    const drawer = await screen.findByRole('dialog');
-    expect(drawer.className).toContain('modal__panel--drawer');
-    expect(await screen.findByRole('heading', { name: '周五五排' })).toBeInTheDocument();
-    expect(lobbyHidden()).toBe(false);
-    expect(screen.queryByRole('button', { name: '返回' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '关闭' }));
-    expect(window.location.pathname).toBe('/');
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
 

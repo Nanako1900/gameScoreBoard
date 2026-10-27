@@ -6,7 +6,6 @@ import { pinnedCaseEyebrow } from '../../src/lib/routeCopy';
 import {
   boardPath,
   BOARD_TABS,
-  SESSION_HISTORY_PATH,
   casePath,
   formatRoute,
   isAppPath,
@@ -16,11 +15,6 @@ import {
   playerPath,
   readEdgState,
   routeCoversHome,
-  rollcallPath,
-  SESSION_NEW_PATH,
-  sessionNewPath,
-  parseAgain,
-  sessionPath,
   type LinkableRoute,
   type Route,
 } from '../../src/lib/routes';
@@ -30,7 +24,6 @@ const NOT_FOUND: Route = { name: 'notFound' };
 describe('parseRoute', () => {
   it('reads the five P1 routes', () => {
     expect(parseRoute('/')).toEqual({ name: 'home' });
-    expect(parseRoute('/sessions/5')).toEqual({ name: 'session', sessionId: 5 });
     expect(parseRoute('/players/p')).toEqual({ name: 'player', userId: 'p' });
     expect(parseRoute('/players/p/cases/7')).toEqual({ name: 'playerCase', userId: 'p', caseId: 7 });
     expect(parseRoute('/cases/7')).toEqual({ name: 'case', caseId: 7 });
@@ -38,11 +31,10 @@ describe('parseRoute', () => {
 
   it('takes only a positive integer id of at most 15 digits', () => {
     for (const bad of ['0', '07', '-1', '1e3', 'abc', '1.5', '1234567890123456', '']) {
-      expect(parseRoute(`/sessions/${bad}`), bad).toEqual(NOT_FOUND);
       expect(parseRoute(`/cases/${bad}`), bad).toEqual(NOT_FOUND);
       expect(parseRoute(`/players/p/cases/${bad}`), bad).toEqual(NOT_FOUND);
     }
-    expect(parseRoute('/sessions/123456789012345')).toEqual({ name: 'session', sessionId: 123456789012345 });
+    expect(parseRoute('/cases/123456789012345')).toEqual({ name: 'case', caseId: 123456789012345 });
   });
 
   it('knows nothing of the later phases’ routes yet', () => {
@@ -73,9 +65,8 @@ describe('parseRoute', () => {
   });
 
   it('forgives exactly one trailing slash', () => {
-    expect(parseRoute('/sessions/5/')).toEqual({ name: 'session', sessionId: 5 });
     expect(parseRoute('/players/p/')).toEqual({ name: 'player', userId: 'p' });
-    expect(parseRoute('/sessions/5//')).toEqual(NOT_FOUND);
+    expect(parseRoute('/players/p//')).toEqual(NOT_FOUND);
     expect(parseRoute('//')).toEqual(NOT_FOUND);
   });
 
@@ -102,7 +93,6 @@ describe('formatRoute and the path builders', () => {
   it('build what parseRoute reads back, never ending in a slash', () => {
     const routes: LinkableRoute[] = [
       { name: 'home' },
-      { name: 'session', sessionId: 5 },
       { name: 'player', userId: 'a/b 选手' },
       { name: 'playerCase', userId: 'a/b', caseId: 7 },
       { name: 'case', caseId: 7 },
@@ -115,7 +105,6 @@ describe('formatRoute and the path builders', () => {
   });
 
   it('encode the user id', () => {
-    expect(sessionPath(5)).toBe('/sessions/5');
     expect(playerPath('a/b')).toBe('/players/a%2Fb');
     expect(playerCasePath('p', 7)).toBe('/players/p/cases/7');
     expect(casePath(7)).toBe('/cases/7');
@@ -129,7 +118,6 @@ describe('routeCoversHome', () => {
     expect(routeCoversHome(NOT_FOUND, 'drawer')).toBe(true);
     expect(routeCoversHome({ name: 'case', caseId: 7 }, 'drawer')).toBe(true);
     for (const route of [
-      { name: 'session', sessionId: 5 },
       { name: 'player', userId: 'p' },
       { name: 'playerCase', userId: 'p', caseId: 7 },
     ] as const) {
@@ -228,7 +216,7 @@ describe('readEdgState — P1-2 fields', () => {
 });
 
 // P3-6: board pages are full pages on every viewport, never drawers.
-describe('board and session history routes', () => {
+describe('board routes', () => {
   it.each([
     ['/board', 'list'], ['/board/', 'list'], ['/board/feed', 'feed'],
     ['/board/report', 'report'], ['/board/rules', 'rules'],
@@ -239,54 +227,20 @@ describe('board and session history routes', () => {
     expect(formatRoute(route)).toBe(boardPath(tab));
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
   });
-  it('recognizes history before the numeric session route', () => {
-    expect(SESSION_HISTORY_PATH).toBe('/sessions/history');
-    const route: LinkableRoute = { name: 'sessionHistory' };
-    expect(parseRoute(SESSION_HISTORY_PATH)).toEqual(route);
-    expect(formatRoute(route)).toBe(SESSION_HISTORY_PATH);
+  it.each(['/board/list', '/board/xyz', '/board/feed/1', '/board//'])('refuses %s', (path) => {
+    expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+});
+
+describe('retired session addresses', () => {
+  it.each(['/sessions', '/sessions/5', '/sessions/new', '/sessions/history', '/sessions/5/rollcall',
+    '/sessions/x/y', '/sessions/0', '/sessions/5//'])('lands %s on the sessions-off page', (path) => {
+    const route = { name: 'sessionGone' } as const;
+    expect(parseRoute(path)).toEqual(route);
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+  it('formats the retired landing route without reviving any feature', () => {
+    expect(formatRoute({ name: 'sessionGone' })).toBe('/sessions');
     expect(BOARD_TABS).toEqual(['list', 'feed', 'report', 'rules']);
-  });
-  it.each(['/board/list', '/board/xyz', '/board/feed/1', '/sessions/history/2', '/board//'])('refuses %s', (path) => {
-    expect(parseRoute(path)).toEqual(NOT_FOUND);
-  });
-});
-
-// P3-5: roll call is a page on every viewport.
-describe('rollcall routes', () => {
-  it('parses, formats and covers the hall', () => {
-    const route: LinkableRoute = { name: 'rollcall', sessionId: 5 };
-    expect(rollcallPath(5)).toBe('/sessions/5/rollcall');
-    expect(parseRoute('/sessions/5/rollcall')).toEqual(route);
-    expect(parseRoute('/sessions/5/rollcall/')).toEqual(route);
-    expect(formatRoute(route)).toBe('/sessions/5/rollcall');
-    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
-  });
-  it.each(['/sessions/07/rollcall', '/sessions/5/rollcall/x', '/sessions/0/rollcall'])('refuses %s', (path) => {
-    expect(parseRoute(path)).toEqual(NOT_FOUND);
-  });
-});
-
-// P3-4: the query is optional prefill, never a separate route.
-describe('new session routes', () => {
-  it('parses and formats the create page before numeric session ids', () => {
-    const route: LinkableRoute = { name: 'sessionNew' };
-    expect(SESSION_NEW_PATH).toBe('/sessions/new');
-    expect(parseRoute('/sessions/new')).toEqual(route);
-    expect(parseRoute('/sessions/new/')).toEqual(route);
-    expect(formatRoute(route)).toBe('/sessions/new');
-    expect(sessionNewPath()).toBe('/sessions/new');
-    expect(sessionNewPath(5)).toBe('/sessions/new?again=5');
-    expect(routeCoversHome(route, 'page')).toBe(true);
-    expect(routeCoversHome(route, 'drawer')).toBe(false);
-  });
-  it.each(['/sessions/new/1', '/sessions/new//', '/sessions/newer'])('refuses %s', (path) => {
-    expect(parseRoute(path)).toEqual(NOT_FOUND);
-  });
-  it('takes only ID_PATTERN in the again query, ignoring other keys', () => {
-    expect(parseAgain('?again=5')).toBe(5);
-    expect(parseAgain('?utm=dc&again=123456789012345')).toBe(123456789012345);
-    for (const bad of ['', '?again=', '?again=0', '?again=07', '?again=-1', '?again=1e3',
-      '?again=1.5', '?again=1234567890123456', '?again=abc', '?session=5']) expect(parseAgain(bad), bad).toBeNull();
   });
 });

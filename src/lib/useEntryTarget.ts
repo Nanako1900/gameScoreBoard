@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, getRecord } from '../api';
 import type { User } from '../types';
-import { DEEP_LINK_PARAMS, readDeepLink, withoutParams } from './deepLink';
+import { DEEP_LINK_PARAMS, hasRetiredSessionLink, readDeepLink, withoutParams } from './deepLink';
 import { navigate } from './router';
-import { HOME_PATH, playerCasePath, sessionPath } from './routes';
-import { CASE_GONE, CASE_UNAVAILABLE } from './routeCopy';
+import { HOME_PATH, playerCasePath } from './routes';
+import { CASE_GONE, CASE_UNAVAILABLE, SESSIONS_OFF } from './routeCopy';
 import type { PinnedCase } from './useCaseLookup';
 import { useLoginResume } from './useLoginResume';
-import type { LoginIntent } from './loginReturnShape';
+import { useToast } from '../components/Toast';
 
 // Old links (spec §2.3, kept forever): the bot's DMs say /?case=N and /?session=N.
 // They are read once, on '/', and translated into the view's own address.
 
 export type EntryTarget =
-  /** /?session=N → '/sessions/N' plus the other parameters. */
-  | { readonly kind: 'path'; readonly path: string }
+  /** /?session=N stays home and explains the retirement. */
+  | { readonly kind: 'sessionGone' }
   /** /?case=N → its subject's page, once GET /api/records/N says who that is. */
   | { readonly kind: 'case'; readonly caseId: number; readonly rest: string };
 
@@ -31,9 +31,6 @@ interface EntryTargetResult {
   /** CASE_GONE / CASE_UNAVAILABLE for the lobby's LinkMissingNotice. */
   readonly linkMissing: string | null;
   readonly dismissLinkMissing: () => void;
-  /** P1-3: the answer clicked before login, for the session page to ask about (never sent). */
-  readonly resume: LoginIntent | null;
-  readonly clearResume: () => void;
 }
 
 /** Everything a target does not carry along; what is left (utm=…) rides to the new address. */
@@ -44,11 +41,8 @@ function readEntryTarget(): EntryTarget | null {
   const { pathname, search } = window.location;
   if (pathname !== HOME_PATH) return null;
   const link = readDeepLink(search);
-  if (link === null) return null;
-  const rest = withoutParams(search, ENTRY_PARAMS);
-  return link.kind === 'session'
-    ? { kind: 'path', path: sessionPath(link.id) + rest }
-    : { kind: 'case', caseId: link.id, rest };
+  if (link !== null) return { kind: 'case', caseId: link.id, rest: withoutParams(search, ENTRY_PARAMS) };
+  return hasRetiredSessionLink(search) ? { kind: 'sessionGone' } : null;
 }
 
 /** case / session always (a bad id too), linked only as the bind's landing; onboarding stays for its own effect. */
@@ -63,7 +57,8 @@ function stripEntryParams(): void {
 
 export function useEntryTarget({ ready, me, blocked, onPinned }: EntryTargetInput): EntryTargetResult {
   // P1-3: edg.return, the second source of an entry target (contract 4.11).
-  const { resume, clearResume } = useLoginResume({ ready, me, isBlocked: blocked });
+  useLoginResume({ ready, me, isBlocked: blocked });
+  const toast = useToast();
   const [target] = useState(readEntryTarget);
   const opened = useRef(false);
   const [linkMissing, setLinkMissing] = useState<string | null>(null);
@@ -76,8 +71,8 @@ export function useEntryTarget({ ready, me, blocked, onPinned }: EntryTargetInpu
   useEffect(() => {
     if (!ready || target === null || opened.current || blocked()) return;
     opened.current = true;
-    if (target.kind === 'path') {
-      navigate(target.path);
+    if (target.kind === 'sessionGone') {
+      toast.show({ message: SESSIONS_OFF });
       return;
     }
     getRecord(target.caseId).then(
@@ -89,12 +84,12 @@ export function useEntryTarget({ ready, me, blocked, onPinned }: EntryTargetInpu
         setLinkMissing(err instanceof ApiError && err.status === NOT_FOUND_STATUS ? CASE_GONE : CASE_UNAVAILABLE);
       },
     );
-  }, [ready, target, blocked, onPinned]);
+  }, [ready, target, blocked, onPinned, toast]);
 
   useEffect(() => {
     if (landing !== null) navigate(landing);
   }, [landing]);
 
   const dismissLinkMissing = useCallback((): void => setLinkMissing(null), []);
-  return { linkMissing, dismissLinkMissing, resume, clearResume };
+  return { linkMissing, dismissLinkMissing };
 }

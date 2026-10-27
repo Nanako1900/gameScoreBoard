@@ -5,6 +5,9 @@ import { CASE_STATUS_LABEL } from '@shared/scoring';
 import type { RecordItem } from '../types';
 import { PENDING_HIDDEN_LABEL, isPendingHidden, violationLabel } from './recordView';
 
+export const SESSIONS_OFF = '约局功能已下线';
+export const SESSIONS_OFF_DESCRIPTION = '约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。';
+
 export const NOT_FOUND_TITLE = '这页不存在';
 export const SESSION_NOT_FOUND = '找不到这局，链接可能写错了。';
 export const PLAYER_NOT_FOUND = '找不到这位选手。';

@@ -14,6 +14,7 @@ export type BoardTab = (typeof BOARD_TABS)[number];
 
 export type Route =
   | { readonly name: 'home' }
+  | { readonly name: 'sessionGone' }
   | { readonly name: 'session'; readonly sessionId: number }
   | { readonly name: 'sessionNew' }
   | { readonly name: 'player'; readonly userId: string }
@@ -99,9 +100,7 @@ function idRoute(name: 'session' | 'case', raw: string): Route {
 
 function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
-  if (segments.length === 2 && head === 'sessions' && first === 'history') return { name: 'sessionHistory' };
-  if (segments.length === 2 && head === 'sessions' && first === 'new') return { name: 'sessionNew' };
-  if (segments.length === 2 && head === 'sessions') return idRoute('session', first);
+  if (head === 'sessions') return { name: 'sessionGone' };
   if (segments.length === 2 && head === 'cases') return idRoute('case', first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
   if (segments.length === 4 && head === 'players' && second === 'cases') return playerCaseRoute(first, third);
@@ -109,10 +108,6 @@ function matchSegments(segments: readonly string[]): Route {
     if (segments.length === 1) return { name: 'board', tab: 'list' };
     const tab = BOARD_TABS.find((value) => value !== 'list' && value === first);
     if (segments.length === 2 && tab) return { name: 'board', tab };
-  }
-  if (segments.length === 3 && head === 'sessions' && second === 'rollcall') {
-    const sessionId = numericId(first);
-    if (sessionId !== null) return { name: 'rollcall', sessionId };
   }
   return NOT_FOUND;
 }
@@ -164,6 +159,8 @@ export function formatRoute(route: LinkableRoute): string {
   switch (route.name) {
     case 'home':
       return HOME_PATH;
+    case 'sessionGone':
+      return '/sessions';
     case 'session':
       return sessionPath(route.sessionId);
     case 'sessionNew':
@@ -189,6 +186,7 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
     case 'home':
       return false;
     case 'notFound':
+    case 'sessionGone':
     case 'case':
     case 'board':
     case 'sessionHistory':

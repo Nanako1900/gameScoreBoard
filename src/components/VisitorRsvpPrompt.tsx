@@ -23,7 +23,6 @@ export function VisitorRsvpPrompt({ sessionId }: VisitorRsvpPromptProps): JSX.El
           <LoginLink
             key={rsvp}
             className="btn btn--ghost btn--sm vrp__choice"
-            intent={{ kind: 'rsvp', sessionId, rsvp }}
           >
             {RSVP_LABEL[rsvp]}
           </LoginLink>

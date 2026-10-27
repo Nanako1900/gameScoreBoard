@@ -1,12 +1,9 @@
 // edg.return (spec §4.1 登录回跳, P1 contract 4.11): where a visitor was, and
-// what they clicked, right before the top-level jump to the login page. Pure —
-// no window, no storage — so tests/unit can hold every rule. The value only
-// ever leads to a question on screen: a saved intent never writes anything.
+// the address they left right before the top-level jump to the login page.
+// Pure: no window, storage or writes. Old intent fields are ignored.
 
-import { isSelfRsvp } from '@shared/attendance';
-import type { SelfRsvp } from '@shared/attendance';
 import { LOGIN_RETURN_TTL_MS, RETURN_PATH_MAX } from './constants';
-import { readDeepLink } from './deepLink';
+import { hasRetiredSessionLink, readDeepLink } from './deepLink';
 import { HOME_PATH, isAppPath, parseRoute } from './routes';
 import type { Route } from './routes';
 
@@ -14,15 +11,11 @@ export const LOGIN_RETURN_KEY = 'edg.return';
 
 const VERSION = 1;
 
-/** The one intent P1 knows: an answer clicked on a session before logging in. */
-export type LoginIntent = { readonly kind: 'rsvp'; readonly sessionId: number; readonly rsvp: SelfRsvp };
-
 export interface LoginReturn {
   readonly v: 1;
   /** pathname + search, never a hash. */
   readonly path: string;
   readonly savedAt: number;
-  readonly intent?: LoginIntent;
 }
 
 /** The route a stored path leads to, or null when it is not a page worth coming back to. */
@@ -42,21 +35,11 @@ function isFresh(savedAt: unknown, now: number): savedAt is number {
   return age >= 0 && age <= LOGIN_RETURN_TTL_MS;
 }
 
-/** A well-formed intent that matches the page it was saved on; anything else is dropped. */
-function readIntent(raw: unknown, route: Route): LoginIntent | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const { kind, sessionId, rsvp } = raw as Record<string, unknown>;
-  if (kind !== 'rsvp' || typeof rsvp !== 'string' || !isSelfRsvp(rsvp)) return null;
-  if (route.name !== 'session' || sessionId !== route.sessionId) return null;
-  return { kind: 'rsvp', sessionId: route.sessionId, rsvp };
+export function serializeLoginReturn(path: string, now: number): string {
+  return JSON.stringify({ v: VERSION, path, savedAt: now });
 }
 
-export function serializeLoginReturn(path: string, intent: LoginIntent | undefined, now: number): string {
-  const base: LoginReturn = { v: VERSION, path, savedAt: now };
-  return JSON.stringify(intent ? { ...base, intent } : base);
-}
-
-/** Validates everything; a bad or stale value is null, a bad intent alone is dropped. Never throws. */
+/** A bad or stale value is null; retired addresses go home. Old extra fields are ignored. */
 export function parseLoginReturn(raw: string | null, now: number): LoginReturn | null {
   if (raw === null) return null;
   let parsed: unknown;
@@ -66,20 +49,14 @@ export function parseLoginReturn(raw: string | null, now: number): LoginReturn |
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
-  const { v, path, savedAt, intent } = parsed as Record<string, unknown>;
+  const { v, path, savedAt } = parsed as Record<string, unknown>;
   if (v !== VERSION || !isFresh(savedAt, now)) return null;
   const route = returnRoute(path);
   if (route === null || typeof path !== 'string') return null;
-  const kept = readIntent(intent, route);
-  return kept ? { v: VERSION, path, savedAt, intent: kept } : { v: VERSION, path, savedAt };
+  return { v: VERSION, path: route.name === 'sessionGone' ? HOME_PATH : path, savedAt };
 }
 
 /** An old ?case= / ?session= link opened this load: it wins over edg.return (contract 4.11). */
 export function hasLegacyTarget(pathname: string, search: string): boolean {
-  return pathname === HOME_PATH && readDeepLink(search) !== null;
-}
-
-/** The answer to point at on session `sessionId`, if the saved intent was about it. */
-export function resumeRsvpFor(intent: LoginIntent | null | undefined, sessionId: number): SelfRsvp | null {
-  return intent && intent.sessionId === sessionId ? intent.rsvp : null;
+  return pathname === HOME_PATH && (readDeepLink(search) !== null || hasRetiredSessionLink(search));
 }

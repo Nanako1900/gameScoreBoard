@@ -122,7 +122,7 @@ function AppMain(): JSX.Element {
   // Old ?case= / ?session= links, once the data is in and the first-run dialog is done
   // (declared after the onboarding effects: it reads onboardingAsked after they ran).
   const entryBlocked = useCallback(() => onboardingOpen || onboardingAsked.current, [onboardingOpen]);
-  const { linkMissing, dismissLinkMissing, resume, clearResume } = useEntryTarget({
+  const { linkMissing, dismissLinkMissing } = useEntryTarget({
     ready: ready !== null,
     me: ready?.me ?? null,
     blocked: entryBlocked,
@@ -305,8 +305,6 @@ function AppMain(): JSX.Element {
         onPinned={setPinned}
         onChanged={handleChanged}
         onOpenStatement={setStatementCase}
-        resume={resume}
-        onResumeDone={clearResume}
       />
 
       <footer className="app__footer" hidden={covered}>

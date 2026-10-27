@@ -7,40 +7,24 @@ import {
   LOGIN_RETURN_KEY,
   hasLegacyTarget,
   parseLoginReturn,
-  resumeRsvpFor,
   serializeLoginReturn,
 } from '../../src/lib/loginReturnShape';
-import type { LoginIntent } from '../../src/lib/loginReturnShape';
 
 const NOW = 1_761_500_000_000;
-const GOING: LoginIntent = { kind: 'rsvp', sessionId: 5, rsvp: 'going' };
+const GOING = { kind: 'rsvp', sessionId: 5, rsvp: 'going' };
 
 /** A stored value as JSON text, with any field overridden or removed (undefined). */
 function stored(fields: Record<string, unknown>): string {
-  return JSON.stringify({ v: 1, path: '/sessions/5', savedAt: NOW, ...fields });
+  return JSON.stringify({ v: 1, path: '/players/p', savedAt: NOW, ...fields });
 }
 
 describe('serializeLoginReturn', () => {
-  it('writes the contract shape, with or without an intent', () => {
-    expect(JSON.parse(serializeLoginReturn('/sessions/5', GOING, NOW))).toEqual({
-      v: 1,
-      path: '/sessions/5',
-      savedAt: NOW,
-      intent: { kind: 'rsvp', sessionId: 5, rsvp: 'going' },
-    });
-    expect(JSON.parse(serializeLoginReturn('/players/p', undefined, NOW))).toEqual({
-      v: 1,
-      path: '/players/p',
-      savedAt: NOW,
-    });
+  it('writes only the return address and timestamp', () => {
+    expect(JSON.parse(serializeLoginReturn('/players/p', NOW))).toEqual({ v: 1, path: '/players/p', savedAt: NOW });
   });
-
-  it('round-trips through parseLoginReturn', () => {
-    expect(parseLoginReturn(serializeLoginReturn('/sessions/5?utm=dc', GOING, NOW), NOW)).toEqual({
-      v: 1,
-      path: '/sessions/5?utm=dc',
-      savedAt: NOW,
-      intent: GOING,
+  it('round-trips a retained address', () => {
+    expect(parseLoginReturn(serializeLoginReturn('/players/p?utm=dc', NOW), NOW)).toEqual({
+      v: 1, path: '/players/p?utm=dc', savedAt: NOW,
     });
   });
 
@@ -77,8 +61,6 @@ describe('parseLoginReturn — the whole value', () => {
 
 describe('parseLoginReturn — the path is the router whitelist', () => {
   it.each([
-    '/sessions/5',
-    '/sessions/5?utm=dc',
     '/players/p',
     '/players/a%2Fb',
     '/players/p/cases/7',
@@ -99,9 +81,6 @@ describe('parseLoginReturn — the path is the router whitelist', () => {
     ['the lobby', '/'],
     ['the lobby with a query', '/?session=5'],
     ['an unknown page', '/xyz'],
-    ['not a positive id', '/sessions/0'],
-    ['a leading zero', '/sessions/07'],
-    ['not a number', '/sessions/abc'],
     ['an exponent', '/cases/1e3'],
     ['a later-phase page', '/me'],
     ['the API', '/api/me'],
@@ -113,56 +92,22 @@ describe('parseLoginReturn — the path is the router whitelist', () => {
   });
 
   it('a path of exactly RETURN_PATH_MAX characters is still fine', () => {
-    const prefix = '/sessions/5?q=';
+    const prefix = '/players/p?q=';
     const path = prefix + 'x'.repeat(RETURN_PATH_MAX - prefix.length);
     expect(path).toHaveLength(RETURN_PATH_MAX);
     expect(parseLoginReturn(stored({ path }), NOW)?.path).toBe(path);
   });
 });
 
-describe('parseLoginReturn — a bad intent is dropped on its own', () => {
-  it('keeps a matching rsvp intent for each answer', () => {
-    for (const rsvp of ['going', 'maybe', 'out'] as const) {
-      const intent = { kind: 'rsvp', sessionId: 5, rsvp };
-      expect(parseLoginReturn(stored({ intent }), NOW)?.intent).toEqual(intent);
-    }
+describe('old stored return values', () => {
+  it('keeps the address while ignoring an old RSVP intent and other extra fields', () => {
+    expect(parseLoginReturn(stored({ intent: { ...GOING, auto: true }, next: 'https://evil.example' }), NOW))
+      .toEqual({ v: 1, path: '/players/p', savedAt: NOW });
   });
-
-  it.each([
-    ['another kind', { kind: 'create', sessionId: 5, rsvp: 'going' }],
-    ['invited is not an answer', { kind: 'rsvp', sessionId: 5, rsvp: 'invited' }],
-    ['an unknown answer', { kind: 'rsvp', sessionId: 5, rsvp: 'yes' }],
-    ['another session', { kind: 'rsvp', sessionId: 6, rsvp: 'going' }],
-    ['the id as a string', { kind: 'rsvp', sessionId: '5', rsvp: 'going' }],
-    ['not an object', 'rsvp:going'],
-    ['null', null],
-  ])('%s → the path stays, the intent goes', (_label, intent) => {
-    const parsed = parseLoginReturn(stored({ intent }), NOW);
-    expect(parsed).toEqual({ v: 1, path: '/sessions/5', savedAt: NOW });
-    expect(parsed).not.toHaveProperty('intent');
-  });
-
-  it('an rsvp intent on a page that is not a session is dropped', () => {
-    const parsed = parseLoginReturn(stored({ path: '/players/p', intent: GOING }), NOW);
-    expect(parsed).toEqual({ v: 1, path: '/players/p', savedAt: NOW });
-  });
-
-  it('extra fields never come back out', () => {
-    const parsed = parseLoginReturn(
-      stored({ intent: { ...GOING, auto: true }, next: 'https://evil.example' }),
-      NOW,
-    );
-    expect(parsed).toEqual({ v: 1, path: '/sessions/5', savedAt: NOW, intent: GOING });
-  });
-});
-
-describe('resumeRsvpFor', () => {
-  it('only answers for the session the intent was about', () => {
-    expect(resumeRsvpFor(GOING, 5)).toBe('going');
-    expect(resumeRsvpFor(GOING, 6)).toBeNull();
-    expect(resumeRsvpFor(null, 5)).toBeNull();
-    expect(resumeRsvpFor(undefined, 5)).toBeNull();
-  });
+  it.each(['/sessions', '/sessions/5', '/sessions/5?utm=dc', '/sessions/new?again=5', '/sessions/x/y'])
+    ('maps retired address %s to home and ignores its intent', (path) => {
+      expect(parseLoginReturn(stored({ path, intent: GOING }), NOW)).toEqual({ v: 1, path: '/', savedAt: NOW });
+    });
 });
 
 describe('hasLegacyTarget', () => {
@@ -173,12 +118,5 @@ describe('hasLegacyTarget', () => {
     expect(hasLegacyTarget('/', '?onboarding=1')).toBe(false);
     expect(hasLegacyTarget('/', '')).toBe(false);
     expect(hasLegacyTarget('/sessions/5', '?session=3')).toBe(false);
-  });
-});
-
-// P3-4: preserve both the create address and its optional repeat context.
-describe('create page login return', () => {
-  it.each(['/sessions/new', '/sessions/new?again=5'])('keeps %s', (path) => {
-    expect(parseLoginReturn(stored({ path }), NOW)?.path).toBe(path);
   });
 });
