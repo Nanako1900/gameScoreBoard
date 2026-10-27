@@ -5,6 +5,7 @@
 // immediately at their base value because nobody contests being given points.
 
 import {
+  APPEAL_MAX,
   MAX_NARRATIVE_LEN,
   MIN_CLAIM_LEN,
   REVOKE_WINDOW_MS,
@@ -394,7 +395,8 @@ export async function appealCase(
   if (rec.status !== 'decided') {
     throw new ApiError(400, '只有已判决的案件可以申诉');
   }
-  const text = reason?.trim().slice(0, MAX_NARRATIVE_LEN) ?? '';
+  // Same cap as the bot's modal and the web's maxLength (shared APPEAL_MAX).
+  const text = reason?.trim().slice(0, APPEAL_MAX) ?? '';
   const res = await db
     .prepare(
       "UPDATE records SET status = 'appealed', appeal_reason = ? WHERE id = ? AND status = 'decided'",

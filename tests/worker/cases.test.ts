@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { VIOLATION_MAP, WEEKLY_BONUS_CAP } from '../../shared/scoring';
+import { APPEAL_MAX, VIOLATION_MAP, WEEKLY_BONUS_CAP } from '../../shared/scoring';
 import {
   appealCase,
   fileCase,
@@ -469,6 +469,13 @@ describe('post-verdict actions', () => {
     const { subject, record } = await decidedCase();
     const out = await appealCase(env.DB, subject, record.id, '   ');
     expect(out.appeal_reason).toBeNull();
+  });
+
+  it('cuts an appeal reason to APPEAL_MAX, the same cap as the bot (spec §3.10)', async () => {
+    const { subject, record } = await decidedCase();
+    const out = await appealCase(env.DB, subject, record.id, `  ${'长'.repeat(APPEAL_MAX + 20)}  `);
+    expect(out.appeal_reason?.length).toBe(APPEAL_MAX);
+    expect(out.appeal_reason).toBe('长'.repeat(APPEAL_MAX));
   });
 
   it('only the subject may appeal', async () => {
