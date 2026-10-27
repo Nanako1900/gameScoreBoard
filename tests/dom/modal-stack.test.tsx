@@ -97,3 +97,165 @@ describe('modalStack', () => {
     expect(root).not.toHaveAttribute('inert');
   });
 });
+
+/**
+ * SessionDetailDialog → RollCallDialog in miniature: the inner dialog is a sibling
+ * of the outer one, both open at once. Before the stack, both document listeners
+ * acted on every key: Escape closed both (the roll-call result was lost) and the
+ * outer trap yanked Tab focus back into the outer panel.
+ */
+function Nested({
+  onOuterClose = (): void => {},
+  onInnerClose = (): void => {},
+}: {
+  onOuterClose?: () => void;
+  onInnerClose?: () => void;
+}) {
+  const [outer, setOuter] = useState(true);
+  const [inner, setInner] = useState(false);
+  return (
+    <>
+      <Modal
+        open={outer}
+        onClose={() => {
+          onOuterClose();
+          setOuter(false);
+        }}
+        labelledBy="outer-title"
+      >
+        <h2 id="outer-title">外层</h2>
+        <button type="button" onClick={() => setInner(true)}>
+          打开内层
+        </button>
+        <button type="button">外层按钮</button>
+      </Modal>
+      <Modal
+        open={inner}
+        onClose={() => {
+          onInnerClose();
+          setInner(false);
+        }}
+        labelledBy="inner-title"
+      >
+        <h2 id="inner-title">内层</h2>
+        <button type="button">内层一</button>
+        <button type="button">内层二</button>
+      </Modal>
+    </>
+  );
+}
+
+describe('Modal — nested layers', () => {
+  it('Escape closes only the top layer, then the next one', async () => {
+    const user = userEvent.setup();
+    const onOuterClose = vi.fn();
+    const onInnerClose = vi.fn();
+    render(<Nested onOuterClose={onOuterClose} onInnerClose={onInnerClose} />);
+
+    await user.click(screen.getByRole('button', { name: '打开内层' }));
+    expect(screen.getByRole('dialog', { name: '内层' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: '内层' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '外层' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(onOuterClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('Tab and Shift+Tab cycle only inside the top layer', async () => {
+    const user = userEvent.setup();
+    render(<Nested />);
+    await user.click(screen.getByRole('button', { name: '打开内层' }));
+    const inner = screen.getByRole('dialog', { name: '内层' });
+    const focusedName = (): string | null => {
+      expect(inner.contains(document.activeElement)).toBe(true);
+      return document.activeElement?.textContent ?? null;
+    };
+
+    // Focus starts on the inner ✕. Before the stack, the outer trap grabbed every
+    // Tab and the inner trap grabbed it back, so focus never left the ✕.
+    const forward: (string | null)[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      await user.tab();
+      forward.push(focusedName());
+    }
+    expect(forward).toEqual(['内层一', '内层二', '✕', '内层一']);
+
+    const backward: (string | null)[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      await user.tab({ shift: true });
+      backward.push(focusedName());
+    }
+    expect(backward).toEqual(['✕', '内层二', '内层一']);
+  });
+
+  it('closing the top layer returns focus to its trigger in the layer below', async () => {
+    const user = userEvent.setup();
+    render(<Nested />);
+    const trigger = screen.getByRole('button', { name: '打开内层' });
+    await user.click(trigger);
+    expect(within(screen.getByRole('dialog', { name: '内层' })).getByRole('button', { name: '关闭' })).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+    expect(layerCount()).toBe(1);
+  });
+
+  it('unlocks body scroll when both layers unmount in the same commit', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Nested />);
+    await user.click(screen.getByRole('button', { name: '打开内层' }));
+    expect(document.body.style.overflow).toBe('hidden');
+
+    // React runs the outer cleanup first; per-Modal save/restore left 'hidden' behind.
+    unmount();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('keeps #root inert until the last layer closes', async () => {
+    const root = makeRoot();
+    const user = userEvent.setup();
+    render(<Nested />, { container: root });
+    // Everything Nested renders is portaled to <body>, so role queries still see it.
+    expect(root).toHaveAttribute('inert');
+
+    await user.click(screen.getByRole('button', { name: '打开内层' }));
+    await user.keyboard('{Escape}');
+    expect(root).toHaveAttribute('inert');
+
+    await user.keyboard('{Escape}');
+    expect(root).not.toHaveAttribute('inert');
+    expect(root).not.toHaveAttribute('aria-hidden');
+  });
+
+  it('StrictMode’s mount → unmount → mount leaves one layer per open dialog', async () => {
+    const root = makeRoot();
+    const user = userEvent.setup();
+    const onOuterClose = vi.fn();
+    render(
+      <StrictMode>
+        <Nested onOuterClose={onOuterClose} />
+      </StrictMode>,
+      { container: root },
+    );
+    // Dev-mode effects ran twice; ids are never reused, so the re-run did not stack a ghost layer.
+    expect(layerCount()).toBe(1);
+    expect(root).toHaveAttribute('inert');
+
+    await user.click(screen.getByRole('button', { name: '打开内层' }));
+    expect(layerCount()).toBe(2);
+    await user.keyboard('{Escape}');
+    expect(onOuterClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '打开内层' })).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(onOuterClose).toHaveBeenCalledTimes(1);
+    expect(layerCount()).toBe(0);
+    expect(root).not.toHaveAttribute('inert');
+    expect(document.body.style.overflow).toBe('');
+  });
+});
