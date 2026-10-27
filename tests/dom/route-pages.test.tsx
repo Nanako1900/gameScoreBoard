@@ -168,3 +168,40 @@ describe('building blocks', () => {
     expect(screen.getByText('drawer')).toBeInTheDocument();
   });
 });
+
+describe('SessionDetailDialog — page and drawer', () => {
+  it('page: PageBar first, no dialog, the title focused once loaded', async () => {
+    mockFetch(routes());
+    const onClose = vi.fn();
+    render(<SessionDetailDialog variant="page" sessionId={5} me={null} onClose={onClose} onChanged={() => {}} />);
+    const title = await screen.findByRole('heading', { name: '周五五排' });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.querySelector('.modal-page')?.firstElementChild).toHaveClass('pagebar');
+    await userEvent.setup().click(screen.getByRole('button', { name: '返回' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('drawer: a dialog with Modal’s own ✕ and no PageBar', async () => {
+    mockFetch(routes());
+    render(<SessionDetailDialog variant="drawer" sessionId={5} me={null} onClose={() => {}} onChanged={() => {}} />);
+    const dialog = await screen.findByRole('dialog', { name: '周五五排' });
+    expect(dialog).toHaveClass('modal__panel--drawer');
+    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '返回' })).not.toBeInTheDocument();
+  });
+
+  it('a 404 is NotFound on a page — and still today’s line in the center dialog', async () => {
+    mockFetch(routes());
+    const page = render(
+      <SessionDetailDialog variant="page" sessionId={999} me={null} onClose={() => {}} onChanged={() => {}} />,
+    );
+    const heading = await screen.findByRole('heading', { name: '找不到这局，链接可能写错了。' });
+    expect(heading).toHaveAttribute('id', 'session-detail-title');
+    page.unmount();
+
+    render(<SessionDetailDialog sessionId={999} me={null} onClose={() => {}} onChanged={() => {}} />);
+    expect(await screen.findByText('unrouted GET /api/sessions/999')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '找不到这局，链接可能写错了。' })).not.toBeInTheDocument();
+  });
+});
