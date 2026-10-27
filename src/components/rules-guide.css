@@ -1,0 +1,12 @@
+/* Four short explanations, followed by a precise glossary. */
+.guide { padding: 1rem 1.15rem; display: grid; gap: 1rem; }
+.guide > h2 { font-size: var(--fs-lg); }
+.guide__cards { display: grid; gap: 0.65rem; }
+.guide__cards article { padding: 0.8rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel-2); }
+.guide h3 { font-size: var(--fs-sm); margin-bottom: 0.3rem; }
+.guide p, .gloss dd { color: var(--muted); font-size: var(--fs-md); line-height: 1.65; }
+.gloss dl { display: grid; gap: 0.65rem; }
+.gloss dt { font-size: var(--fs-sm); font-weight: 600; }
+.gloss dd { margin: 0.2rem 0 0; }
+.gloss > p { margin-top: 0.7rem; }
+@media (min-width: 601px) { .guide__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

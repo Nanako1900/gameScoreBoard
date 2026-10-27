@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { VIOLATIONS, TIERS } from '@shared/scoring';
 import type { Config } from '../types';
 import './rules-panel.css';
@@ -8,12 +8,14 @@ interface RulesPanelProps {
   /** Controlled open state (the welcome card's 30 秒看懂 opens it). Omit both to keep the panel's own state. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  alwaysOpen?: boolean;
 }
 
 /** Collapsible rules reference: violations table, tier ladder, weekly heal note. */
-export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelProps): JSX.Element {
+export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = false }: RulesPanelProps): JSX.Element {
+  const bodyId = useId();
   const [openState, setOpenState] = useState(false);
-  const open = openProp ?? openState;
+  const open = alwaysOpen || (openProp ?? openState);
   const toggle = (): void => {
     const next = !open;
     if (openProp === undefined) {
@@ -23,13 +25,13 @@ export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelP
   };
 
   return (
-    <section className="rules panel" id="rules">
+    <section className="rules panel" id={alwaysOpen ? undefined : 'rules'}>
       <h2 className="rules__heading">
-        <button
+        {alwaysOpen ? '计分规则' : <button
           type="button"
           className="rules__toggle"
           aria-expanded={open}
-          aria-controls="rules-body"
+          aria-controls={bodyId}
           onClick={toggle}
         >
           <span className="rules__toggle-label">
@@ -38,11 +40,11 @@ export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelP
           <span className={`rules__chevron${open ? ' rules__chevron--open' : ''}`} aria-hidden="true">
             ▾
           </span>
-        </button>
+        </button>}
       </h2>
 
       {open && (
-        <div className="rules__body" id="rules-body">
+        <div className="rules__body" id={bodyId}>
           <p className="rules__heal">
             每位选手每周一 0 点自动恢复
             <strong className="rules__heal-num tabular"> +{config.weeklyHeal} </strong>
@@ -129,7 +131,6 @@ export function RulesPanel({ config, open: openProp, onOpenChange }: RulesPanelP
                     </span>
                     <span className="rules__tier-name">{t.name}</span>
                     <span className="rules__tier-range tabular">≥ {t.min}</span>
-                    <span className="rules__tier-blurb">{t.blurb}</span>
                   </li>
                 ))}
               </ul>

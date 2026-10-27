@@ -1,0 +1,10 @@
+/* Grouped attendance, without scores or account-binding information. */
+.roster, .roster__group { display: grid; gap: 0.5rem; }
+.roster { gap: 0.8rem; }
+.roster h3 { font-size: var(--fs-lg); }
+.roster__label { color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.roster ul { display: grid; gap: 0.4rem; list-style: none; padding: 0; margin: 0; }
+.roster__person { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; padding: 0.4rem 0.6rem; background: var(--panel-2); border-radius: var(--r-sm); font-size: var(--fs-sm); }
+.roster__name { font-weight: 600; overflow-wrap: anywhere; }
+.roster__person--out, .roster__attendance, .roster__person > span:not(.roster__name) { color: var(--muted); }
+.roster__said { display: inline-flex; align-items: center; gap: 0.25rem; }

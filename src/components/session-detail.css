@@ -21,7 +21,7 @@
   font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--gold);
+  color: var(--text);
 }
 
 .sdt__title {
@@ -89,63 +89,6 @@
   color: var(--muted);
 }
 
-.sdt__players {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.sdt-player {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--r-sm);
-  background: rgba(0, 0, 0, 0.18);
-  font-size: var(--text-sm);
-}
-
-.sdt-player--out {
-  opacity: 0.55;
-}
-
-.sdt-player__name {
-  flex: 1;
-  min-width: 0;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sdt-player__rsvp,
-.sdt-player__att {
-  flex: none;
-  padding: 0.08em 0.55em;
-  border-radius: var(--r-pill);
-  font-size: var(--text-xs);
-  color: var(--muted);
-  background: var(--panel-2);
-}
-
-.sdt-player__att--on_time {
-  color: var(--up);
-  background: rgba(61, 220, 132, 0.12);
-}
-
-.sdt-player__att--late {
-  color: var(--gold);
-  background: rgba(245, 197, 66, 0.12);
-}
-
-.sdt-player__att--no_show,
-.sdt-player__att--left_early {
-  color: var(--down);
-  background: rgba(229, 72, 77, 0.12);
-}
-
 .sdt__records {
   display: grid;
   gap: 0.6rem;
@@ -206,3 +149,7 @@
     border-color: var(--gold);
   }
 }
+
+/* P3-1 — the clock and a cancellation are plain text. */
+.sdt__time-detail, .sdt__cancelled { color: var(--muted); font-size: var(--text-sm); }
+.sdt__cancelled { display: grid; gap: 0.3rem; }

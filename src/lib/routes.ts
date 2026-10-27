@@ -1,7 +1,7 @@
 // src/lib/routes.ts — the app's addresses (spec §2.2) as data. Pure: no window,
 // no document, no storage, no React, so tests/unit can import it.
 //
-// P1 knows five routes; everything else is NotFound. Later phases add members to
+// P1 + P3 routes; everything else is NotFound. Later phases add members to
 // `Route` and never change the ones here. No route starts with /api, /auth or
 // /link: those belong to the API, and the SPA only ever sees them when the
 // hosting is misconfigured.
@@ -9,13 +9,20 @@
 import { HISTORY_SHEET_NAME_MAX, USER_ID_MAX } from './constants';
 import { ID_PATTERN } from './deepLink';
 
+export const BOARD_TABS = ['list', 'feed', 'report', 'rules'] as const;
+export type BoardTab = (typeof BOARD_TABS)[number];
+
 export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'session'; readonly sessionId: number }
+  | { readonly name: 'sessionNew' }
   | { readonly name: 'player'; readonly userId: string }
   | { readonly name: 'playerCase'; readonly userId: string; readonly caseId: number }
   /** Alias: look the case up, then replace the address with its playerCase one. */
   | { readonly name: 'case'; readonly caseId: number }
+  | { readonly name: 'board'; readonly tab: BoardTab }
+  | { readonly name: 'sessionHistory' }
+  | { readonly name: 'rollcall'; readonly sessionId: number }
   | { readonly name: 'notFound' };
 
 export type LinkableRoute = Exclude<Route, { name: 'notFound' }>;
@@ -36,6 +43,8 @@ export interface EdgHistoryState {
 }
 
 export const HOME_PATH = '/';
+export const SESSION_HISTORY_PATH = '/sessions/history';
+export const SESSION_NEW_PATH = '/sessions/new';
 export const RESERVED_PREFIXES = ['/api', '/auth', '/link'] as const;
 
 const HOME: Route = { name: 'home' };
@@ -90,10 +99,21 @@ function idRoute(name: 'session' | 'case', raw: string): Route {
 
 function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
+  if (segments.length === 2 && head === 'sessions' && first === 'history') return { name: 'sessionHistory' };
+  if (segments.length === 2 && head === 'sessions' && first === 'new') return { name: 'sessionNew' };
   if (segments.length === 2 && head === 'sessions') return idRoute('session', first);
   if (segments.length === 2 && head === 'cases') return idRoute('case', first);
   if (segments.length === 2 && head === 'players') return playerRoute(first);
   if (segments.length === 4 && head === 'players' && second === 'cases') return playerCaseRoute(first, third);
+  if (head === 'board') {
+    if (segments.length === 1) return { name: 'board', tab: 'list' };
+    const tab = BOARD_TABS.find((value) => value !== 'list' && value === first);
+    if (segments.length === 2 && tab) return { name: 'board', tab };
+  }
+  if (segments.length === 3 && head === 'sessions' && second === 'rollcall') {
+    const sessionId = numericId(first);
+    if (sessionId !== null) return { name: 'rollcall', sessionId };
+  }
   return NOT_FOUND;
 }
 
@@ -109,6 +129,16 @@ export function sessionPath(sessionId: number): string {
   return `/sessions/${sessionId}`;
 }
 
+export function sessionNewPath(again?: number): string {
+  return again === undefined ? SESSION_NEW_PATH : `${SESSION_NEW_PATH}?again=${again}`;
+}
+
+/** Optional repeat context is independent of the pathname and accepts only canonical ids. */
+export function parseAgain(search: string): number | null {
+  const value = new URLSearchParams(search).get('again');
+  return value !== null && ID_PATTERN.test(value) ? Number(value) : null;
+}
+
 export function playerPath(userId: string): string {
   return `/players/${encodeURIComponent(userId)}`;
 }
@@ -121,6 +151,14 @@ export function casePath(caseId: number): string {
   return `/cases/${caseId}`;
 }
 
+export function boardPath(tab: BoardTab): string {
+  return tab === 'list' ? '/board' : `/board/${tab}`;
+}
+
+export function rollcallPath(sessionId: number): string {
+  return `${sessionPath(sessionId)}/rollcall`;
+}
+
 /** Never ends in `/` (except the home page itself). */
 export function formatRoute(route: LinkableRoute): string {
   switch (route.name) {
@@ -128,12 +166,20 @@ export function formatRoute(route: LinkableRoute): string {
       return HOME_PATH;
     case 'session':
       return sessionPath(route.sessionId);
+    case 'sessionNew':
+      return SESSION_NEW_PATH;
     case 'player':
       return playerPath(route.userId);
     case 'playerCase':
       return playerCasePath(route.userId, route.caseId);
     case 'case':
       return casePath(route.caseId);
+    case 'board':
+      return boardPath(route.tab);
+    case 'sessionHistory':
+      return SESSION_HISTORY_PATH;
+    case 'rollcall':
+      return rollcallPath(route.sessionId);
   }
 }
 
@@ -144,6 +190,9 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
       return false;
     case 'notFound':
     case 'case':
+    case 'board':
+    case 'sessionHistory':
+    case 'rollcall':
       return true;
     default:
       return layout === 'page';

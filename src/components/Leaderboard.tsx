@@ -1,12 +1,16 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { PublicUser } from '../types';
 import { competitionRanks } from '../lib/rank';
 import { Avatar } from './Avatar';
 import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
+import { Link } from './Link';
 import './leaderboard.css';
 
 interface LeaderboardProps {
+  title?: string;
+  limit?: number;
+  moreTo?: string;
   participants: PublicUser[];
   /** subject id -> net score change accumulated this week (from the records feed). */
   trends: Record<string, number>;
@@ -82,44 +86,24 @@ function Row({ player, rank, trend, count, isMe, onSelect }: RowProps): JSX.Elem
   );
 }
 
-export function Leaderboard({
-  participants,
-  trends,
-  counts,
-  onSelect,
-  meId = null,
-  highlights,
-}: LeaderboardProps): JSX.Element {
-  const ranks = competitionRanks(participants.map((p) => p.score));
-  return (
-    <section className="lb panel" aria-labelledby="lb-heading">
-      <header className="lb__head">
-        <h2 id="lb-heading" className="lb__title">
-          信誉榜
-        </h2>
-        <span className="lb__count">{participants.length} 位选手</span>
-      </header>
-
-      {highlights}
-
-      {participants.length === 0 ? (
-        <p className="lb__empty">还没有上榜选手，登录后成为选手即可上榜。</p>
-      ) : (
-        <ol className="lb__list">
-          {participants.map((p, index) => (
-            <li key={p.id}>
-              <Row
-                player={p}
-                rank={ranks[index]}
-                trend={trends[p.id] ?? 0}
-                count={counts[p.id] ?? 0}
-                isMe={meId !== null && p.id === meId}
-                onSelect={onSelect}
-              />
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  );
+function BoardRows({ props, ranks }: { props: LeaderboardProps; ranks: number[] }): JSX.Element {
+  const shown = props.limit === undefined ? props.participants : props.participants.slice(0, props.limit);
+  const mine = props.participants.findIndex((p) => p.id === props.meId);
+  const extra = mine >= shown.length && mine >= 0;
+  const row = (p: PublicUser, index: number): JSX.Element => <li key={p.id}><Row player={p} rank={ranks[index]}
+    trend={props.trends[p.id] ?? 0} count={props.counts[p.id] ?? 0} isMe={props.meId === p.id} onSelect={props.onSelect} /></li>;
+  return <ol className="lb__list">{shown.map(row)}{extra && <><li className="lb__ellipsis" aria-hidden="true">…</li>
+    {row(props.participants[mine], mine)}</>}</ol>;
+}
+export function Leaderboard(props: LeaderboardProps): JSX.Element {
+  const headingId = useId();
+  const ranks = competitionRanks(props.participants.map((p) => p.score));
+  return <section className={`lb panel${props.limit !== undefined ? ' lb--mini' : ''}`} aria-labelledby={headingId}>
+    <header className="lb__head"><h2 id={headingId} className="lb__title">{props.title ?? '信誉榜'}</h2>
+      <span className="lb__count">{props.participants.length} 位选手</span>
+      {props.moreTo && <Link className="lb__more" to={props.moreTo} aria-label="完整榜">完整榜 ›</Link>}
+    </header>{props.highlights}
+    {props.participants.length === 0 ? <p className="lb__empty">还没有上榜选手，登录后成为选手即可上榜。</p>
+      : <BoardRows props={props} ranks={ranks} />}
+  </section>;
 }

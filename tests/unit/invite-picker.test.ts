@@ -7,7 +7,7 @@ import {
   MAX_SESSION_ROSTER,
   type Rsvp,
 } from '@shared/attendance';
-import { inviteGroups, inviteToast, toggleInvite } from '../../src/lib/invitePicker';
+import { inviteGroups, inviteToast, toggleInvite, pickerGroups, lastLineup, pickLineup } from '../../src/lib/invitePicker';
 import type { InvitableUser, SessionPlayer } from '../../src/types';
 
 function user(id: string, isParticipant = true): InvitableUser {
@@ -93,5 +93,34 @@ describe('the limits the sheet and the server share', () => {
     expect(MAX_INVITES).toBe(20);
     expect(MAX_SESSION_ROSTER).toBe(50);
     expect(INVITES_PER_ORGANIZER).toBe(3);
+  });
+});
+
+
+// P3-3: recent groups and the last complete lineup.
+describe('full picker rules', () => {
+  const recent = (id: string, at: string, board = true): InvitableUser => ({ ...user(id, board), last_played_with_me_at: at });
+  it('puts recent people first without duplication, keeping server order and membership reasons', () => {
+    const rows = [recent('z', '2026-10-27'), recent('x', '2026-10-26', false), user('b'), user('c', false)];
+    const groups = pickerGroups(rows, [player('z', 'going'), player('x', 'out')]);
+    expect(groups.recent.map((r) => [r.user.id, r.state])).toEqual([['z', 'in'], ['x', 'out']]);
+    expect(groups.onBoard.map((r) => r.user.id)).toEqual(['b']);
+    expect(groups.others.map((r) => r.user.id)).toEqual(['c']);
+  });
+  it('filters names without case sensitivity and keeps empty groups empty', () => {
+    const alice = { ...user('a'), username: 'ALice' };
+    expect(pickerGroups([alice, user('b')], [], 'LiC').onBoard.map((r) => r.user.id)).toEqual(['a']);
+    expect(pickerGroups([], [], 'a')).toEqual({ recent: [], onBoard: [], others: [] });
+  });
+  it('takes only people from the latest actual session, capped at MAX_INVITES', () => {
+    expect(lastLineup([recent('a', '2026-10-26'), recent('b', '2026-10-27'), recent('c', '2026-10-27'), user('d')])).toEqual(['b', 'c']);
+    expect(lastLineup([user('a')])).toEqual([]);
+    expect(lastLineup(Array.from({ length: MAX_INVITES + 1 }, (_, i) => recent(String(i), '2026-10-27')))).toHaveLength(MAX_INVITES);
+  });
+  it('unions the last lineup with selected people, accepting only free ids up to the cap', () => {
+    const selected = ['a'];
+    expect(pickLineup(selected, ['a', 'b', 'c', 'd'], ['a', 'c', 'd'], 2)).toEqual(['a', 'c']);
+    expect(selected).toEqual(['a']);
+    expect(pickLineup([], ['taken', 'out'], [])).toEqual([]);
   });
 });

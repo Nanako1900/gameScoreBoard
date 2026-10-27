@@ -388,11 +388,18 @@ describe('App — the weekly reset passes with the page open', () => {
 });
 
 describe('App — tab title', () => {
-  it('signed in with things to do: the same URLs plus the two follow-ups, and (N) in the tab title', async () => {
+  it('signed in with things to do: the same URLs plus the follow-ups and the inbox’s reads, and (N) in the tab title', async () => {
     const calls = mockFetch(
       routes({
         'GET /api/me': () => json(200, { user: ADMIN, pending: { statements: 2, appeals: 1 } }),
-        'GET /api/records?limit=20&mine=pending': () => json(200, { records: [] }),
+        'GET /api/records?limit=20&mine=pending': () => json(200, { records: [1, 2].map((id) => ({
+          id, subject: ADMIN, reporter: PLAYER, type: 'no_show', delta: 0, note: null, claim: '未到场', claim_summary: null,
+          classified_by: 'human', escalation_suggested: false, session_id: null, statement: null, statement_at: null,
+          appeal_reason: null, deadline_at: new Date(START + id * MINUTE).toISOString(), status: 'awaiting_statement',
+          verdict: null, range: { min: -20, max: -10, base: -15 }, created_at: new Date(START).toISOString(),
+        })) }),
+        'GET /api/me/discord': () => json(404, { error: 'unsupported' }),
+        'GET /api/records?limit=50&status=appealed': () => json(200, { records: [] }),
         'GET /api/me/invites': () => json(200, { sessions: [] }),
       }),
     );
@@ -409,6 +416,9 @@ describe('App — tab title', () => {
         '/api/sessions?scope=upcoming',
         '/api/records?limit=20&mine=pending',
         '/api/me/invites',
+        '/api/sessions?scope=mine',
+        '/api/me/discord',
+        '/api/records?limit=50&status=appealed',
       ]),
     );
     unmount();

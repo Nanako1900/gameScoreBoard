@@ -14,12 +14,18 @@ import { weekStartLocal, weekStartUtcSql } from './time';
 import { statementWindowHours } from './case-limits';
 
 const DAY_MS = 86_400_000;
+// The first event that applied this case's score is its verdict time. Legacy
+// rows and zero-delta verdicts without an event retain their filing time.
+const VERDICT_TIME_SQL = `COALESCE(
+  (SELECT MIN(e.created_at) FROM score_events e
+    WHERE e.user_id = r.subject_id AND e.reason = 'record:' || CAST(r.id AS TEXT)),
+  r.created_at)`;
 
 /**
  * Last week's report is written from Monday 10:30 on (board time), not at
  * midnight — so a report pushed to the channel (P8) does not wake anyone up —
- * and once last week's cases are judged (see lastWeekStillOpen), so a case
- * filed late on Sunday is counted in the week it was filed.
+ * and once last week's cases are judged (see lastWeekStillOpen). The generation
+ * gate stays the same; figures count the week of the first verdict event.
  */
 export const REPORT_DUE_AFTER_MS = (10 * 60 + 30) * 60_000;
 
@@ -108,16 +114,16 @@ export async function computeStats(
             COALESCE(SUM(CASE WHEN delta < 0 THEN delta ELSE 0 END), 0) AS total,
             COALESCE(SUM(CASE WHEN statement IS NULL AND verdict_source IN ('ai','fallback')
                               THEN 1 ELSE 0 END), 0) AS absent
-       FROM records
-      WHERE created_at >= ? AND created_at < ? AND status IN ('decided','appealed')`,
+       FROM records r
+      WHERE ${VERDICT_TIME_SQL} >= ? AND ${VERDICT_TIME_SQL} < ? AND status IN ('decided','appealed')`,
     [from, to],
   );
 
   const collapsed = await firstRow<{ n: number }>(
     db,
-    `SELECT COUNT(DISTINCT session_id) AS n FROM records
+    `SELECT COUNT(DISTINCT session_id) AS n FROM records r
       WHERE session_id IS NOT NULL AND type = 'no_show_group'
-        AND created_at >= ? AND created_at < ? AND status IN ('decided','appealed')`,
+        AND ${VERDICT_TIME_SQL} >= ? AND ${VERDICT_TIME_SQL} < ? AND status IN ('decided','appealed')`,
     [from, to],
   );
 
@@ -144,7 +150,7 @@ export async function computeStats(
     .prepare(
       `SELECT COALESCE(u.display_name, u.username) AS name, r.type AS type, r.delta AS delta
          FROM records r JOIN users u ON u.id = r.subject_id
-        WHERE r.created_at >= ? AND r.created_at < ?
+        WHERE ${VERDICT_TIME_SQL} >= ? AND ${VERDICT_TIME_SQL} < ?
           AND r.status IN ('decided','appealed')
           AND r.verdict_source IN ('ai','fallback')
           AND r.delta < 0`,
@@ -192,6 +198,7 @@ export async function computeStats(
   );
 
   return {
+    basis: 'verdict',
     weekStart,
     weekEnd,
     sessionsPlayed: sessions?.played ?? 0,

@@ -103,7 +103,7 @@ describe('parseLoginReturn — the path is the router whitelist', () => {
     ['a leading zero', '/sessions/07'],
     ['not a number', '/sessions/abc'],
     ['an exponent', '/cases/1e3'],
-    ['a later-phase page', '/sessions/new'],
+    ['a later-phase page', '/me'],
     ['the API', '/api/me'],
     ['the login itself', '/auth/login'],
     ['the Discord link flow', '/link/discord'],
@@ -173,5 +173,12 @@ describe('hasLegacyTarget', () => {
     expect(hasLegacyTarget('/', '?onboarding=1')).toBe(false);
     expect(hasLegacyTarget('/', '')).toBe(false);
     expect(hasLegacyTarget('/sessions/5', '?session=3')).toBe(false);
+  });
+});
+
+// P3-4: preserve both the create address and its optional repeat context.
+describe('create page login return', () => {
+  it.each(['/sessions/new', '/sessions/new?again=5'])('keeps %s', (path) => {
+    expect(parseLoginReturn(stored({ path }), NOW)?.path).toBe(path);
   });
 });

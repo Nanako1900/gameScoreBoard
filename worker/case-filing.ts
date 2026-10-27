@@ -10,6 +10,7 @@ import {
   MIN_CLAIM_LEN,
   isValidViolationType,
   needsTrial,
+  isFilingJudge,
   type ViolationType,
 } from '../shared/scoring';
 import type { Env, RecordItem, User } from './types';
@@ -307,15 +308,6 @@ export async function fileCases(
     }
   }
   return { records, failed };
-}
-
-/**
- * An admin, or the judge who filed the case. Being its reporter is not enough:
- * a session organizer files roll-call cases without being a judge, and must not
- * then re-type them (a 小迟到 into a 团灭级放鸽) past the roll call's own rules.
- */
-function isFilingJudge(caller: User, reporterId: string): boolean {
-  return caller.is_admin || (caller.is_judge && reporterId === caller.id);
 }
 
 /**

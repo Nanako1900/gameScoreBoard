@@ -1,5 +1,6 @@
 // Typed same-origin fetch client for every /api and /auth endpoint.
 // Throws ApiError (with the parsed { error } message) on any non-2xx response.
+import { emitSession } from './lib/sessionEvents';
 import type {
   AiConfigPatch,
   AiConfigResponse,
@@ -234,31 +235,37 @@ export function createSession(input: NewSessionInput): Promise<{ session: Sessio
   return post<{ session: SessionDetail }>('/api/sessions', input);
 }
 
-export function updateSession(
+export async function updateSession(
   id: number,
   patch: Partial<NewSessionInput>,
 ): Promise<{ session: SessionDetail }> {
-  return request<{ session: SessionDetail }>(`/api/sessions/${id}`, {
+  const res = await request<{ session: SessionDetail }>(`/api/sessions/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
+  emitSession(res.session);
+  return res;
 }
 
 /** `reason` omitted: no body at all, exactly as before P2-3. */
-export function cancelSession(id: number, reason?: string): Promise<{ session: SessionDetail }> {
+export async function cancelSession(id: number, reason?: string): Promise<{ session: SessionDetail }> {
   const path = `/api/sessions/${id}/cancel`;
-  return reason === undefined
+  const res = await (reason === undefined
     ? post<{ session: SessionDetail }>(path)
-    : post<{ session: SessionDetail }>(path, { reason });
+    : post<{ session: SessionDetail }>(path, { reason }));
+  emitSession(res.session);
+  return res;
 }
 
 /** `startsAt`: the start time the player is looking at — a move since is a 409. */
-export function setRsvp(
+export async function setRsvp(
   id: number,
   rsvp: SelfRsvp,
   startsAt: string,
 ): Promise<{ session: SessionDetail }> {
-  return post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp, starts_at: startsAt });
+  const res = await post<{ session: SessionDetail }>(`/api/sessions/${id}/rsvp`, { rsvp, starts_at: startsAt });
+  emitSession(res.session);
+  return res;
 }
 
 /** Record attendance. Produces drafts; changes nobody's score. */
@@ -314,8 +321,10 @@ export async function getInvitable(): Promise<InvitableUser[] | undefined> {
 }
 
 /** P2-1: invite more people after creation. Organizer or admin; rows already there are never changed. */
-export function inviteToSession(id: number, userIds: string[]): Promise<InviteResponse> {
-  return post<InviteResponse>(`/api/sessions/${id}/invite`, { user_ids: userIds });
+export async function inviteToSession(id: number, userIds: string[]): Promise<InviteResponse> {
+  const res = await post<InviteResponse>(`/api/sessions/${id}/invite`, { user_ids: userIds });
+  emitSession(res.session);
+  return res;
 }
 
 // --- Weekly report ---------------------------------------------------------

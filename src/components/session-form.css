@@ -238,3 +238,16 @@
     flex: 1 1 calc(50% - 0.25rem);
   }
 }
+
+/* P3-4: the routed form uses the agreed type scale; legacy dialogs keep their defaults. */
+.sf--enhanced .sf__title { font-size: var(--fs-xl); }
+.sf--enhanced .sf__subtitle, .sf--enhanced .sf__label, .sf--enhanced .sf__hint,
+.sf--enhanced .sf__count, .sf--enhanced .sf-slot, .sf--enhanced .sf-person, .sf--enhanced .sf__error { font-size: var(--fs-sm); }
+.sf--enhanced .sf__input, .sf--enhanced .sf__textarea { font-size: var(--fs-md); }
+.sf__more-fields { display: grid; gap: 0.75rem; margin-top: 0.75rem; }
+.sf__more-fields label { display: grid; gap: 0.35rem; font-size: var(--fs-sm); }
+.sf--page .sf__actions { position: sticky; bottom: 0; z-index: 1; padding: 1rem 0; background: var(--bg); border-top: 1px solid var(--border); }
+@media (forced-colors: active) {
+  .sf--enhanced .sf-slot--on { border: 2px solid Highlight; }
+  .sf--enhanced .sf__input, .sf--enhanced .sf__textarea { border-color: CanvasText; }
+}

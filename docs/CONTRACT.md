@@ -34,6 +34,9 @@
 | `worker/case-reads.ts` | case reads + row→JSON mapping |
 | `worker/case-limits.ts` | write-side validation and the per-day filing caps |
 | `worker/sessions.ts` | 约局: create / RSVP / roll call / settle |
+| `worker/invitable.ts` | invite candidates, including friends who are not on the board |
+| `worker/session-invites.ts` | invite more people to an existing session without changing existing replies |
+| `worker/session-extras.ts` | batch reads for invitation context, attendance summaries and going-player previews |
 | `worker/ai/config.ts` | runtime AI config resolution (`app_settings` > env > default) |
 | `worker/ai/prompt.ts` | prompt building, input sanitisation, verdict parsing |
 | `worker/ai/provider.ts` | sentencing client (OpenAI-compatible), never throws |
@@ -389,9 +392,12 @@ fields) and answer `Cache-Control: private, no-store`.
   Monday-morning rush produces one narrative rather than one per visitor.
 - Last week's report is written from **Monday 10:30** board time on (not at
   midnight), and once every case filed that week has been judged — waiting at
-  most one statement window past the week's end, plus an hour — so a case
-  filed late on Sunday is counted (cases filed, total penalty) in its week. On
-  the Worker the lazy job runs after the overdue-case sweep for that reason.
+  most one statement window past the week's end, plus an hour. Cases, total
+  penalty, group wipes and 最会说话 count the week a case was judged — its first
+  `record:<id>` score event for the subject; older rows without that event fall
+  back to when they were filed. New stats carry `basis: 'verdict'`; reports
+  written before this change keep the numbers they were written with. On the
+  Worker the lazy job still runs after the overdue-case sweep.
   本周之星 / 鸽王 count score movement within the week (a case judged on Monday
   moves next week's), and neither the weekly heal nor an admin's corrections.
   Until last week's report is out, `/api/report/latest` is the one before.
@@ -448,7 +454,10 @@ reaches `decided` rather than stranding a player's score.
 
 ## Frontend expectations
 - Fetch `/api/config`, `/api/leaderboard`, `/api/records`, `/api/me` on load, plus
-  `/api/records?mine=pending` when `pending.statements > 0`.
+  `/api/records?mine=pending` when `pending.statements > 0`. Signed-in readers also load
+  `/api/sessions?scope=mine` and `/api/me/discord`; admins with pending appeals load
+  `/api/records?limit=50&status=appealed`. These supplemental reads settle independently;
+  their failure never blocks the page or raises a global notice.
 - Import display constants from `@shared/scoring` and `@shared/attendance`.
 - A pre-verdict case must never render its `delta` as `0` — show the pending
   range, or 判决后公开 when the API hid it (`pending_hidden`). Such a case says
@@ -456,8 +465,8 @@ reaches `decided` rather than stranding a player's score.
   — and its feed row shows only the name and 「处理中」.
 - Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
   label when it is null (pre-v3 rows).
-- An invitation is an action the user owes, so the invite banner outranks the
-  weekly report on the page.
+- Invitations and other actions the user owes appear in 「要你处理」 before the
+  score and sessions; the weekly report follows the compact board.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
@@ -482,7 +491,11 @@ reaches `decided` rather than stranding a player's score.
   | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
   |---|---|---|
   | `/` | the hall | the hall |
+  | `/sessions/new` (`?again=<id>` optional) | session form page, returning to the created session with replace | center dialog over the hall |
   | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/sessions/<id>/rollcall` | organizer/admin roll call and settlement, sharing the existing local draft | the same page |
+  | `/sessions/history` | history, including cancelled sessions and their reasons | the same page |
+  | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
   | `/players/<userId>/cases/<id>` | that player's page, the case moved to the top and focused | the same, in the drawer |
   | `/cases/<id>` | alias: looks the case up once, then replaces itself with the row above | the same |
@@ -494,7 +507,7 @@ reaches `decided` rather than stranding a player's score.
   never an error. Not found: `/sessions/<id>` → 「找不到这局，链接可能写错了。」;
   `/players/<userId>` → 「找不到这位选手。」; a case → 「链接里的案件不存在了。」, any
   other failure → 「打不开链接里的案件，稍后再试。」. A cancelled session is not a
-  404; it shows as cancelled.
+  404; it shows as cancelled. A missing session also links to 「看约局历史」; a missing player links to 「看信誉榜」.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
   routing never uses the hash: a `popstate` that only changed the hash is
   ignored. Every host must serve `index.html` for any other path (SPA

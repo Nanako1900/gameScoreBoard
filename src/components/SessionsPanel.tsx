@@ -1,211 +1,59 @@
-import { useCallback, useEffect, useState } from 'react';
-import { RSVP_LABEL, SELF_RSVPS, SESSION_STATUS_LABEL } from '@shared/attendance';
-import { isSynthesizedTitle } from '@shared/quickTime';
 import type { SessionItem, User } from '../types';
-import type { SelfRsvp } from '@shared/attendance';
-import { ApiError, getSessions, setRsvp } from '../api';
-import { formatWhen, parseTimestamp } from '../lib/time';
-import { sessionPath } from '../lib/routes';
-import { Avatar } from './Avatar';
+import { boardTzLabel } from '@shared/quickTime';
+import { COUNTDOWN_TICK_MS } from '../lib/constants';
+import { lobbyTimeline, mergeSessions, type TimelineGroup } from '../lib/lobbySessions';
+import { useLobbySessions, type LobbySessions } from '../lib/useLobbySessions';
+import { useNow } from '../lib/useNow';
+import { useRsvpAnswer } from '../lib/useRsvpAnswer';
 import { LoginLink } from './LoginLink';
+import { Link } from './Link';
+import { SESSION_HISTORY_PATH, sessionNewPath } from '../lib/routes';
+import { SessionCard } from './SessionCard';
+import { Skeleton } from './Skeleton';
 import './sessions-panel.css';
 
 interface SessionsPanelProps {
-  me: User | null;
-  onOpenSession: (id: number) => void;
-  onCreate: () => void;
-  /** Bumped by the parent to force a reload after a mutation elsewhere. */
-  refreshKey: number;
+  me: User | null; onOpenSession: (id: number) => void; onCreate: () => void; refreshKey: number;
+  hideCreate?: boolean;
+  lobby?: LobbySessions; handledElsewhere?: ReadonlySet<number>; boardTzOffsetHours?: number;
 }
-
-type Scope = 'upcoming' | 'past';
-
-const SCOPES: { value: Scope; label: string }[] = [
-  { value: 'upcoming', label: '即将开始' },
-  { value: 'past', label: '已结束' },
-];
-
-const RSVP_ORDER = SELF_RSVPS;
-
-/** 约局 — the scheduling half of v2. Fully usable without ever touching scores. */
-export function SessionsPanel({
-  me,
-  onOpenSession,
-  onCreate,
-  refreshKey,
-}: SessionsPanelProps): JSX.Element {
-  const [scope, setScope] = useState<Scope>('upcoming');
-  const [sessions, setSessions] = useState<SessionItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
-
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      const res = await getSessions(scope);
-      setSessions(res.sessions);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : '加载约局失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [scope]);
-
-  useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
-
-  const handleRsvp = async (id: number, rsvp: SelfRsvp, startsAt: string): Promise<void> => {
-    setBusyId(id);
-    try {
-      const res = await setRsvp(id, rsvp, startsAt);
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === id ? { ...s, my_rsvp: res.session.my_rsvp, counts: res.session.counts } : s,
-        ),
-      );
-      setError(null);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : '报名失败';
-      // Moved: show the new time, then say why (a successful reload clears the error).
-      if (err instanceof ApiError && err.status === 409) await load();
-      setError(message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  return (
-    <section className="sessions panel" aria-labelledby="sessions-title">
-      <header className="sessions__head">
-        <h2 id="sessions-title" className="sessions__title">
-          <span aria-hidden="true">📅</span> 约局
-        </h2>
-        <div className="sessions__tabs" role="tablist" aria-label="约局范围">
-          {SCOPES.map((s) => (
-            <button
-              key={s.value}
-              type="button"
-              role="tab"
-              aria-selected={scope === s.value}
-              className={`sessions__tab${scope === s.value ? ' sessions__tab--active' : ''}`}
-              onClick={() => setScope(s.value)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        {me && (
-          <button type="button" className="btn btn--gold btn--sm" onClick={onCreate}>
-            组一局
-          </button>
-        )}
-      </header>
-
-      {error && (
-        <p className="sessions__error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {loading ? (
-        <p className="sessions__empty">加载中…</p>
-      ) : sessions.length === 0 ? (
-        <p className="sessions__empty">
-          {scope === 'upcoming' ? '还没有人组局。第一个开黑的永远是英雄。' : '还没有已结束的约局。'}
-        </p>
-      ) : (
-        <ul className="sessions__list">
-          {sessions.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              me={me}
-              busy={busyId === s.id}
-              onOpen={() => onOpenSession(s.id)}
-              onRsvp={(rsvp) => void handleRsvp(s.id, rsvp, s.starts_at)}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
+interface TimelineProps extends SessionsPanelProps {
+  groups: TimelineGroup[]; now: number; busyId: number | null;
+  answer: (session: SessionItem, rsvp: import('@shared/attendance').SelfRsvp) => Promise<void>;
 }
-
-interface SessionRowProps {
-  session: SessionItem;
-  me: User | null;
-  busy: boolean;
-  onOpen: () => void;
-  onRsvp: (rsvp: SelfRsvp) => void;
+function Timeline({ groups, now, busyId, answer, ...props }: TimelineProps): JSX.Element {
+  return <div className="sessions__timeline">{groups.map((group) => <div key={group.key}>
+    <p className="sessions__group">{group.label}</p>
+    <ul className="sessions__list">{group.sessions.map((s) => <SessionCard key={s.id} session={s} me={props.me}
+      now={now} boardTzOffsetHours={props.boardTzOffsetHours} handled={props.handledElsewhere?.has(s.id)}
+      busy={busyId === s.id} onOpen={() => props.onOpenSession(s.id)} onAnswer={(rsvp) => void answer(s, rsvp)} />)}</ul>
+  </div>)}</div>;
 }
-
-function SessionRow({ session, me, busy, onOpen, onRsvp }: SessionRowProps): JSX.Element {
-  const started = parseTimestamp(session.starts_at) <= Date.now();
-  const canRsvp =
-    me !== null && session.status === 'open' && !started && session.organizer.id !== me.id;
-  // P1-3: a visitor signs in first and comes back to this session's page.
-  const canAskLogin = me === null && session.status === 'open' && !started;
-  const full =
-    session.capacity !== null &&
-    session.counts.going >= session.capacity &&
-    session.my_rsvp !== 'going';
-
-  return (
-    <li className={`srow srow--${session.status}`}>
-      <button type="button" className="srow__main" onClick={onOpen}>
-        <span className="srow__when tabular">{formatWhen(session.starts_at)}</span>
-        {/* v3 derives the title from the start time, so for an auto-titled session
-            the line below would just repeat the line above. Only show a title
-            somebody actually chose. */}
-        {!isSynthesizedTitle(session.title) && (
-          <span className="srow__title">{session.title}</span>
-        )}
-        <span className="srow__meta">
-          <Avatar name={session.organizer.username} src={session.organizer.avatar_url} size={18} />
-          {session.organizer.username}
-          {session.game && <span className="srow__game">{session.game}</span>}
-          <span className="srow__count tabular">
-            {session.counts.going}
-            {session.capacity !== null && `/${session.capacity}`} 人
-          </span>
-          {session.status !== 'open' && (
-            <span className="srow__status">{SESSION_STATUS_LABEL[session.status]}</span>
-          )}
-          {session.status === 'open' && started && <span className="srow__status">待结算</span>}
-        </span>
-      </button>
-
-      {canRsvp && (
-        <div className="srow__rsvp" role="group" aria-label={`报名 ${session.title}`}>
-          {RSVP_ORDER.map((r) => (
-            <button
-              key={r}
-              type="button"
-              className={`srow__rsvp-btn${
-                session.my_rsvp === r ? ' srow__rsvp-btn--active' : ''
-              }`}
-              onClick={() => onRsvp(r)}
-              disabled={busy || (r === 'going' && full)}
-              aria-pressed={session.my_rsvp === r}
-            >
-              {RSVP_LABEL[r]}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {canAskLogin && (
-        <LoginLink
-          className="srow__login"
-          returnTo={sessionPath(session.id)}
-          ariaLabel={`登录后报名 ${session.title}`}
-        >
-          登录后报名
-        </LoginLink>
-      )}
-    </li>
-  );
+function EmptyLobby({ me, onCreate, hideCreate }: Pick<SessionsPanelProps, 'me' | 'onCreate' | 'hideCreate'>): JSX.Element {
+  return <div className="sessions__empty"><p>今晚还没人组局。第一个开黑的永远是英雄。</p>
+    {!hideCreate && (me ? <button type="button" className="btn btn--gold btn--sm" onClick={onCreate}>组一局</button>
+      : <LoginLink className="btn btn--gold btn--sm" returnTo={sessionNewPath()}>登录后组局</LoginLink>)}
+  </div>;
+}
+/** One timeline, with an optional parent-owned data source for the home inbox. */
+export function SessionsPanel(props: SessionsPanelProps): JSX.Element {
+  const own = useLobbySessions({ enabled: props.lobby === undefined, me: props.me, refreshKey: props.refreshKey });
+  const lobby = props.lobby ?? own;
+  const now = useNow(COUNTDOWN_TICK_MS);
+  const rsvp = useRsvpAnswer({ reload: lobby.reload });
+  const groups = lobbyTimeline(mergeSessions(lobby.upcoming, lobby.mine), now, props.boardTzOffsetHours);
+  return <section className="sessions panel" aria-labelledby="sessions-title">
+    <header className="sessions__head">
+      <h2 id="sessions-title" className="sessions__title"><span aria-hidden="true">📅</span> 约局</h2>
+      <Link to={SESSION_HISTORY_PATH} className="sessions__more">历史 <span aria-hidden="true">›</span></Link>
+      {props.me && !props.hideCreate && <button type="button" className="btn btn--gold btn--sm" onClick={props.onCreate}>组一局</button>}
+    </header>
+    {props.boardTzOffsetHours !== undefined && <p className="sessions__zone">时间均为{boardTzLabel(props.boardTzOffsetHours) === '北京时间' ? '' : ' '}{boardTzLabel(props.boardTzOffsetHours)}</p>}
+    {rsvp.error && <p className="sessions__error" role="alert">{rsvp.error}</p>}
+    {lobby.failed && <p className="sessions__failed" role="status">这块没加载出来，你的操作没丢。
+      <button type="button" className="btn btn--ghost btn--sm" onClick={() => void lobby.reload()}>重试</button></p>}
+    {lobby.loading && groups.length === 0 ? <Skeleton label="约局加载中" lines={2} />
+      : groups.length ? <Timeline {...props} groups={groups} now={now} busyId={rsvp.busyId} answer={rsvp.answer} />
+      : !lobby.failed && <EmptyLobby me={props.me} onCreate={props.onCreate} hideCreate={props.hideCreate} />}
+  </section>;
 }

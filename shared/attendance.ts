@@ -197,3 +197,7 @@ export const MAX_OPEN_SESSIONS = 5;
 export const MAX_SESSIONS_PER_DAY = 10;
 /** A session without a length is taken to last this long. MUST equal COALESCE(s.duration_min, 120) in server/migrations/0005_sessions.sql (source-hygiene). */
 export const DEFAULT_DURATION_MIN = 120;
+
+// --- P3-3 ---
+/** Must equal starts - interval '15 minutes' in server/migrations/0005_sessions.sql. */
+export const SESSION_START_REMINDER_MIN = 15;

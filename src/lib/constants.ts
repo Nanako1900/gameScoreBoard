@@ -27,8 +27,6 @@ export const CUSTOM_TIME_LEAD_MS = 60 * 60 * 1000;
 // --- P0-4 ---
 /** 本周之星: at least this many 守约守时 bonuses this week (spec §5 #1). */
 export const WEEK_STAR_MIN_ON_TIME = 2;
-/** The home feed shows this many rows before 看更多. */
-export const FEED_PREVIEW_COUNT = 10;
 
 // --- P0-5 ---
 /** Revoke countdowns refresh this often (spec §5 #6). */
@@ -53,3 +51,30 @@ export const HISTORY_SHEET_NAME_MAX = 32;
 export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
 /** edg.return.path upper bound. */
 export const RETURN_PATH_MAX = 512;
+
+// --- P3-1 ---
+export const LOBBY_CANCELLED_KEEP_MS = 24 * 60 * 60 * 1000;
+export const RECENT_SESSIONS_SHOWN = 10;
+
+// --- P3-3 ---
+export const MINUTE_MS = 60_000;
+export const ICS_LINE_MAX_BYTES = 75;
+export const QUOTA_HINT_AT = 1;
+export const SESSION_QUOTA_WINDOW_MS = 24 * 60 * MINUTE_MS;
+
+// --- P3-4 ---
+export const AGAIN_STEP_DAYS = 7;
+export const AGAIN_STEP_MS = AGAIN_STEP_DAYS * 24 * 60 * MINUTE_MS;
+export const SESSION_CAPACITY_MIN = 2;
+
+// --- P3-2 ---
+export const TODO_SOON_MS = 2 * 60 * MINUTE_MS;
+export const INBOX_APPEALS_LIMIT = 50;
+export const TODO_SEEN_MAX = 50;
+export const BOARD_MINI_ROWS_PHONE = 5;
+export const BOARD_MINI_ROWS_DESKTOP = 9;
+export const SKELETON_DEFAULT_LINES = 3;
+export const TODO_RANKS = {
+  'dm-broken': 1, 'urgent-statement': 2, rollcall: 3, moved: 4, statement: 5, invite: 6,
+  soon: 7, escalation: 8, appeals: 9, cancelled: 11, unbound: 12,
+} as const;

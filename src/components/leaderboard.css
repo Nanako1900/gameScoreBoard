@@ -168,3 +168,19 @@
     display: none;
   }
 }
+
+.lb__more { display: inline-flex; align-items: center; min-height: var(--tap-min); font-size: var(--fs-sm); white-space: nowrap; }
+.lb__ellipsis { padding: 0.25rem; text-align: center; color: var(--muted); }
+
+/* The compact board lives in a narrow column even at desktop viewport widths. */
+.lb--mini .lb-row {
+  grid-template-columns: 1.9rem minmax(0, 1fr) auto;
+  gap: 0.5rem 0.6rem;
+}
+.lb--mini .lb-row__trend,
+.lb--mini .lb-row__gauge {
+  display: none;
+}
+.lb--mini .lb-row__score {
+  display: block;
+}

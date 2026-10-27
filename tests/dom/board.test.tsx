@@ -407,23 +407,17 @@ describe('App — the board on the home page', () => {
     expect(document.querySelector('.tier-badge')).toBeNull();
   });
 
-  it('30 秒看懂 opens the rules and moves focus there', async () => {
-    const scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll;
-    try {
-      mockFetch(routes(null));
-      const user = userEvent.setup();
-      render(<App />);
-      await user.click(await screen.findByRole('button', { name: '30 秒看懂' }));
-      const toggle = screen.getByRole('button', { name: /计分规则/ });
-      expect(toggle).toHaveAttribute('aria-expanded', 'true');
-      await waitFor(() => expect(document.activeElement).toBe(toggle));
-      expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }));
-      await user.click(toggle);
-      expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    } finally {
-      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  it('30 秒看懂 opens the rules destination and focuses its title', async () => {
+    mockFetch(routes(null));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('link', { name: '30 秒看懂' }));
+    expect(window.location.pathname).toBe('/board/rules');
+    await waitFor(() => expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus());
+    for (const title of ['约局', '守约', '分数与回血', '出事了怎么办', '计分规则']) {
+      expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('button', { name: /计分规则/ })).not.toBeInTheDocument();
   });
 
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {
@@ -434,5 +428,29 @@ describe('App — the board on the home page', () => {
     expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);
     expect(screen.getByRole('button', { name: '第 3 名 老王，96 分' })).toHaveClass('lb-row--me');
+  });
+});
+
+// P3-2: the compact board uses its own narrow-column layout; the full board keeps its default.
+describe('Leaderboard compact layout boundary', () => {
+  it('marks only a limited board as mini while keeping its plain score and full-rank own row', () => {
+    const { container } = render(<Leaderboard participants={TIED} trends={{ [TIED[0].id]: -3 }}
+      counts={{ [TIED[0].id]: 2 }} onSelect={() => {}} meId={TIED[TIED.length - 1].id} limit={1} />);
+    const board = container.querySelector('.lb')!;
+    expect(board).toHaveClass('lb--mini');
+    expect(board.querySelectorAll('.lb-row')).toHaveLength(2);
+    expect(board.querySelectorAll('.lb-row__score')).toHaveLength(2);
+    expect(board.querySelector('.lb-row__score')).toHaveTextContent(String(TIED[0].score));
+    expect(board.querySelector('.lb-row--me .lb-row__rank')).toHaveTextContent('3');
+    expect(board.querySelector('.lb-row--me .tier-badge')).not.toBeNull();
+  });
+  it('does not add the mini layout to the full board or remove its trend and gauge content', () => {
+    const { container } = render(<Leaderboard participants={TIED} trends={{ [TIED[0].id]: -3 }}
+      counts={{ [TIED[0].id]: 2 }} onSelect={() => {}} meId={TIED[0].id} />);
+    expect(container.querySelector('.lb')).not.toHaveClass('lb--mini');
+    expect(container.querySelectorAll('.lb-row')).toHaveLength(TIED.length);
+    expect(container.querySelectorAll('.lb-row__trend')).toHaveLength(TIED.length);
+    expect(container.querySelectorAll('.lb-row__gauge')).toHaveLength(TIED.length);
+    expect(container.querySelector('.lb-row__trend')).toHaveTextContent('2 条记录');
   });
 });
