@@ -8,7 +8,7 @@
 | 分期 | 内容 | 计划 | 代码 | 状态 |
 |---|---|---|---|---|
 | P0 | 地基、视觉基础、安全网 | [plan-p0/](plan-p0/README.md) | 6 个 PR，#19–#24 | **已合并** |
-| P1 | 地址化、登录回跳、判决前脱敏 | [plan-p1/](plan-p1/README.md) | P1-0（#25）、B1-1（#26）已合并；P1-1–P1-4 **待实现** | 进行中 |
+| P1 | 地址化、登录回跳、判决前脱敏 | [plan-p1/](plan-p1/README.md) | P1-0（#25）、B1-1（#26）、P1-1（#29）、P1-2（#30）、P1-3（#31）已合并；P1-4 文档在 [#32](https://github.com/Nanako1900/gameScoreBoard/pull/32) | 收尾中 |
 | P2 | ★ 邀请后端 | [plan-p2/](plan-p2/README.md) | 未开始 | 计划已写 |
 | P3 | 大厅、组织者控制台、信誉榜页 | [plan-p3.md](plan-p3.md) | 未开始 | 计划已写 |
 | P4 | 案件、我的、审理、管理 | [plan-p4.md](plan-p4.md) | 未开始 | 计划已写 |
@@ -28,19 +28,17 @@
 | #25 | P1-0 托管核验，删除 EdgeOne 遗留 Functions；同时带上 P1 计划 |
 | #26 | B1-1 判决前脱敏：与案件无关的人只看到「有一起记录在处理中」 |
 | #27 | 交接说明、P2 计划 |
+| #28 | 交接说明：B1-1 已合并、Redeploy 提醒、后续待办 |
+| #29 | P1-1 路由与旧深链映射 |
+| #30 | P1-2 浮层入 history 与返回键 |
+| #31 | P1-3 登录回跳与 ResumeHint |
 
 > #24（P0-5）和 #26（B1-1）都改了后端：申诉理由上限 1000 → 500、常量移到 `shared/`、判决前脱敏。合并后要在 Coolify Redeploy 一次，否则线上后端仍是旧版本，判决前的指控也仍然公开。
 
 ## 3. 接手要做的（按顺序，一期一个 PR）
 
 1. **在 Coolify Redeploy 后端**，让 #24、#26 的后端改动上线（见上一节）。
-2. **P1 剩余部分，开一个 PR**：按顺序做这四份计划，每份做完是一组 commit，全部做完后一起开 PR。
-   1. [plan-P1-1.md](plan-p1/plan-P1-1.md) 路由与旧深链
-   2. [plan-P1-2.md](plan-p1/plan-P1-2.md) 浮层入 history 与返回键
-   3. [plan-P1-3.md](plan-p1/plan-P1-3.md) 登录回跳与 ResumeHint
-   4. [plan-P1-4.md](plan-p1/plan-P1-4.md) 契约文档、路由表与实机验收清单
-
-   之后按 P1-4 产出的 `p1-acceptance.md` 做 P1-5 实机验收（iOS Safari、Android Chrome）。
+2. **P1 收尾**：P1-1 到 P1-3 已合并（#29–#31）；P1-4 的契约文档、路由表和验收清单在 [#32](https://github.com/Nanako1900/gameScoreBoard/pull/32)。合并后按 `p1-acceptance.md` 做 P1-5 实机验收（iOS Safari、Android Chrome），要改代码就开一个修复 PR。
 3. **P2，开一个 PR**：按 P2-2 → P2-1 → P2-6 → P2-3 → P2-4 → P2-5 的顺序做，见 [plan-p2/README.md](plan-p2/README.md)。
    - P2-3 带数据库迁移，部署前先备份。
    - P2-5、P2-6 可按 spec §11 第 11 条的瘦身选项推迟到 P5。
