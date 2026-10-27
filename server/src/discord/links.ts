@@ -14,6 +14,8 @@ export interface DiscordLink {
   user_id: string;
   discord_username: string;
   notify_dm: number;
+  /** 0 once Discord refused a DM (50007: DMs closed); the dispatcher then stops trying. */
+  dm_ok: number;
   linked_at: string;
   updated_at: string;
 }
@@ -136,4 +138,29 @@ export async function unlinkAccounts(
   ]);
   // A concurrent unlink got there first: nothing was removed by this call.
   return (results[0]?.meta?.changes ?? 0) > 0 ? current : null;
+}
+
+/**
+ * Turn DMs on or off for this Nanako user or this Discord user — the bot's
+ * /notify and the web's switch are this one function. Either way the "DMs
+ * closed" mark is cleared: whoever asks about DMs gets one more try. Not a
+ * binding change, so nothing goes to link_audit. Returns the binding as it now
+ * stands, or null when there is none.
+ */
+export async function setNotifyDm(
+  db: D1Database,
+  who: { userId: string } | { discordUserId: string },
+  on: boolean,
+): Promise<DiscordLink | null> {
+  const flag = on ? 1 : 0;
+  const update =
+    'userId' in who
+      ? db
+          .prepare("UPDATE discord_links SET notify_dm = ?, dm_ok = 1, updated_at = datetime('now') WHERE user_id = ?")
+          .bind(flag, who.userId)
+      : db
+          .prepare("UPDATE discord_links SET notify_dm = ?, dm_ok = 1, updated_at = datetime('now') WHERE discord_user_id = ?")
+          .bind(flag, who.discordUserId);
+  await update.run();
+  return 'userId' in who ? linkByUserId(db, who.userId) : linkByDiscordId(db, who.discordUserId);
 }

@@ -8,7 +8,8 @@ import worker from '../../worker/index';
 import { signSession } from '../../worker/session';
 import { buildEnv } from '../../server/src/api';
 import { createApiHost } from '../../server/src/api-host';
-import { linkAccounts } from '../../server/src/discord/links';
+import { handleCommand } from '../../server/src/discord/commands';
+import { linkAccounts, setNotifyDm } from '../../server/src/discord/links';
 import { createLinkRoutes } from '../../server/src/link-routes';
 import { seedUser } from '../worker/helpers';
 import { createExecutionContext, env as pgEnv, waitOnExecutionContext } from './cloudflare-test';
@@ -724,5 +725,68 @@ describe('the API host', () => {
     };
     expect((await post(null)).status).toBe(403);
     expect((await post('https')).status).toBe(200);
+  });
+});
+
+describe('setNotifyDm', () => {
+  const BOT = { db: pgEnv.DB, appUrl: API, frontendUrl: SPA };
+
+  async function dmState(userId: string): Promise<{ notify_dm: number; dm_ok: number } | null> {
+    return pgEnv.DB.prepare('SELECT notify_dm, dm_ok FROM discord_links WHERE user_id = ?')
+      .bind(userId)
+      .first<{ notify_dm: number; dm_ok: number }>();
+  }
+
+  async function closeDms(userId: string): Promise<void> {
+    await pgEnv.DB.prepare('UPDATE discord_links SET dm_ok = 0 WHERE user_id = ?').bind(userId).run();
+  }
+
+  it('finds the binding by Nanako or Discord id, and every switch clears a closed-DM mark', async () => {
+    await seedUser({ id: 'a' });
+    await seedUser({ id: 'b' });
+    await linkAccounts(pgEnv.DB, { userId: 'a', discordUserId: ALICE_ID, discordUsername: 'alice', replace: false, via: 'web' });
+    await linkAccounts(pgEnv.DB, { userId: 'b', discordUserId: BOB_ID, discordUsername: 'bob', replace: false, via: 'web' });
+    await closeDms('a');
+
+    const off = await setNotifyDm(pgEnv.DB, { userId: 'a' }, false);
+    expect(off).toMatchObject({ user_id: 'a', discord_user_id: ALICE_ID, notify_dm: 0, dm_ok: 1 });
+    expect(await dmState('a')).toEqual({ notify_dm: 0, dm_ok: 1 });
+    expect(await dmState('b')).toEqual({ notify_dm: 1, dm_ok: 1 });
+
+    await closeDms('a');
+    const on = await setNotifyDm(pgEnv.DB, { discordUserId: ALICE_ID }, true);
+    expect(on).toMatchObject({ user_id: 'a', notify_dm: 1, dm_ok: 1 });
+    expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
+    // Not a binding change: link_audit keeps only the two links.
+    expect((await audit()).map((r) => r.action)).toEqual(['link', 'link']);
+  });
+
+  it('returns null for someone not bound, and the bot\'s /notify still answers the same words', async () => {
+    await seedUser({ id: 'a' });
+    expect(await setNotifyDm(pgEnv.DB, { userId: 'a' }, true)).toBeNull();
+    expect(await setNotifyDm(pgEnv.DB, { discordUserId: BOB_ID }, true)).toBeNull();
+    const caller = { id: ALICE_ID, username: 'alice' };
+    expect(await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'off' }, BOT)).toEqual({
+      content: '你还没有绑定 Nanako 账号。先用 /link 绑定，再来试试。',
+      ephemeral: true,
+    });
+
+    await linkAccounts(pgEnv.DB, { userId: 'a', discordUserId: ALICE_ID, discordUsername: 'alice', replace: false, via: 'web' });
+    await closeDms('a');
+    expect(await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'off' }, BOT)).toEqual({
+      content: '已关闭私信提醒。网页上仍能看到一切；想重新打开用 /notify 开。',
+      ephemeral: true,
+    });
+    expect(await dmState('a')).toEqual({ notify_dm: 0, dm_ok: 1 });
+    const reply = await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'on' }, BOT);
+    expect(reply.content).toBe(
+      '已打开私信提醒：被立案、陈述快截止、出判决、管理员调整分数、约局，以及（裁判）AI 建议升级时会私信你。收不到的话，检查一下服务器的「允许私信」设置。',
+    );
+    expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
+    expect(await handleCommand({ commandName: 'notify', caller, targetUser: null, state: 'off' }, { ...BOT, readOnly: true })).toEqual({
+      content: '系统维护中（只读），请稍后再试。',
+      ephemeral: true,
+    });
+    expect(await dmState('a')).toEqual({ notify_dm: 1, dm_ok: 1 });
   });
 });
