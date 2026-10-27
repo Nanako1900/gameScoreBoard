@@ -29,3 +29,9 @@ export const CUSTOM_TIME_LEAD_MS = 60 * 60 * 1000;
 export const WEEK_STAR_MIN_ON_TIME = 2;
 /** The home feed shows this many rows before 看更多. */
 export const FEED_PREVIEW_COUNT = 10;
+
+// --- P0-5 ---
+/** Revoke countdowns refresh this often (spec §5 #6). */
+export const REVOKE_TICK_MS = 30_000;
+/** Debounce between a keystroke and the draft write. */
+export const DRAFT_SAVE_DEBOUNCE_MS = 400;
