@@ -158,6 +158,8 @@ export interface ListRecordsFilters {
   limit?: number;
   subject?: string;
   status?: string;
+  /** Known penalty types only, filtered before LIMIT (the public information board). */
+  penaltyOnly?: boolean;
   session?: number;
   /** Only cases this user still has to answer for. */
   pendingFor?: string;
@@ -176,6 +178,11 @@ export async function listRecords(
   if (filters.status) {
     clauses.push('r.status = ?');
     binds.push(filters.status);
+  }
+  if (filters.penaltyOnly) {
+    const types = Object.values(VIOLATION_MAP).filter((def) => def.kind === 'penalty').map((def) => def.type);
+    clauses.push(`r.type IN (${types.map(() => '?').join(', ')})`);
+    binds.push(...types);
   }
   if (filters.session !== undefined) {
     clauses.push('r.session_id = ?');
