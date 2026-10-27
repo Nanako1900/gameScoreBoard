@@ -7,6 +7,8 @@
 import { GOING_PREVIEW_MAX } from '../shared/attendance';
 import type { RecordActor, SessionPlayer } from './types';
 import { isSelfRsvp, type SelfRsvp } from '../shared/attendance';
+import { ATTENDANCES, isAttendance } from '../shared/attendance';
+import type { AttendanceSummary } from './types';
 
 /** `?, ?, …` for `count` values. Built from the count only — the values stay bound. */
 function holes(count: number): string {
@@ -106,4 +108,31 @@ export async function inviteContexts(
       },
     ]),
   );
+}
+
+/** A session nobody has been roll-called in: all five kinds, zero each. */
+export const NO_ATTENDANCE: Readonly<AttendanceSummary> = Object.freeze(
+  Object.fromEntries(ATTENDANCES.map((a) => [a, 0])) as AttendanceSummary,
+);
+
+/** Roll-call counts per session: every id gets all five keys, zeros included. One GROUP BY for the page. */
+export async function attendanceSummaries(
+  db: D1Database,
+  sessionIds: number[],
+): Promise<Map<number, AttendanceSummary>> {
+  const out = new Map<number, AttendanceSummary>(sessionIds.map((id) => [id, { ...NO_ATTENDANCE }]));
+  if (sessionIds.length === 0) return out;
+  const rows = await db
+    .prepare(
+      `SELECT session_id, attendance, COUNT(*) AS n FROM session_players
+        WHERE session_id IN (${holes(sessionIds.length)}) AND attendance IS NOT NULL
+        GROUP BY session_id, attendance`,
+    )
+    .bind(...sessionIds)
+    .all<{ session_id: number; attendance: string; n: number }>();
+  for (const r of rows.results) {
+    const before = out.get(r.session_id);
+    if (before && isAttendance(r.attendance)) out.set(r.session_id, { ...before, [r.attendance]: Number(r.n) });
+  }
+  return out;
 }

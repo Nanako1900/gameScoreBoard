@@ -54,6 +54,7 @@ import {
   createSession,
   getSessionDetail,
   listMyInvites,
+  listSessionHistory,
   listSessions,
   rollCall,
   setRsvp,
@@ -286,6 +287,12 @@ export function registerRoutes(app: Hono<AppEnv>): void {
   app.get('/api/sessions', async (c) => {
     const caller = c.get('user');
     const raw = c.req.query('scope');
+    if (raw === 'history') {
+      // P2-3: started sessions, cancelled ones too, paged by before=<id>.
+      const before = c.req.query('before');
+      const cursor = before === undefined ? null : parseId(before, '约局');
+      return c.json({ sessions: await listSessionHistory(c.env.DB, caller?.id ?? null, cursor) });
+    }
     const scope: SessionScope =
       raw === 'past' || raw === 'mine' || raw === 'upcoming' ? raw : 'upcoming';
     if (scope === 'mine' && !caller) throw new ApiError(401, '未登录');

@@ -12,7 +12,7 @@ import { SESSION_COOKIE, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
 import { noAiEnv, seedUser } from './helpers';
 import { createSession, setRsvp, updateSession } from '../../worker/sessions';
-import type { InvitedSessionItem, SessionItem } from '../../worker/types';
+import type { HistorySessionItem, InvitedSessionItem, SessionItem } from '../../worker/types';
 import { OFFSET_HOURS } from './helpers';
 
 const BASE = 'https://score.example.com';
@@ -282,5 +282,30 @@ describe('P2-3 over HTTP: cancel reasons, invite context, history', () => {
     const { sessions } = (await res.json()) as { sessions: InvitedSessionItem[] };
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ invite_reason: 'moved', prev_rsvp: 'going', prev_starts_at: session.starts_at });
+  });
+  it('GET /api/sessions?scope=history is public, pages with before=<id>, and refuses a bad cursor', async () => {
+    await seedUser({ id: 'org' });
+    const inserted = await env.DB.prepare(
+      "INSERT INTO game_sessions (organizer_id, title, starts_at, status, cancel_reason) VALUES ('org', '昨晚', ?, 'cancelled', '下雨')",
+    )
+      .bind(inHours(-3))
+      .run();
+    const id = Number(inserted.meta.last_row_id);
+
+    const res = await call('/api/sessions?scope=history');
+    expect(res.status).toBe(200);
+    const { sessions } = (await res.json()) as { sessions: HistorySessionItem[] };
+    expect(sessions.map((s) => [s.id, s.status, s.cancel_reason])).toEqual([[id, 'cancelled', '下雨']]);
+    expect(sessions[0].attendance_summary).toEqual({ on_time: 0, late: 0, no_show: 0, left_early: 0, excused: 0 });
+
+    const next = await call(`/api/sessions?scope=history&before=${id}`);
+    expect(await next.json()).toEqual({ sessions: [] });
+    for (const bad of ['abc', '0', '-1', '1.5']) {
+      const refused = await call(`/api/sessions?scope=history&before=${bad}`);
+      expect(refused.status, bad).toBe(400);
+      expect(await refused.json()).toEqual({ error: '无效的约局 ID' });
+    }
+    // Other scopes ignore `before`, as before.
+    expect((await call('/api/sessions?scope=past&before=abc')).status).toBe(200);
   });
 });

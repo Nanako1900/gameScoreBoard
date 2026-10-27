@@ -11,6 +11,7 @@ import {
   ORGANIZER_BONUS_MIN_ATTENDEES,
   SESSION_CANCEL_REASON_MAX,
   SESSION_GAME_MAX,
+  SESSION_HISTORY_PAGE,
   SESSION_MAX_LEAD_MS,
   SESSION_NOTE_MAX,
   SESSION_TITLE_MAX,
@@ -33,6 +34,7 @@ import {
 import type {
   CaseDraft,
   Env,
+  HistorySessionItem,
   InviteReason,
   InvitedSessionItem,
   RecordItem,
@@ -50,7 +52,7 @@ import { BonusCapReached, bonusCapGuard, fitsWeeklyBonusCap } from './case-limit
 import { parseSqlUtc, sqlNowMinusMinutes } from './time';
 import { synthesizeTitle } from '../shared/quickTime';
 import { goingPreviews, previewOfPlayers } from './session-extras';
-import { inviteContexts } from './session-extras';
+import { NO_ATTENDANCE, attendanceSummaries, inviteContexts } from './session-extras';
 
 const MAX_ROLLCALL_ENTRIES = MAX_SESSION_ROSTER;
 const MAX_LATE_MINUTES = 24 * 60;
@@ -431,6 +433,43 @@ export async function listMyInvites(
     const reason: InviteReason = ctx.prev_starts_at === null ? 'new' : 'moved';
     return { ...toSessionItem(r, 'invited', previews.get(r.id) ?? []), invite_reason: reason, ...ctx };
   });
+}
+
+/**
+ * GET /api/sessions?scope=history: sessions that have started, cancelled ones
+ * included (scope=past leaves those out), newest first, SESSION_HISTORY_PAGE a
+ * page. `before` is the last id of the previous page; an unknown one gives [].
+ */
+export async function listSessionHistory(
+  db: D1Database,
+  callerId: string | null,
+  before: number | null,
+): Promise<HistorySessionItem[]> {
+  // ISO "now": starts_at is ISO (see listSessions).
+  const binds: unknown[] = [new Date().toISOString()];
+  let cursor = '';
+  if (before !== null) {
+    const at = await db
+      .prepare('SELECT id, starts_at FROM game_sessions WHERE id = ?')
+      .bind(before)
+      .first<{ id: number; starts_at: string }>();
+    if (!at) return [];
+    // (starts_at, id) < (cursor) spelled out: no row values, portable to both engines.
+    cursor = 'AND (g.starts_at < ? OR (g.starts_at = ? AND g.id < ?))';
+    binds.push(at.starts_at, at.starts_at, at.id);
+  }
+  const rows = await db
+    .prepare(`${SESSION_SELECT} WHERE g.starts_at < ? ${cursor} ORDER BY g.starts_at DESC, g.id DESC LIMIT ?`)
+    .bind(...binds, SESSION_HISTORY_PAGE)
+    .all<SessionJoinRow>();
+  const ids = rows.results.map((r) => r.id);
+  const mine = await myRsvpMap(db, callerId, ids);
+  const previews = await goingPreviews(db, ids);
+  const summaries = await attendanceSummaries(db, ids);
+  return rows.results.map((r) => ({
+    ...toSessionItem(r, mine.get(r.id) ?? null, previews.get(r.id) ?? []),
+    attendance_summary: summaries.get(r.id) ?? { ...NO_ATTENDANCE },
+  }));
 }
 
 export async function updateSession(
