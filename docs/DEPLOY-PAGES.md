@@ -128,7 +128,7 @@ P1 起前端有真实地址（`/sessions/:id`、`/players/:id`、`/players/:id/c
 | `/api` 不归 Pages 管 | `curl -s -o /dev/null -w '%{http_code} %{content_type}' <站点>/api/config` | 删除后：`200 text/html`（SPA 外壳，不是反代、不是 JSON） | 200 text/html，SPA shell | 404 text/html（Functions 反代到已下线的 workers.dev） | 待领队填写 | 待领队填写 |
 | `/auth` 不归 Pages 管 | `curl -sI <站点>/auth/login` | 删除后：`200 text/html`，没有指向 nanako.org 的 302 | 200 text/html，SPA shell | 404 text/html（同上） | 待领队填写 | 待领队填写 |
 | Pages 构建日志 | Pages 后台该次部署的 Build log | 没有 `Found Functions directory` / `Compiled Worker successfully`；部署详情的 Functions 页显示没有函数 | 日志里 `Compiled Worker successfully` 出现 0 次 | 有 Functions（由上面两行的 404 推断，执行时没有看后台日志） | 待领队填写 | 待领队填写 |
-| 旧主机 302 | `curl -sI 'https://capi.nanako.org/sessions/1?x=1'` | `302`，`location: https://community.nanako.org/sessions/1?x=1`，`cache-control: no-store` | — | 执行时（2026-10-27 11:14 UTC）无法访问：Cloudflare `502`（`error code: 502`，源站没有响应），待领队补测 | — | 待领队填写 |
-| API 本身 | `curl -s https://capi.nanako.org/api/config` | `200` JSON | — | 执行时（同上）无法访问：Cloudflare `502`，待领队补测 | — | 待领队填写 |
+| 旧主机 302 | `curl -sI 'https://capi.nanako.org/sessions/1?x=1'` | `302`，`location: https://community.nanako.org/sessions/1?x=1`，`cache-control: no-store` | — | 302，location 同期望，no-store（2026-10-27 11:19 UTC；11:14 UTC 那次是一过性的 Cloudflare `502`） | — | 待领队填写 |
+| API 本身 | `curl -s https://capi.nanako.org/api/config` | `200` JSON | — | 200 application/json（同上，11:19 UTC） | — | 待领队填写 |
 
 删除 `functions/` 要等机主合并并重新部署 Pages 才在生产生效：部署后复测 `/api/config` 在 `community.nanako.org` 上应返回 SPA 的 `index.html`（200、`text/html`），而不是反代结果。SPA 自己从不请求这个地址（所有请求都走 `VITE_API_BASE`），所以删除前后用户都感觉不到差别。
