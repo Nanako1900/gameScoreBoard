@@ -64,9 +64,11 @@
   background: color-mix(in oklab, var(--blue) 14%, var(--panel-2));
 }
 
-.dlink__bind:hover {
-  border-color: var(--blue);
-  background: color-mix(in oklab, var(--blue) 22%, var(--panel-2));
+@media (hover: hover) {
+  .dlink__bind:hover {
+    border-color: var(--blue);
+    background: color-mix(in oklab, var(--blue) 22%, var(--panel-2));
+  }
 }
 
 .dlink__confirm {
@@ -169,10 +171,12 @@
     border-color var(--dur-fast);
 }
 
-.dlink-notice__close:hover {
-  color: var(--text);
-  background: var(--panel-2);
-  border-color: var(--border);
+@media (hover: hover) {
+  .dlink-notice__close:hover {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
 }
 
 @media (pointer: coarse) {

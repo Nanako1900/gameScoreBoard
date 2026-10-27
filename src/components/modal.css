@@ -44,10 +44,12 @@
     border-color var(--dur-fast);
 }
 
-.modal__close:hover {
-  color: var(--text);
-  background: var(--panel-2);
-  border-color: var(--border);
+@media (hover: hover) {
+  .modal__close:hover {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
 }
 
 @keyframes modal-fade {

@@ -253,9 +253,11 @@ h3 {
     border-color var(--dur-fast), box-shadow var(--dur-fast), color var(--dur-fast);
 }
 
-.btn:hover {
-  border-color: var(--border-strong);
-  background: #1c2536;
+@media (hover: hover) {
+  .btn:hover {
+    border-color: var(--border-strong);
+    background: #1c2536;
+  }
 }
 
 .btn:active {
@@ -275,10 +277,12 @@ h3 {
   box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.2), 0 8px 24px -12px rgba(245, 197, 66, 0.6);
 }
 
-.btn--gold:hover {
-  background: linear-gradient(180deg, #ffe083, #ffce4c);
-  border-color: var(--gold);
-  box-shadow: var(--glow-gold);
+@media (hover: hover) {
+  .btn--gold:hover {
+    background: linear-gradient(180deg, #ffe083, #ffce4c);
+    border-color: var(--gold);
+    box-shadow: var(--glow-gold);
+  }
 }
 
 .btn--danger {
@@ -287,8 +291,10 @@ h3 {
   border-color: var(--red-dim);
 }
 
-.btn--danger:hover {
-  box-shadow: var(--glow-red);
+@media (hover: hover) {
+  .btn--danger:hover {
+    box-shadow: var(--glow-red);
+  }
 }
 
 /* The quieter danger button: inline confirms such as ConfirmInline's 「确认取消」,
@@ -312,8 +318,10 @@ h3 {
   border-color: var(--border);
 }
 
-.btn--ghost:hover {
-  background: var(--panel-2);
+@media (hover: hover) {
+  .btn--ghost:hover {
+    background: var(--panel-2);
+  }
 }
 
 .btn--sm {

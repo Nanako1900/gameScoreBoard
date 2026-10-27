@@ -20,8 +20,10 @@
   transition: background var(--dur-fast);
 }
 
-.rules__toggle:hover {
-  background: var(--panel-2);
+@media (hover: hover) {
+  .rules__toggle:hover {
+    background: var(--panel-2);
+  }
 }
 
 /* .rules clips its overflow (rounded panel): draw the ring inside the button. */

@@ -30,9 +30,11 @@
     transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast);
 }
 
-.ob-card:hover {
-  border-color: var(--muted);
-  transform: translateY(-2px);
+@media (hover: hover) {
+  .ob-card:hover {
+    border-color: var(--muted);
+    transform: translateY(-2px);
+  }
 }
 
 .ob-card--locked {
@@ -41,9 +43,11 @@
   border-style: dashed;
 }
 
-.ob-card--locked:hover {
-  border-color: var(--border-input);
-  transform: none;
+@media (hover: hover) {
+  .ob-card--locked:hover {
+    border-color: var(--border-input);
+    transform: none;
+  }
 }
 
 .ob-card--active {
@@ -126,8 +130,10 @@
     box-shadow var(--dur-fast);
 }
 
-.ob__name-opt:hover {
-  border-color: var(--muted);
+@media (hover: hover) {
+  .ob__name-opt:hover {
+    border-color: var(--muted);
+  }
 }
 
 .ob__name-opt--active {

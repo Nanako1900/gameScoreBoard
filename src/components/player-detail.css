@@ -183,9 +183,11 @@
   border-color: color-mix(in oklab, var(--red) 40%, transparent);
 }
 
-.pd__revoke-btn:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--red) 14%, transparent);
-  border-color: color-mix(in oklab, var(--red) 55%, transparent);
+@media (hover: hover) {
+  .pd__revoke-btn:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--red) 14%, transparent);
+    border-color: color-mix(in oklab, var(--red) 55%, transparent);
+  }
 }
 
 .pd__inline-error {

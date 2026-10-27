@@ -84,10 +84,12 @@
     background var(--dur-fast) var(--ease);
 }
 
-.sf-slot:hover {
-  color: var(--text);
-  border-color: var(--muted);
-  background: var(--panel-2);
+@media (hover: hover) {
+  .sf-slot:hover {
+    color: var(--text);
+    border-color: var(--muted);
+    background: var(--panel-2);
+  }
 }
 
 /* 隐藏的 radio 拿到键盘焦点时，把焦点环画在 label 上 */
@@ -103,10 +105,12 @@
   box-shadow: 0 6px 18px -10px rgba(245, 197, 66, 0.9);
 }
 
-.sf-slot--on:hover {
-  color: #17130a;
-  background: linear-gradient(180deg, #ffe083, #ffce4c);
-  border-color: var(--gold);
+@media (hover: hover) {
+  .sf-slot--on:hover {
+    color: #17130a;
+    background: linear-gradient(180deg, #ffe083, #ffce4c);
+    border-color: var(--gold);
+  }
 }
 
 .sf-slot--custom {
@@ -138,10 +142,12 @@
   transition: border-color var(--dur-fast);
 }
 
-.sf__input:hover,
-.sf__textarea:hover,
-.sf__select:hover {
-  border-color: var(--muted);
+@media (hover: hover) {
+  .sf__input:hover,
+  .sf__textarea:hover,
+  .sf__select:hover {
+    border-color: var(--muted);
+  }
 }
 
 .sf__input--custom {
@@ -177,9 +183,11 @@
     background var(--dur-fast) var(--ease);
 }
 
-.sf-person:hover {
-  color: var(--text);
-  border-color: var(--muted);
+@media (hover: hover) {
+  .sf-person:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
 }
 
 .sf-person:has(:focus-visible) {

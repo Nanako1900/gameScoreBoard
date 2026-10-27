@@ -88,20 +88,24 @@
   box-shadow: var(--shadow-panel), var(--glow-gold);
 }
 
-.hero-card--gold:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-pop), var(--glow-gold);
-  border-color: var(--gold);
+@media (hover: hover) {
+  .hero-card--gold:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-pop), var(--glow-gold);
+    border-color: var(--gold);
+  }
 }
 
 .hero-card--red {
   border-color: color-mix(in oklab, var(--red) 30%, var(--border));
 }
 
-.hero-card--red:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-pop), var(--glow-red);
-  border-color: color-mix(in oklab, var(--red) 55%, var(--border));
+@media (hover: hover) {
+  .hero-card--red:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-pop), var(--glow-red);
+    border-color: color-mix(in oklab, var(--red) 55%, var(--border));
+  }
 }
 
 .hero-card__head {
@@ -162,9 +166,11 @@
   transition: gap var(--dur-fast) var(--ease), border-color var(--dur-fast);
 }
 
-.hero-card__link:hover {
-  gap: 0.7rem;
-  border-bottom-color: currentColor;
+@media (hover: hover) {
+  .hero-card__link:hover {
+    gap: 0.7rem;
+    border-bottom-color: currentColor;
+  }
 }
 
 .hero-card--empty {
@@ -196,7 +202,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
   .hero-card:hover {
     transform: none;
   }

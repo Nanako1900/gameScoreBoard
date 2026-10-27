@@ -23,8 +23,10 @@
   transition: transform var(--dur-fast) var(--ease);
 }
 
-.hdr__brand:hover {
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .hdr__brand:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .hdr__logo {
@@ -98,9 +100,11 @@
   transition: border-color var(--dur-fast), background var(--dur-fast);
 }
 
-.hdr__avatar-btn:hover {
-  border-color: var(--border-strong);
-  background: var(--panel-2);
+@media (hover: hover) {
+  .hdr__avatar-btn:hover {
+    border-color: var(--border-strong);
+    background: var(--panel-2);
+  }
 }
 
 .hdr__username {
@@ -158,16 +162,20 @@
   transition: background var(--dur-fast), color var(--dur-fast);
 }
 
-.hdr__dropdown-item:hover {
-  background: var(--panel-2);
+@media (hover: hover) {
+  .hdr__dropdown-item:hover {
+    background: var(--panel-2);
+  }
 }
 
 .hdr__dropdown-item--danger {
   color: var(--danger-text);
 }
 
-.hdr__dropdown-item--danger:hover {
-  background: color-mix(in oklab, var(--red) 14%, transparent);
+@media (hover: hover) {
+  .hdr__dropdown-item--danger:hover {
+    background: color-mix(in oklab, var(--red) 14%, transparent);
+  }
 }
 
 @keyframes hdr-drop {

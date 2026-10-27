@@ -101,6 +101,7 @@ const SHEETS = cssFiles(SRC).map((full) => ({
 const RULES = SHEETS.flatMap((sheet) => scanRules(sheet.file, sheet.css));
 const STYLE_RULES = RULES.filter((rule) => !rule.prelude.startsWith('@'));
 const where = (rule: CssRule): string => `${rule.file}: ${rule.prelude}`;
+const HOVER_MEDIA = /^@media\b.*\(\s*hover\s*:\s*hover\s*\)/;
 
 const OUTLINE_REMOVED = /(?:^|[;\s])outline\s*:\s*(?:none|0)\s*(?:!important\s*)?(?:;|$)/;
 const BOX_SHADOW = /(?:^|[;\s])box-shadow\s*:/;
@@ -165,6 +166,16 @@ describe('src/**/*.css', () => {
   it('edges form controls with --border-input (3:1), not the structure greys', () => {
     const offenders = STYLE_RULES.filter(
       (rule) => FORM_CONTROL.test(rule.prelude) && DIM_BORDER.test(rule.body),
+    );
+    expect(offenders.map(where)).toEqual([]);
+  });
+
+  it('keeps every :hover rule inside @media (hover: hover)', () => {
+    // Touch screens fire :hover on tap and leave it stuck; hover-only styling must opt in.
+    const offenders = STYLE_RULES.filter(
+      (rule) =>
+        rule.prelude.includes(':hover') &&
+        !rule.ancestors.some((ancestor) => HOVER_MEDIA.test(ancestor)),
     );
     expect(offenders.map(where)).toEqual([]);
   });

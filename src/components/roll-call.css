@@ -88,9 +88,11 @@
   transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
 }
 
-.rc-mark:hover {
-  border-color: var(--muted);
-  color: var(--text);
+@media (hover: hover) {
+  .rc-mark:hover {
+    border-color: var(--muted);
+    color: var(--text);
+  }
 }
 
 .rc-mark--on {

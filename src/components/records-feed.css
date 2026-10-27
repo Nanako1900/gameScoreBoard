@@ -81,10 +81,12 @@
   transition: color var(--dur-fast);
 }
 
-.feed-row__subject--link:hover .feed-row__name {
-  color: var(--blue);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+@media (hover: hover) {
+  .feed-row__subject--link:hover .feed-row__name {
+    color: var(--blue);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
 }
 
 .feed-row__name {

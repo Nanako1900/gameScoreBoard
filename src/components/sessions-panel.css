@@ -80,9 +80,11 @@
   transition: border-color var(--dur-fast), background var(--dur-fast);
 }
 
-.srow:hover {
-  border-color: var(--border-strong);
-  background: rgba(0, 0, 0, 0.28);
+@media (hover: hover) {
+  .srow:hover {
+    border-color: var(--border-strong);
+    background: rgba(0, 0, 0, 0.28);
+  }
 }
 
 .srow--cancelled,
@@ -170,8 +172,10 @@
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
-.srow__rsvp-btn:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .srow__rsvp-btn:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 
 .srow__rsvp-btn--active {

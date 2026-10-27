@@ -132,9 +132,11 @@
   transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
-.app__fab:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: var(--glow-gold), 0 18px 40px -12px rgba(245, 197, 66, 0.65);
+@media (hover: hover) {
+  .app__fab:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: var(--glow-gold), 0 18px 40px -12px rgba(245, 197, 66, 0.65);
+  }
 }
 
 .app__fab:active {
@@ -189,6 +191,9 @@
     animation: none;
     transition: none;
   }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
   .app__fab:hover {
     transform: none;
   }

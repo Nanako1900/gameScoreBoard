@@ -55,10 +55,12 @@
   border-top-right-radius: 0;
 }
 
-.lb-row:hover {
-  background: var(--panel-2);
-  border-color: var(--border-strong);
-  transform: translateX(2px);
+@media (hover: hover) {
+  .lb-row:hover {
+    background: var(--panel-2);
+    border-color: var(--border-strong);
+    transform: translateX(2px);
+  }
 }
 
 .lb-row__rank {

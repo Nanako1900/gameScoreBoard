@@ -61,9 +61,11 @@
   transition: color var(--dur-fast);
 }
 
-.wr__regen:hover,
-.wr__close:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .wr__regen:hover,
+  .wr__close:hover {
+    color: var(--text);
+  }
 }
 
 .wr__close {

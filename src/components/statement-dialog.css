@@ -87,8 +87,10 @@
   transition: border-color var(--dur-fast);
 }
 
-.sd__textarea:hover {
-  border-color: var(--muted);
+@media (hover: hover) {
+  .sd__textarea:hover {
+    border-color: var(--muted);
+  }
 }
 
 .sd__textarea:disabled {

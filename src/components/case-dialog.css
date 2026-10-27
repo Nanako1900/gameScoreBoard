@@ -151,9 +151,11 @@
   outline-offset: 2px;
 }
 
-.cd-chip:hover {
-  border-color: var(--muted);
-  color: var(--text);
+@media (hover: hover) {
+  .cd-chip:hover {
+    border-color: var(--muted);
+    color: var(--text);
+  }
 }
 
 .cd-chip--on {
@@ -208,8 +210,10 @@
   text-align: left;
 }
 
-.cd-extra__toggle:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .cd-extra__toggle:hover {
+    color: var(--text);
+  }
 }
 
 .cd-extra__chev {
