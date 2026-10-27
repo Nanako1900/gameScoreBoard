@@ -16,6 +16,7 @@ import {
   playerPath,
   readEdgState,
   routeCoversHome,
+  rollcallPath,
   sessionPath,
   type LinkableRoute,
   type Route,
@@ -44,7 +45,6 @@ describe('parseRoute', () => {
   it('knows nothing of the later phases’ routes yet', () => {
     for (const later of [
       '/sessions/new',
-      '/sessions/5/rollcall',
       '/me',
       '/me/notify',
       '/review',
@@ -246,6 +246,21 @@ describe('board and session history routes', () => {
     expect(BOARD_TABS).toEqual(['list', 'feed', 'report', 'rules']);
   });
   it.each(['/board/list', '/board/xyz', '/board/feed/1', '/sessions/history/2', '/board//'])('refuses %s', (path) => {
+    expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+});
+
+// P3-5: roll call is a page on every viewport.
+describe('rollcall routes', () => {
+  it('parses, formats and covers the hall', () => {
+    const route: LinkableRoute = { name: 'rollcall', sessionId: 5 };
+    expect(rollcallPath(5)).toBe('/sessions/5/rollcall');
+    expect(parseRoute('/sessions/5/rollcall')).toEqual(route);
+    expect(parseRoute('/sessions/5/rollcall/')).toEqual(route);
+    expect(formatRoute(route)).toBe('/sessions/5/rollcall');
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+  it.each(['/sessions/07/rollcall', '/sessions/5/rollcall/x', '/sessions/0/rollcall'])('refuses %s', (path) => {
     expect(parseRoute(path)).toEqual(NOT_FOUND);
   });
 });

@@ -21,6 +21,7 @@ export type Route =
   | { readonly name: 'case'; readonly caseId: number }
   | { readonly name: 'board'; readonly tab: BoardTab }
   | { readonly name: 'sessionHistory' }
+  | { readonly name: 'rollcall'; readonly sessionId: number }
   | { readonly name: 'notFound' };
 
 export type LinkableRoute = Exclude<Route, { name: 'notFound' }>;
@@ -106,6 +107,10 @@ function matchSegments(segments: readonly string[]): Route {
     const tab = BOARD_TABS.find((value) => value !== 'list' && value === first);
     if (segments.length === 2 && tab) return { name: 'board', tab };
   }
+  if (segments.length === 3 && head === 'sessions' && second === 'rollcall') {
+    const sessionId = numericId(first);
+    if (sessionId !== null) return { name: 'rollcall', sessionId };
+  }
   return NOT_FOUND;
 }
 
@@ -137,6 +142,10 @@ export function boardPath(tab: BoardTab): string {
   return tab === 'list' ? '/board' : `/board/${tab}`;
 }
 
+export function rollcallPath(sessionId: number): string {
+  return `${sessionPath(sessionId)}/rollcall`;
+}
+
 /** Never ends in `/` (except the home page itself). */
 export function formatRoute(route: LinkableRoute): string {
   switch (route.name) {
@@ -154,6 +163,8 @@ export function formatRoute(route: LinkableRoute): string {
       return boardPath(route.tab);
     case 'sessionHistory':
       return SESSION_HISTORY_PATH;
+    case 'rollcall':
+      return rollcallPath(route.sessionId);
   }
 }
 
@@ -166,6 +177,7 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
     case 'case':
     case 'board':
     case 'sessionHistory':
+    case 'rollcall':
       return true;
     default:
       return layout === 'page';

@@ -8,7 +8,8 @@ import type { Rsvp, SelfRsvp } from '@shared/attendance';
 import type { InviteResponse, RecordItem, SessionDetail, User } from '../types';
 import { ApiError, cancelSession, getSession, setRsvp } from '../api';
 import { BACK_HOME, PAGE_BACK_LABEL, SEE_HISTORY, SESSION_NOT_FOUND } from '../lib/routeCopy';
-import { HOME_PATH, SESSION_HISTORY_PATH } from '../lib/routes';
+import { HOME_PATH, SESSION_HISTORY_PATH, rollcallPath } from '../lib/routes';
+import { navigate } from '../lib/router';
 import { fullNotice, goingClosed, rsvpFeedback } from '../lib/sessionActions';
 import { inviteToast } from '../lib/invitePicker';
 import { formatBoardDateTime, formatDateTime, formatTimeLeft, formatViewerAside, formatWhen, parseTimestamp } from '../lib/time';
@@ -27,7 +28,6 @@ import { ConfirmInline } from './ConfirmInline';
 import { NotFound } from './NotFound';
 import { PageBar } from './PageBar';
 import { VerdictCard } from './VerdictCard';
-import { RollCallDialog } from './RollCallDialog';
 import { RescheduleSheet } from './RescheduleSheet';
 import { InviteSheet } from './InviteSheet';
 import { RESUME_HINT_TEXT_ID, ResumeHint } from './ResumeHint';
@@ -67,10 +67,8 @@ export function SessionDetailDialog({
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [rollCallOpen, setRollCallOpen] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
   // A 404 on the page / drawer forms: NotFound instead of the bare error line (spec §2.2).
   const [missing, setMissing] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -267,7 +265,6 @@ export function SessionDetailDialog({
                 {error}
               </p>
             )}
-            {flash && <p className="sdt__flash">{flash}</p>}
 
             {resumeAsk && <ResumeHint rsvp={resumeAsk} onDismiss={dismissResume} />}
             {canRsvp && (
@@ -303,32 +300,13 @@ export function SessionDetailDialog({
                 busy={busy}
                 onInvite={showInviteEntry ? () => setInviteOpen(true) : undefined}
                 onReschedule={() => setRescheduleOpen(true)}
-                onRollCall={() => setRollCallOpen(true)}
+                onRollCall={() => navigate(rollcallPath(session.id))}
                 onCancel={handleCancel}
               />
             )}
           </div>
         )}
       </Modal>
-
-      {session && rollCallOpen && (
-        <RollCallDialog
-          open
-          session={session}
-          onClose={() => setRollCallOpen(false)}
-          onSettled={(updated, created) => {
-            setRollCallOpen(false);
-            setSession(updated);
-            setFlash(
-              created > 0
-                ? `已结算，立案 ${created} 起，等待当事人说明情况。`
-                : '已结算，只记录了出勤，没有扣分。',
-            );
-            void load();
-            onChanged();
-          }}
-        />
-      )}
 
       {session && rescheduleOpen && (
         <RescheduleSheet

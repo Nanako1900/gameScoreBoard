@@ -489,6 +489,7 @@ reaches `decided` rather than stranding a player's score.
   |---|---|---|
   | `/` | the hall | the hall |
   | `/sessions/<id>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |
+  | `/sessions/<id>/rollcall` | organizer/admin roll call and settlement, sharing the existing local draft | the same page |
   | `/sessions/history` | history, including cancelled sessions and their reasons | the same page |
   | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
   | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the hall |

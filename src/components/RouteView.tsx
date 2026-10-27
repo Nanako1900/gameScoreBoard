@@ -12,6 +12,7 @@ import { PlayerDetail } from './PlayerDetail';
 import { SessionDetailDialog } from './SessionDetailDialog';
 import { BoardPage, type BoardData } from './BoardPage';
 import { SessionHistoryPage } from './SessionHistoryPage';
+import { RollCallPage } from './RollCallPage';
 
 export type { PinnedCase };
 
@@ -132,6 +133,9 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionHistory':
       return <PageShell><SessionHistoryPage boardTzOffsetHours={props.config.boardTzOffsetHours} /></PageShell>;
+    case 'rollcall':
+      return <PageShell><RollCallPage key={route.sessionId} sessionId={route.sessionId} me={props.me}
+        onChanged={props.onChanged} boardTzOffsetHours={props.config.boardTzOffsetHours} /></PageShell>;
     case 'session':
       return (
         <LayoutShell layout={layout}>
