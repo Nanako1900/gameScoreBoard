@@ -41,6 +41,8 @@
    - Build command：`npm run build:pages`
    - Build output：`dist`
    - 环境变量：`VITE_API_BASE=https://capi.nanako.org`
+   - 可选：`VITE_DISCORD_INVITE_URL=https://discord.nanako.org`（首页欢迎卡的「加入服务器 ↗」；填分享页，
+     不要直接填 discord.gg 邀请码；不填或不是 https 地址时整行隐藏）
    - 生产分支：`main`
    - Custom domain：`community.nanako.org`（如果你想用别的名字，下面所有 `community.` 一起换）
    - 注意：仓库根目录的 `functions/`（EdgeOne 的反代）会被 Pages 一起部署成 Pages Functions，

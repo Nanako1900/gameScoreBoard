@@ -9,6 +9,12 @@ interface ImportMetaEnv {
    *   cross-origin split (Option B/C).
    */
   readonly VITE_API_BASE?: string;
+  /**
+   * Public page that hands out a Discord invite (recommended
+   * https://discord.nanako.org — the share page rotates its own invites).
+   * Unset or not an absolute https: URL → the welcome card's 加入服务器 row is hidden.
+   */
+  readonly VITE_DISCORD_INVITE_URL?: string;
 }
 
 interface ImportMeta {
