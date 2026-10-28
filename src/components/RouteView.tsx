@@ -85,7 +85,8 @@ interface CaseRouteProps extends RouteViewProps {
  * component at the same place, so the lookup survives the alias' replace.
  */
 function CaseRoute(props: CaseRouteProps): JSX.Element | null {
-  const { caseId, userId, location, layout, pinned, onPinned } = props;
+  const { caseId, userId, location, pinned, onPinned } = props;
+  const layout: RouteLayout = 'page';
   const { status, record } = useCaseLookup(caseId, pinned);
   const subject = record?.subject.id ?? null;
 
@@ -124,7 +125,10 @@ function CaseRoute(props: CaseRouteProps): JSX.Element | null {
 
 /** What the address shows on top of (or instead of) the lobby (contract §4.9). */
 export function RouteView(props: RouteViewProps): JSX.Element | null {
-  const { location, layout } = props;
+  const { location } = props;
+  // A viewport hint is retained in the public props for older callers. Destinations
+  // themselves are pages on every screen; only true form dialogs use layers.
+  const layout: RouteLayout = 'page';
   const { route } = location;
   switch (route.name) {
     case 'home':
@@ -139,6 +143,15 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return <PageShell><GuidePage /></PageShell>;
     case 'admin':
       return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
+    case 'cases':
+      return <PageShell><BoardPage tab="feed" config={props.config} me={props.me} data={props.board} /></PageShell>;
+    case 'settings':
+      if (route.tab === 'ai' || route.tab === 'members') return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
+      return <PageShell><WelcomePage key={props.me?.id ?? 'guest'} me={props.me} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())}
+        onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} /></PageShell>;
+    case 'tools':
+      return <PageShell><AdminPage me={props.me} config={props.config} onChanged={props.onChanged} /></PageShell>;
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':

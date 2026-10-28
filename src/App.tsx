@@ -41,7 +41,6 @@ import { useTodoSources } from './lib/useTodoSources';
 import { useNow } from './lib/useNow';
 import { TodoInbox } from './components/TodoInbox';
 import { BoardMini } from './components/BoardMini';
-import { BottomTabs } from './components/BottomTabs';
 import { Skeleton } from './components/Skeleton';
 import { RecordsFeed } from './components/RecordsFeed';
 import { Link } from './components/Link';
@@ -124,8 +123,8 @@ function AppMain(): JSX.Element {
 
   // Opening a view is navigating to its address; a desktop drawer keeps the lobby's scroll.
   const openRoute = useCallback(
-    (path: string): void => navigate(path, { keepScroll: layout === 'drawer' }),
-    [layout],
+    (path: string): void => navigate(path),
+    [],
   );
   const openPlayer = useCallback((id: string): void => openRoute(playerPath(id)), [openRoute]);
 
@@ -241,7 +240,6 @@ function AppMain(): JSX.Element {
   const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
 
-  const tabs = layout === 'page';
   const myPath = me ? playerPath(me.id) : '/';
   const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
     onOpenStatement={setStatementCase} onOpenNotify={() => navigate(WELCOME_PATH)}
@@ -259,10 +257,10 @@ function AppMain(): JSX.Element {
   const recent = <div className="app__recent"><RecordsFeed records={records} title="最近案件" previewCount={5} onSelectUser={openPlayer} />
     <Link to={boardPath('feed')} className="app__all-activity">全部动态</Link></div>;
   return (
-    <div className={`app${tabs ? ' app--tabs' : ''}`}>
+    <div className="app">
 
       <Header
-        layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)}
+        layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)} todoCount={todoBadgeCount(items)}
         onRecord={canRecord ? () => setCaseOpen(true) : undefined}
         config={config}
         me={me}
@@ -332,7 +330,6 @@ function AppMain(): JSX.Element {
         />
       )}
 
-      {tabs && <BottomTabs me={me} route={location.route} todoCount={todoBadgeCount(items)} meDot={meNeedsAttention(items)} myPath={myPath} />}
     </div>
   );
 }

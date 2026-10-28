@@ -5,6 +5,8 @@ import { DESKTOP_MEDIA_QUERY, HISTORY_SHEET_NAME_MAX, USER_ID_MAX } from '../../
 import { pinnedCaseEyebrow } from '../../src/lib/routeCopy';
 import {
   boardPath,
+  settingsPath,
+  toolsPath,
   BOARD_TABS,
   casePath,
   formatRoute,
@@ -30,10 +32,11 @@ describe('parseRoute', () => {
   });
 
   it('takes only a positive integer id of at most 15 digits', () => {
-    for (const bad of ['0', '07', '-1', '1e3', 'abc', '1.5', '1234567890123456', '']) {
+    for (const bad of ['0', '07', '-1', '1e3', 'abc', '1.5', '1234567890123456']) {
       expect(parseRoute(`/cases/${bad}`), bad).toEqual(NOT_FOUND);
       expect(parseRoute(`/players/p/cases/${bad}`), bad).toEqual(NOT_FOUND);
     }
+    expect(parseRoute('/players/p/cases/')).toEqual(NOT_FOUND);
     expect(parseRoute('/cases/123456789012345')).toEqual({ name: 'case', caseId: 123456789012345 });
   });
 
@@ -112,7 +115,7 @@ describe('formatRoute and the path builders', () => {
 });
 
 describe('routeCoversHome', () => {
-  it('hides the lobby under pages and NotFound, not under drawers', () => {
+  it('hides home under every detail page on either viewport', () => {
     expect(routeCoversHome({ name: 'home' }, 'page')).toBe(false);
     expect(routeCoversHome({ name: 'home' }, 'drawer')).toBe(false);
     expect(routeCoversHome(NOT_FOUND, 'drawer')).toBe(true);
@@ -122,7 +125,7 @@ describe('routeCoversHome', () => {
       { name: 'playerCase', userId: 'p', caseId: 7 },
     ] as const) {
       expect(routeCoversHome(route, 'page'), route.name).toBe(true);
-      expect(routeCoversHome(route, 'drawer'), route.name).toBe(false);
+      expect(routeCoversHome(route, 'drawer'), route.name).toBe(true);
     }
   });
 });
@@ -282,5 +285,73 @@ describe('members administration route', () => {
     const route = { name: 'admin', tab: 'members' } as const;
     expect(parseRoute(path)).toEqual(route); expect(formatRoute(route)).toBe('/admin/members');
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+});
+
+
+// S6: one set of full-page destinations; all older addresses remain readable.
+describe('overview destinations', () => {
+  it.each(['/cases', '/cases/'])('opens the cases index at %s without treating it as an id', (path) => {
+    const route = { name: 'cases' } as const;
+    expect(parseRoute(path)).toEqual(route);
+    expect(formatRoute(route)).toBe('/cases');
+  });
+
+  it.each(['profile', 'discord', 'members', 'ai'] as const)('reads and formats the %s settings group', (tab) => {
+    const route = { name: 'settings', tab } as const;
+    expect(parseRoute(`/settings/${tab}`)).toEqual(route);
+    expect(parseRoute(`/settings/${tab}/`)).toEqual(route);
+    expect(settingsPath(tab)).toBe(`/settings/${tab}`);
+    expect(formatRoute(route)).toBe(settingsPath(tab));
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+
+  it('uses profile as the settings root alias', () => {
+    expect(parseRoute('/settings')).toEqual({ name: 'settings', tab: 'profile' });
+    expect(parseRoute('/settings/')).toEqual({ name: 'settings', tab: 'profile' });
+  });
+
+  it.each(['home', 'filing', 'voice', 'score'] as const)('reads and formats the %s tools page', (tab) => {
+    const route = { name: 'tools', tab } as const;
+    const path = tab === 'home' ? '/tools' : `/tools/${tab}`;
+    expect(parseRoute(path)).toEqual(route);
+    expect(parseRoute(`${path}/`)).toEqual(route);
+    expect(toolsPath(tab)).toBe(path);
+    expect(formatRoute(route)).toBe(path);
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+
+  it('keeps the tools default and encodes only voice and score subjects', () => {
+    const userId = 'a&/?# 中';
+    const query = `?${new URLSearchParams({ user: userId }).toString()}`;
+    expect(toolsPath()).toBe('/tools');
+    expect(toolsPath('voice', userId)).toBe(`/tools/voice${query}`);
+    expect(toolsPath('score', userId)).toBe(`/tools/score${query}`);
+    expect(toolsPath('home', userId)).toBe('/tools');
+    expect(toolsPath('filing', userId)).toBe('/tools/filing');
+    // The parser still receives pathname only; subject selection never chooses a route.
+    expect(parseRoute(new URL(toolsPath('voice', userId), 'https://edg.example').pathname))
+      .toEqual({ name: 'tools', tab: 'voice' });
+  });
+
+  it.each(['/settings/unknown', '/settings/profile/more', '/settings//', '/tools/home',
+    '/tools/unknown', '/tools/voice/more', '/tools//', '/cases/new', '/cases/more'])
+    ('keeps unknown paths as 404: %s', (path) => {
+      expect(parseRoute(path)).toEqual(NOT_FOUND);
+    });
+
+  it('leaves all pre-existing page and evidence aliases unchanged', () => {
+    for (const [path, route] of [
+      ['/admin', { name: 'admin', tab: 'voice' }],
+      ['/admin/voice', { name: 'admin', tab: 'voice' }],
+      ['/admin/ai', { name: 'admin', tab: 'ai' }],
+      ['/admin/members', { name: 'admin', tab: 'members' }],
+      ['/board/feed', { name: 'board', tab: 'feed' }],
+      ['/board/report', { name: 'board', tab: 'report' }],
+      ['/board/rules', { name: 'board', tab: 'rules' }],
+      ['/cases/7', { name: 'case', caseId: 7 }],
+      ['/players/p/cases/7', { name: 'playerCase', userId: 'p', caseId: 7 }],
+      ['/sessions/7', { name: 'sessionGone' }],
+    ] as const) expect(parseRoute(path), path).toEqual(route);
   });
 });

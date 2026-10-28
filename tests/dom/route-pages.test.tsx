@@ -346,28 +346,30 @@ describe('/players/:id/cases/:caseId', () => {
     expect(count(calls, '/api/records/7')).toBe(1);
   });
 
-  it('on a desktop opens as a drawer with the case pinned', async () => {
+  it('on a desktop opens the case as a full page and keeps the global navigation', async () => {
     useDesktopViewport();
     mockFetch(routes());
     window.history.replaceState(null, '', '/players/p/cases/7');
     render(<App />);
-    const drawer = await screen.findByRole('dialog');
-    expect(drawer.className).toContain('modal__panel--drawer');
+    await screen.findByRole('heading', { name: '选手' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.querySelector('.modal-page')).toBeInTheDocument();
     await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
-    expect(lobbyHidden()).toBe(false);
+    expect(lobbyHidden()).toBe(true);
+    expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
   });
 
-  it('on a desktop, a case that is gone says so in a drawer over the lobby; ✕ goes home', async () => {
+  it('on a desktop a missing case is a full page with a home destination', async () => {
     useDesktopViewport();
     mockFetch(routes());
     window.history.replaceState(null, '', '/players/p/cases/8');
     const user = userEvent.setup();
     render(<App />);
-    const drawer = await screen.findByRole('dialog', { name: '链接里的案件不存在了。' });
-    expect(drawer.className).toContain('modal__panel--drawer');
-    expect(lobbyHidden()).toBe(false);
+    await screen.findByRole('heading', { name: '链接里的案件不存在了。' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(lobbyHidden()).toBe(true);
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: '链接里的案件不存在了。' }));
-    await user.click(screen.getByRole('button', { name: '关闭' }));
+    await user.click(screen.getByRole('link', { name: '回大厅' }));
     expect(window.location.pathname).toBe('/');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });

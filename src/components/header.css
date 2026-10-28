@@ -212,11 +212,19 @@
   }
 }
 
-.hdr__nav { display: flex; gap: 0.35rem; font-size: var(--fs-sm); }
+.hdr__nav { display: flex; flex-wrap: wrap; gap: 0.35rem; min-width: 0; font-size: var(--fs-sm); }
 .hdr__nav a { display: inline-flex; align-items: center; min-height: var(--tap-min); padding: 0.45rem 0.65rem;
-  color: var(--muted); border: 1px solid transparent; border-radius: var(--r-pill); white-space: nowrap; }
+  gap: 0.3rem; color: var(--muted); border: 1px solid transparent; border-radius: var(--r-pill); white-space: nowrap; }
 .hdr__nav a[aria-current="page"] { color: var(--action); border-color: var(--action); }
+.hdr__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.3em;
+  padding: 0.1em 0.3em; border-radius: var(--r-sm); font-size: var(--fs-xs); background: var(--panel-2); color: var(--text); }
 .hdr__attention { width: 0.45rem; height: 0.45rem; border: 1px solid currentColor; border-radius: var(--r-pill); background: currentColor; }
+@media (max-width: 1023px) {
+  .hdr__inner { flex-wrap: wrap; }
+  .hdr__brand, .hdr__nav { flex-basis: 100%; }
+  .hdr__reset { margin-left: 0; align-items: flex-start; }
+  .hdr__actions { margin-left: auto; }
+}
 @media (hover: hover) { .hdr__nav a:hover { color: var(--text); background: var(--panel); } }
 @media (forced-colors: active) { .hdr__nav a[aria-current="page"] { border-color: Highlight; }
   .hdr__attention { border-color: ButtonText; } }
