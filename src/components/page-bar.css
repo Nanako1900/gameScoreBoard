@@ -1,10 +1,7 @@
-/* PageBar (P1-1): back, and a quiet title, pinned to the top of a page-form view. */
+/* A quiet return row in the page flow; the shared navigation stays visible above it. */
 
 .pagebar {
-  position: sticky;
-  top: 0;
-  /* Over the sticky .hdr (z-index 40) once stuck, under every modal layer (--z-modal). */
-  z-index: 41;
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

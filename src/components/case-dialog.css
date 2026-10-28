@@ -33,7 +33,6 @@
   color: var(--muted);
 }
 
-.cd__select,
 .cd__textarea {
   width: 100%;
   padding: 0.65rem 0.75rem;
@@ -46,7 +45,6 @@
   min-height: var(--tap-min);
 }
 
-.cd__select:focus-visible,
 .cd__textarea:focus-visible {
   border-color: var(--info);
 }

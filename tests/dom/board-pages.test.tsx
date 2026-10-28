@@ -86,7 +86,7 @@ describe('board route integration', () => {
     window.history.replaceState(null, '', '/board/feed'); mockApp(); render(<App />);
     expect(await screen.findByRole('heading', { name: '当前读取的记录' })).toBeInTheDocument();
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
-    expect(screen.getByRole('heading', { name: '案件', level: 2 })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('heading', { name: '案件', level: 2 })).toHaveFocus());
   });
   it('links home to the full report and all recent activity', async () => {
     mockApp(); render(<App />);

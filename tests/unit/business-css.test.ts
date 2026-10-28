@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const COMPONENTS = path.resolve(__dirname, '../../src/components');
 const SEPARATE = new Set(['header.css', 'modal.css', 'page-bar.css', 'board-page.css', 'settings-page.css',
   'home-overview.css', 'avatar.css', 'score-gauge.css', 'history-chart.css', 'tier-badge.css',
-  'rules-panel.css', 'sentencing-scale.css', 'week-highlights.css']);
+  'rules-panel.css', 'sentencing-scale.css']);
 const sheets = readdirSync(COMPONENTS).filter((file) => file.endsWith('.css') && !SEPARATE.has(file))
   .map((file) => ({ file, css: readFileSync(path.join(COMPONENTS, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '') }));
 const rules = sheets.flatMap(({ file, css }) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -27,7 +27,7 @@ describe('business page visual contract', () => {
     expect(offenders.map(({ file }) => file)).toEqual([]);
   });
 
-  it.each(['.aai__input', '.aai__textarea', '.ob__name-input', '.cd__select', '.cd__textarea',
+  it.each(['.aai__input', '.aai__textarea', '.ob__name-input', '.cd__textarea',
     '.cd-extra__input', '.sd__textarea', '.aps__textarea', '.pd__score-input', '.pd__override-input',
     '.voice-log__controls input', '.voice-log__controls select', '.member-list__search input',
     '.tools-page__card > input', '.cases-page__filter select'])('keeps %s readable and touch-sized', (selector) => {
@@ -36,7 +36,7 @@ describe('business page visual contract', () => {
     expect(body, selector).toMatch(touchSize);
   });
 
-  it.each(['.aai__input', '.ob__name-input', '.cd__select', '.pd__score-input', '.pd__override-input'])
+  it.each(['.aai__input', '.ob__name-input', '.pd__score-input', '.pd__override-input'])
     ('keeps the single-line control %s compact instead of applying textarea height', (selector) => {
       const sizes = [...declarations(selector).matchAll(/min-height:\s*([^;]+);/g)];
       expect(sizes[sizes.length - 1]?.[1]).toMatch(/^(?:var\(--tap-min\)|44px)$/);

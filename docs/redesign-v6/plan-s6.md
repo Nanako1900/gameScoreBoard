@@ -107,6 +107,8 @@ npm run build
 npm run build:pages
 ```
 
+提交前实测：unit **44 文件 / 687 通过**、DOM **50 / 657**、D1 **18 / 555 + 5 todo**、PG **40 / 953 + 5 todo**、server **32 / 378**；typecheck、build、build:pages 全通过。分步红绿与提交已完成，机主的合并、部署和真机验收待后续进行。完整数量解释与本机验收见 [HANDOFF](HANDOFF.md#s6-提交前验证)、[s6-acceptance.md](s6-acceptance.md)。
+
 ## 7. 分支和提交
 
 - 分支：`codex/overview-redesign`，从最新 `origin/main` 开始。
