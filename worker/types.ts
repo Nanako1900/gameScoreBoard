@@ -22,8 +22,8 @@ export interface Env {
   READ_ONLY?: string;
 
   // --- AI 裁决 (any OpenAI-compatible endpoint) --------------------------------
-  // Defaults only. `app_settings` rows of the same name override every one of
-  // these at runtime. API keys use encrypted database credentials when present.
+  // Provider defaults only: saved app_settings override them at runtime.
+  // API keys live encrypted in DB; app + bot share the external master key.
   AI_ENABLED?: string; // 'false' disables AI judging (everything falls back to base)
   AI_BASE_URL?: string; // e.g. https://api.openai.com/v1  (no trailing /chat/completions)
   AI_MODEL?: string;

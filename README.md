@@ -273,9 +273,10 @@ PG 由机主按 [Discord 部署说明](./docs/DEPLOY-DISCORD.md#s3-语音记录)
 | `ADMIN_USERNAMES` | 可选（已废弃） | 逗号分隔的用户名；设置了 `ADMIN_SUBJECT_IDS` 后被忽略 |
 | `READ_ONLY` | 可选 | `1` = 维护模式：所有写请求返回 503，惰性任务与 Cron 跳过（数据库切换时用） |
 | `HOST_ONLY_COOKIES` | 可选 | `1` = cookie 名加 `__Host-` 前缀（SPA 在 Pages、Worker 在 api 子域时用，见 docs/DEPLOY-PAGES.md）；不能与 `COOKIE_DOMAIN` 同时设置 |
-| `AI_BASE_URL` | AI 必需 | OpenAI 兼容端点，须以 `/v1` 结尾（代码只拼 `/chat/completions`） |
-| `AI_MODEL` | AI 必需 | 模型名，如 `gpt-4o-mini` / `deepseek-chat` |
-| `AI_API_KEY` | AI 必需 | **只能用 `wrangler secret put` 设置，永不落库** |
+| `AI_CONFIG_MASTER_KEY` | 网页设置 Key 必需 | Base64 编码的 32 字节随机主密钥；一次生成、持久保存，app 与 bot 必须同值 |
+| `AI_BASE_URL` | 可选兼容默认值 | OpenAI 兼容端点，代码拼 `/chat/completions`；日常在管理页配置 |
+| `AI_MODEL` | 可选兼容默认值 | 模型名；日常在管理页配置 |
+| `AI_API_KEY` | 可选旧实例兼容 | 仅数据库从未设置或清除凭据时使用；管理页 Key 仅以密文入库 |
 | `AI_ENABLED` | 可选（默认 `true`） | `false` 时一律按基准分判罚 |
 | `AI_TEMPERATURE` | 可选（默认 `0.2`） | 判罚要可复现，建议 ≤ 0.3 |
 | `AI_SYSTEM_PROMPT` | 可选 | 量刑提示词；留空用内置。归类与周报提示词只在管理面板里改（热生效，无需重新部署） |
@@ -283,10 +284,13 @@ PG 由机主按 [Discord 部署说明](./docs/DEPLOY-DISCORD.md#s3-语音记录)
 
 > 本地开发把以上变量写进 `.dev.vars`（从 `.dev.vars.example` 复制）；生产环境的密钥类变量务必使用 `wrangler secret put`，详见 [DEPLOY.md](./DEPLOY.md)。
 >
-> `AI_BASE_URL` / `AI_MODEL` / `AI_TEMPERATURE` / `AI_SYSTEM_PROMPT` 都可以在
-> **管理 → AI 设置**（`/admin/ai`）里改，写入 `app_settings` 表并覆盖环境变量 —— 提示词需要反复调，
-> 不该改一次就重新部署一次。`AI_API_KEY` 是唯一的例外：它只从 Worker 机密读取，
-> 因为把密钥存进 D1 等于任何 SQL 读路径都能拿到它。
+> **管理 → AI 设置**（`/admin/ai`）维护端点、模型、API Key、温度、启用开关及量刑／归类／周报三套提示词；保存后网页与 bot 的下一次 AI 调用读取已提交配置，无需重新部署。
+>
+> 首次启用：用 `openssl rand -base64 32` **生成一次** `AI_CONFIG_MASTER_KEY`，作为运行时机密持久保存；Node 的 app 与 bot 必须使用同一值，随后 Redeploy。管理员在网页录入端点、模型、Key 后先保存，再点试跑（不改分），然后在 Discord 提交一条测试案件陈述验证 bot。没有任何提供商环境变量也能完成首次配置。
+>
+> Key 输入留空表示保留；更换时输入新值；明确清除后停止 AI 并走既有回退，旧环境 Key 不会复活。试跑使用已保存配置，有未保存修改时先保存。主密钥缺失、错配或密文损坏时 AI 安全停用，公开配置仍可读；修复为原主密钥后可继续读取原密文。
+>
+> 迁入前可保留旧环境 Key 作兼容，完成网页与 bot 验收后再移除；已有凭据行时它不再生效。数据库凭据备份必须配套保管原主密钥（与数据库分开存储）；不要在部署时随机重建，也不要复用 `SESSION_SECRET`。无需新增表或 SQL 迁移。
 
 ## 部署
 

@@ -50,7 +50,7 @@
 - [ ] **Step 2: 确认测试红。** `npx vitest run --config vitest.config.ts tests/unit/ai-secrets.test.ts tests/unit/ai-config.test.ts`；应因缺少封装实现及现有“只读 env”断言而失败。
 - [ ] **Step 3: 实现封装和异步解析。** 无凭据行才使用旧 env；清除态不解密；解密故障转为固定状态，不向领域入口抛出凭据错误。普通配置读取优先级保持原样。
 - [ ] **Step 4: 更新所有生产/测试调用方并验证。** 上述单测及 `npm run typecheck` 通过；`git grep` 核对不存在未 await 的生产 `resolveAiConfig` 调用。
-- [ ] **Step 5: 提交本任务。** 记录凭据兼容边界、无需 SQL 迁移的决定；提交前完成独立审阅。
+- [ ] **Step 5: 提交本任务。** 记录凭据兼容边界、无需 SQL 迁移的决定；提交快照后完成独立审阅，通过后才进入下一任务。
 
 ### Task 2: 管理接口原子保存与输出过滤
 
@@ -70,7 +70,7 @@
 - [ ] **Step 2: 添加原子性与泄露失败测试。** 同一请求合法模型+非法温度或 Key 时零写入；batch 中后续写入失败全部回滚；GET/POST/test、错误、审计及 AI 输出均不含假 Key；GET/test 也带 `private, no-store`。
 - [ ] **Step 3: 确认测试红。** 分别执行定向 unit 和 `npx vitest run --config vitest.workers.config.ts tests/worker/admin-routes.test.ts`，应由当前拒绝 `api_key`、非原子写入或未过滤响应触发失败。
 - [ ] **Step 4: 实现并验证。** 保留现有 URL/温度/提示词校验；缺主密钥写 Key 返回固定 503 原因，输入非法返回 400；明文不进入 SQL。配置解析错误不能让 `GET /api/config` 返回 500。重跑定向测试，并在 PG 套件执行同一共享 API 场景。
-- [ ] **Step 5: 提交本任务。** 核对显式清除屏蔽 env、三个 AI 客户端都应用过滤、鉴权在解析敏感请求前执行；提交前独立审阅。
+- [ ] **Step 5: 提交本任务。** 核对显式清除屏蔽 env、三个 AI 客户端都应用过滤、鉴权在解析敏感请求前执行；提交快照后独立审阅，通过后才进入下一任务。
 
 ### Task 3: 管理页设置、更换与清除 API Key
 
@@ -87,7 +87,7 @@
 - [ ] **Step 2: 添加状态隔离失败测试。** 保存成功清空输入；请求失败清空 Key 且保留普通字段；写入成功但重读失败提示“修改已保存，状态刷新失败”；切账号/失权/卸载后的旧响应不恢复凭据输入；试跑仅在已保存配置上执行。
 - [ ] **Step 3: 确认测试红。** `npx vitest run --config vitest.dom.config.ts tests/dom/admin-ai.test.tsx`；应因缺少 Key 控件和旧环境提示而失败。
 - [ ] **Step 4: 实现现有页面内的交互。** 使用 `type="password"` 与 `autoComplete="new-password"`；复用项目既有确认交互模式，为本页新增清除两步确认；保留错误反馈和请求失效隔离。设置能力为 false 只禁用设置/更换，清除在新后端仍可操作；不加凭据草稿、不用内联样式。成功写入后单独处理状态刷新失败，避免误导重复提交。
-- [ ] **Step 5: 验证并提交。** 定向 DOM、现有成员/管理路由测试及类型检查通过；独立审阅后提交。
+- [ ] **Step 5: 验证并提交。** 定向 DOM、现有成员/管理路由测试及类型检查通过；提交快照后独立审阅，通过后才进入下一任务。
 
 ### Task 4: 双运行时接线、文档与发布验收
 
@@ -100,8 +100,8 @@
 - compose 的 app、bot 均透传 `AI_CONFIG_MASTER_KEY: ${AI_CONFIG_MASTER_KEY:-}`；旧 AI 环境变量继续兼容首次迁入前的实例。
 - Node API `buildEnv` 和 bot `actionCtx.env` 继续使用既有环境透传，共享 `loadAiConfig`；不引入各自缓存或第二份凭据存储。
 
-- [ ] **Step 1: 添加跨进程失败测试。** app 保存数据库 Key 后，模拟 bot 的独立 Env/DB 实例的下一次领域调用使用新 Key；错配/缺少主密钥时安全回退、公开配置可读，修复主密钥后可读取同一密文。测试使用临时 PG 和假提供商，不调用线上服务。
-- [ ] **Step 2: 验证接线并更新文档。** 明确一次性生成和持久保存主密钥、app/bot 同值、Redeploy、网页录入/试跑、bot 试跑、首次迁入兼容及凭据备份要求；删除当前功能说明中的 `wrangler secret put AI_API_KEY` 强制要求，保留旧部署资料的历史说明。对“Key 永不入库”改为“Key 仅以密文入库”。
+- [x] **Step 1: 添加跨进程失败测试。** app 保存数据库 Key 后，模拟 bot 的独立 Env/DB 实例的下一次领域调用使用新 Key；错配/缺少主密钥时安全回退、公开配置可读，修复主密钥后可读取同一密文。测试使用临时 PG 和假提供商，不调用线上服务。
+- [x] **Step 2: 验证接线并更新文档。** 明确一次性生成和持久保存主密钥、app/bot 同值、Redeploy、网页录入/试跑、bot 试跑、首次迁入兼容及凭据备份要求；删除当前功能说明中的 `wrangler secret put AI_API_KEY` 强制要求，保留旧部署资料的历史说明。对“Key 永不入库”改为“Key 仅以密文入库”。
 - [ ] **Step 3: 全量验证。** 在 Node 22/24 运行 `npm run typecheck`、`env -u TEST_DATABASE_URL npm test`、`npm run build`、`npm run build:pages`、`npm run build --workspace server`、`git diff --check`。`npm test` 已包含 PG；从这次入口就清除 `TEST_DATABASE_URL`，确保使用临时内嵌数据库，不再重复跑 PG 全量，不得把真实数据库用于测试。Task 2 单独运行 PG 时同样使用 `env -u TEST_DATABASE_URL npm run test:pg`。
 - [ ] **Step 4: 模拟验收与独立终审。** 桌面/手机管理页，纯网页首次配置、保留/更换/清除、试跑失败和密文故障；确认裁判无访问权限。评审检查明文泄露、事务边界、env 清除复活和 app/bot 一致性。
 - [ ] **Step 5: 交付可审阅变更与发布说明。** 本计划本身不执行真实配置、迁移或部署。未来按用户实施授权完成代码与验证；生产部署遵循当时明确授权的范围。

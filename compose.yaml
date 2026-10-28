@@ -108,6 +108,8 @@ services:
       # name, so the board can never be left without one. Ignored once
       # ADMIN_SUBJECT_IDS is set.
       ADMIN_USERNAMES: "${ADMIN_USERNAMES:-Hongyu Qi}"
+      # Persist one master key and share it with app + bot; provider keys live encrypted in DB.
+      AI_CONFIG_MASTER_KEY: ${AI_CONFIG_MASTER_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_ENABLED: ${AI_ENABLED:-true}
       AVATAR_ALLOWED_HOSTS: ${AVATAR_ALLOWED_HOSTS:-}
@@ -161,8 +163,10 @@ services:
       DISCORD_VERDICT_CHANNEL_ID: ${DISCORD_VERDICT_CHANNEL_ID:-}
       # S4: one public information board. Empty: no board is posted.
       DISCORD_BOARD_CHANNEL_ID: ${DISCORD_BOARD_CHANNEL_ID:-}
-      # P6: a statement written in Discord is judged on the spot, by the same
-      # AI as the web — so the bot needs the same key.
+      # P6: Discord statements use the same saved AI configuration as the web.
+      # Keep AI_API_KEY only as the pre-migration fallback.
+      # Persist one master key and share it with app + bot; provider keys live encrypted in DB.
+      AI_CONFIG_MASTER_KEY: ${AI_CONFIG_MASTER_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_ENABLED: ${AI_ENABLED:-true}
       RESET_TZ_OFFSET: ${RESET_TZ_OFFSET:-8}

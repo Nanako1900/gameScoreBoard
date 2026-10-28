@@ -52,7 +52,7 @@ npm run db:remote
 
 ## 3. 配置密钥与变量
 
-以下两个是**密钥**，务必通过 `wrangler secret put` 设置，不要写进 `wrangler.toml` 或提交到仓库：
+以下会话和 OAuth **密钥**务必通过 `wrangler secret put` 设置，不要写进 `wrangler.toml` 或提交到仓库：
 
 ```bash
 # 会话签名密钥（HS256）。先生成一个足够长的随机字符串：
@@ -64,6 +64,20 @@ wrangler secret put SESSION_SECRET
 # OAuth 客户端密钥
 wrangler secret put OAUTH_CLIENT_SECRET
 ```
+
+启用管理员网页设置 AI Key 时，另设独立的加密主密钥：
+
+```bash
+# 只生成一次：把结果保存到密码管理器，并独立备份，不能随部署重新生成。
+openssl rand -base64 32
+wrangler secret put AI_CONFIG_MASTER_KEY
+```
+
+主密钥必须是 Base64 编码的 32 字节随机值，不能复用 `SESSION_SECRET`。若另跑 Node app 与 bot，两者使用同一个 `AI_CONFIG_MASTER_KEY`，设置后 Redeploy。凭据数据库备份需保留对应的原主密钥，分开保存；丢失主密钥后只能在管理页重新录入提供商 Key。
+
+完成第 5 步部署后，管理员打开 **管理 → AI 设置**（`/admin/ai`），录入端点、模型、API Key，检查温度、启用开关及三套提示词，保存后点试跑。试跑使用已保存配置且不改变分数；有未保存修改时先保存。随后在 Discord 测试案件中提交陈述，核验 bot 使用同一配置。日常更换或清除 Key 无需部署。
+
+API Key 仅以 AES-256-GCM 密文存入现有 `app_settings`，无需 SQL 迁移；读取接口不回传明文或密文。首次迁入前仍可使用旧 `AI_API_KEY` secret，完成网页与 bot 验证前先保留；数据库已有设置或清除标记后不再使用旧 Key。留空输入保留原 Key；明确清除会停用 AI 并回退，主密钥缺失、错配或密文损坏时同样安全回退，公开配置仍可读。修复原主密钥即可读取原密文。
 
 `OAUTH_BASE_URL` 和 `OAUTH_CLIENT_ID` 不是敏感信息，可以二选一：
 

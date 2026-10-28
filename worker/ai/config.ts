@@ -1,5 +1,7 @@
-// Runtime AI configuration: database > environment > defaults. Only an absent
-// encrypted credential row permits fallback to the legacy environment key.
+// Shared app/bot runtime configuration: database > environment > defaults.
+// Credentials are encrypted in app_settings with an external shared master key.
+// Only an absent credential row permits fallback to the legacy environment key;
+// cleared or unreadable ciphertext never revives it. No process-local cache.
 
 import { DEFAULT_SYSTEM_PROMPT } from './prompt';
 import { DEFAULT_CLASSIFY_PROMPT } from './classify';

@@ -29,13 +29,16 @@ ADMIN_USERNAMES="Nanako1900"
 
 # --- AI 裁决 -----------------------------------------------------------------
 # Any OpenAI-compatible endpoint: OpenAI / DeepSeek / 硅基流动 / OpenRouter /
-# vLLM / Ollama / your own gateway. Base URL, model, temperature and the system
-# prompt can all be changed at runtime from the admin panel (they are stored in
-# the `app_settings` table and override these values).
-#
-# AI_API_KEY is the ONE exception: it is read only from here / from a Worker
-# secret and is never written to the database.
-#   Production:  wrangler secret put AI_API_KEY
+# vLLM / Ollama / your own gateway. Endpoint, model, API key, temperature,
+# enabled switch and all three prompts are maintained at /admin/ai.
+# Provider keys are stored only as AES-256-GCM ciphertext in app_settings.
+# Generate a master ONCE: openssl rand -base64 32
+# Persist and back it up separately from the DB; never regenerate on deploy.
+# Node deployments: app + bot must receive the SAME AI_CONFIG_MASTER_KEY.
+# Worker production: wrangler secret put AI_CONFIG_MASTER_KEY
+AI_CONFIG_MASTER_KEY=""
+# Legacy provider env defaults remain usable only before a credential row exists.
+# After a web-set or explicitly cleared key, AI_API_KEY no longer takes effect.
 AI_ENABLED="true"
 AI_BASE_URL="https://api.openai.com/v1"   # must end at /v1 — the code appends /chat/completions
 AI_MODEL="gpt-4o-mini"
