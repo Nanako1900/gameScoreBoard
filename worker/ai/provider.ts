@@ -9,6 +9,7 @@
 
 import { AI_TIMEOUT_MS, clampVerdictDelta, isClamped } from '../../shared/scoring';
 import type { AiConfig } from './config';
+import { redactAiSecret } from './redact';
 import {
   type JudgeRequest,
   type ParsedVerdict,
@@ -152,7 +153,7 @@ async function callOnce(
     const latencyMs = Date.now() - started;
     const text = await res.text();
     if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      const err = new Error(`HTTP ${res.status}: ${redactAiSecret(text, cfg.apiKey).slice(0, 300)}`);
       err.name = res.status === 400 ? 'BadRequestError' : 'UpstreamError';
       throw err;
     }
@@ -162,7 +163,7 @@ async function callOnce(
     } catch {
       throw new Error('上游返回的不是 JSON');
     }
-    const content = readContent(body);
+    const content = redactAiSecret(readContent(body), cfg.apiKey);
     if (content.length === 0) throw new Error('上游返回了空内容');
     return { text: content, latencyMs };
   } finally {
@@ -194,10 +195,10 @@ export async function judgeCase(cfg: AiConfig, req: JudgeRequest): Promise<Judge
       try {
         result = await callOnce(cfg, userMessage, false);
       } catch (retryErr) {
-        return fallbackOutcome(req, cfg, errorMessage(retryErr));
+        return fallbackOutcome(req, cfg, redactAiSecret(errorMessage(retryErr), cfg.apiKey));
       }
     } else {
-      return fallbackOutcome(req, cfg, errorMessage(err));
+      return fallbackOutcome(req, cfg, redactAiSecret(errorMessage(err), cfg.apiKey));
     }
   }
 
@@ -208,9 +209,9 @@ export async function judgeCase(cfg: AiConfig, req: JudgeRequest): Promise<Judge
     return fallbackOutcome(
       req,
       cfg,
-      errorMessage(err),
+      redactAiSecret(errorMessage(err), cfg.apiKey),
       result.latencyMs,
-      result.text.slice(0, RAW_RESPONSE_MAX),
+      redactAiSecret(result.text, cfg.apiKey).slice(0, RAW_RESPONSE_MAX),
     );
   }
 
@@ -221,15 +222,15 @@ export async function judgeCase(cfg: AiConfig, req: JudgeRequest): Promise<Judge
 
   return {
     delta: applied,
-    headline: parsed.headline,
-    reasoning: parsed.reasoning,
-    factors: parsed.factors,
+    headline: redactAiSecret(parsed.headline, cfg.apiKey),
+    reasoning: redactAiSecret(parsed.reasoning, cfg.apiKey),
+    factors: parsed.factors.map((factor) => ({ ...factor, text: redactAiSecret(factor.text, cfg.apiKey) })),
     source: 'ai',
     audit: {
       provider: hostOf(cfg.baseUrl),
       model: cfg.model,
       promptVersion: cfg.promptVersion,
-      rawResponse: result.text.slice(0, RAW_RESPONSE_MAX),
+      rawResponse: redactAiSecret(result.text, cfg.apiKey).slice(0, RAW_RESPONSE_MAX),
       parsedDelta: auditDelta(parsed.delta),
       appliedDelta: applied,
       clamped,

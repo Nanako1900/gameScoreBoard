@@ -11,6 +11,7 @@
 
 import { AI_TIMEOUT_MS } from '../../shared/scoring';
 import type { AiConfig } from './config';
+import { redactAiSecret } from './redact';
 import { sanitizeNarrative } from './prompt';
 
 export const NARRATIVE_MAX = 500;
@@ -163,7 +164,7 @@ export async function writeNarrative(
       return {
         narrative: fallbackNarrative(stats),
         source: 'fallback',
-        error: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+        error: `HTTP ${res.status}: ${redactAiSecret(text, cfg.apiKey).slice(0, 200)}`,
         latencyMs,
       };
     }
@@ -180,7 +181,7 @@ export async function writeNarrative(
     }
     // Run the model's own output through the sanitiser too: it is about to be
     // stored and rendered to every visitor.
-    const narrative = sanitizeNarrative(readContent(body)).slice(0, NARRATIVE_MAX);
+    const narrative = sanitizeNarrative(redactAiSecret(readContent(body), cfg.apiKey)).slice(0, NARRATIVE_MAX);
     if (narrative.length === 0) {
       return {
         narrative: fallbackNarrative(stats),
@@ -194,7 +195,7 @@ export async function writeNarrative(
     return {
       narrative: fallbackNarrative(stats),
       source: 'fallback',
-      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      error: redactAiSecret(err instanceof Error ? `${err.name}: ${err.message}` : String(err), cfg.apiKey),
       latencyMs: Date.now() - started,
     };
   } finally {

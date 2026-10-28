@@ -191,3 +191,42 @@ describe('judgeCase — degradation', () => {
     await expect(judgeCase(CFG, REQ)).resolves.toMatchObject({ source: 'fallback' });
   });
 });
+
+
+describe('judgeCase — credential redaction', () => {
+  it('filters successful narratives, factors and stored upstream text', async () => {
+    fetchMock.mockResolvedValue(chatResponse(JSON.stringify({ delta: -11, headline: `判了 ${CFG.apiKey}`, reasoning: `理由 ${CFG.apiKey}`, factors: [{ kind: 'mitigating', text: CFG.apiKey }], confidence: 0.7 })));
+    const out = await judgeCase(CFG, REQ);
+    expect(out.source).toBe('ai');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(out.headline).toContain('[已隐藏]');
+  });
+  it.each(['http', 'network', 'invalid', 'retry'])('filters %s failure before returning audit', async (kind) => {
+    if (kind === 'network') fetchMock.mockRejectedValue(new Error(`failed ${CFG.apiKey}`));
+    else if (kind === 'invalid') fetchMock.mockResolvedValue(chatResponse(`invalid ${CFG.apiKey}`));
+    else if (kind === 'retry') fetchMock.mockResolvedValueOnce(new Response('retry', { status: 400 })).mockRejectedValueOnce(new Error(CFG.apiKey));
+    else fetchMock.mockResolvedValue(new Response(`failure ${CFG.apiKey}`, { status: 500 }));
+    const out = await judgeCase(CFG, REQ);
+    expect(out.source).toBe('fallback');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(JSON.stringify(out)).toContain('[已隐藏]');
+  });
+});
+
+
+it('filters a credential decoded from JSON escapes in business output', async () => {
+  const content = JSON.stringify({ delta: -11, headline: CFG.apiKey, reasoning: CFG.apiKey, factors: [] })
+    .replaceAll(CFG.apiKey, '\\u0073k-test');
+  fetchMock.mockResolvedValue(chatResponse(content));
+  const out = await judgeCase(CFG, REQ);
+  expect(out.source).toBe('ai');
+  expect(out.headline).toBe('[已隐藏]');
+  expect(out.reasoning).toBe('[已隐藏]');
+});
+
+it('redacts a full credential before truncating invalid audit text', async () => {
+  const apiKey = 'sk-fake-long-' + 'k'.repeat(60);
+  fetchMock.mockResolvedValue(chatResponse('x'.repeat(3980) + apiKey));
+  const out = await judgeCase({ ...CFG, apiKey }, REQ);
+  expect(out.audit.rawResponse).toBe('x'.repeat(3980) + '[已隐藏]');
+});

@@ -16,8 +16,8 @@ import {
   normalizeBaseUrl,
   readSettings,
   resolveAiConfig,
-  writeSetting,
 } from './ai/config';
+import { sealAiApiKey } from './ai/secrets';
 import { judgeCase } from './ai/provider';
 import { resetOffsetHours } from './time';
 import {
@@ -30,6 +30,16 @@ import {
   requireAdmin,
   requireString,
 } from './http';
+
+async function canUpdateApiKey(masterKey: string | undefined): Promise<boolean> {
+  if (!masterKey) return false;
+  try {
+    await sealAiApiKey('', masterKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function registerAdminRoutes(app: Hono<AppEnv>): void {
   // --- Admin ---------------------------------------------------------------
@@ -106,6 +116,9 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
     const total = stats?.total ?? 0;
     return c.json({
       enabled: cfg.enabled,
+      configured_enabled: cfg.configuredEnabled,
+      api_key_source: cfg.apiKeySource,
+      can_update_api_key: await canUpdateApiKey(c.env.AI_CONFIG_MASTER_KEY),
       base_url: cfg.baseUrl,
       model: cfg.model,
       temperature: cfg.temperature,
@@ -127,17 +140,11 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
   app.post('/api/admin/ai-config', async (c) => {
     const caller = requireAdmin(c.get('user'));
     const body = await readJsonBody(c.req.raw);
-    if (body.api_key !== undefined) {
-      throw new ApiError(
-        400,
-        'API Key 不存数据库，请用 `wrangler secret put AI_API_KEY` 设置',
-      );
-    }
-    const writes: Promise<void>[] = [];
+    const values: Array<[string, string]> = [];
     if (body.enabled !== undefined) {
       const enabled = optBool(body.enabled);
       if (enabled === undefined) throw new ApiError(400, 'enabled 必须是布尔值');
-      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.enabled, String(enabled), caller.id));
+      values.push([AI_SETTING_KEYS.enabled, String(enabled)]);
     }
     if (body.base_url !== undefined) {
       const url = normalizeBaseUrl(requireString(body.base_url, 'base_url'));
@@ -150,17 +157,15 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
       if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
         throw new ApiError(400, 'base_url 必须是 https（本地调试可用 localhost）');
       }
-      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.baseUrl, url, caller.id));
+      values.push([AI_SETTING_KEYS.baseUrl, url]);
     }
     if (body.model !== undefined) {
-      writes.push(
-        writeSetting(c.env.DB, AI_SETTING_KEYS.model, requireString(body.model, 'model').trim(), caller.id),
-      );
+      values.push([AI_SETTING_KEYS.model, requireString(body.model, 'model').trim()]);
     }
     if (body.temperature !== undefined) {
       const t = optNumber(body.temperature);
       if (t === undefined || t < 0 || t > 2) throw new ApiError(400, 'temperature 需在 0–2 之间');
-      writes.push(writeSetting(c.env.DB, AI_SETTING_KEYS.temperature, String(t), caller.id));
+      values.push([AI_SETTING_KEYS.temperature, String(t)]);
     }
     for (const [field, key] of [
       ['prompt', AI_SETTING_KEYS.prompt],
@@ -170,9 +175,41 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
       if (body[field] === undefined) continue;
       const prompt = requireString(body[field], field);
       if (prompt.length > 8000) throw new ApiError(400, '提示词最多 8000 字');
-      writes.push(writeSetting(c.env.DB, key, prompt, caller.id));
+      values.push([key, prompt]);
     }
-    await Promise.all(writes);
+    // Validate the original input before trimming so leading/trailing control
+    // characters cannot be hidden by whitespace normalisation.
+    if (body.api_key !== undefined) {
+      if (body.api_key === null) {
+        values.push([AI_SETTING_KEYS.apiKeyEncrypted, JSON.stringify({ v: 1, state: 'cleared' })]);
+      } else {
+        const raw = body.api_key;
+        if (typeof raw !== 'string' || /[\u0000\r\n]/.test(raw) ||
+            raw.trim().length === 0 || raw.trim().length > 4096) {
+          throw new ApiError(400, 'api_key 必须是 1–4096 字符且不含 NUL、回车或换行');
+        }
+        const masterKey = c.env.AI_CONFIG_MASTER_KEY;
+        if (!masterKey) {
+          throw new ApiError(503, '缺少 AI_CONFIG_MASTER_KEY，请在服务端配置主密钥后重新部署');
+        }
+        let encrypted: string;
+        try {
+          encrypted = await sealAiApiKey(raw.trim(), masterKey);
+        } catch {
+          throw new ApiError(503, 'AI_CONFIG_MASTER_KEY 格式无效，请配置 Base64 编码的 32 字节主密钥后重新部署');
+        }
+        values.push([AI_SETTING_KEYS.apiKeyEncrypted, encrypted]);
+      }
+    }
+    // No SQL starts until every field is validated and the key is encrypted.
+    // batch is transactional on both D1 and the PostgreSQL adapter.
+    const writes = values.map(([key, value]) => c.env.DB.prepare(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET
+         value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+    ).bind(key, value.replace(/\u0000/g, ''), caller.id));
+    if (writes.length > 0) await c.env.DB.batch(writes);
     const cfg = await loadAiConfig(c.env.DB, c.env);
     return c.json({ ok: true, enabled: cfg.enabled, prompt_version: cfg.promptVersion });
   });
@@ -209,7 +246,6 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
       clamped: outcome.audit.clamped,
       parsed_delta: outcome.audit.parsedDelta,
       latency_ms: outcome.audit.latencyMs || Date.now() - started,
-      raw: outcome.audit.rawResponse,
     });
   });
 

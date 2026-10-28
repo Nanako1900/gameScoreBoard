@@ -125,6 +125,15 @@ function privateToViewer(c: Context<AppEnv>): void {
 }
 
 export function registerRoutes(app: Hono<AppEnv>): void {
+  // Configuration responses stay private even when CSRF or maintenance rejects
+  // the request before its admin handler runs.
+  app.use('*', async (c, next) => {
+    if (c.req.path === '/api/admin/ai-config' || c.req.path === '/api/admin/ai-config/test') {
+      privateToViewer(c);
+    }
+    return next();
+  });
+
   // --- CORS: active only when FRONTEND_ORIGIN is set (split-origin deploys).
   // For single-origin (unified Worker or EdgeOne edge-function proxy) this is a
   // no-op, so same-origin behavior is unchanged. -----------------------------

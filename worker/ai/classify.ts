@@ -25,6 +25,7 @@ import {
 } from '../../shared/scoring';
 import { AI_TIMEOUT_MS } from '../../shared/scoring';
 import type { AiConfig } from './config';
+import { redactAiSecret } from './redact';
 import { extractJsonObject, sanitizeNarrative, VerdictParseError } from './prompt';
 
 /** Where a case's type came from. `derived` = roll-call, never touched the AI. */
@@ -191,7 +192,7 @@ async function callOnce(
     const latencyMs = Date.now() - started;
     const text = await res.text();
     if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      const err = new Error(`HTTP ${res.status}: ${redactAiSecret(text, cfg.apiKey).slice(0, 300)}`);
       err.name = res.status === 400 ? 'BadRequestError' : 'UpstreamError';
       throw err;
     }
@@ -201,7 +202,7 @@ async function callOnce(
     } catch {
       throw new Error('上游返回的不是 JSON');
     }
-    const content = readContent(body);
+    const content = redactAiSecret(readContent(body), cfg.apiKey);
     if (content.length === 0) throw new Error('上游返回了空内容');
     return { text: content, latencyMs };
   } finally {
@@ -255,10 +256,10 @@ export async function classifyClaim(cfg: AiConfig, claim: string): Promise<Class
       try {
         result = await callOnce(cfg, systemPrompt, userMessage, false);
       } catch (retryErr) {
-        return unclassified(claim, cfg, errorMessage(retryErr));
+        return unclassified(claim, cfg, redactAiSecret(errorMessage(retryErr), cfg.apiKey));
       }
     } else {
-      return unclassified(claim, cfg, errorMessage(err));
+      return unclassified(claim, cfg, redactAiSecret(errorMessage(err), cfg.apiKey));
     }
   }
 
@@ -269,13 +270,13 @@ export async function classifyClaim(cfg: AiConfig, claim: string): Promise<Class
     return unclassified(
       claim,
       cfg,
-      errorMessage(err),
+      redactAiSecret(errorMessage(err), cfg.apiKey),
       result.latencyMs,
-      result.text.slice(0, 2000),
+      redactAiSecret(result.text, cfg.apiKey).slice(0, 2000),
     );
   }
 
-  const requested = parsed.type;
+  const requested = redactAiSecret(parsed.type, cfg.apiKey);
   const def = isValidViolationType(requested) ? VIOLATION_MAP[requested] : undefined;
 
   // Reject anything outside the enum, and any bonus type — a judge filing an
@@ -287,7 +288,7 @@ export async function classifyClaim(cfg: AiConfig, claim: string): Promise<Class
         cfg,
         `模型返回了不可用的案由: ${requested.slice(0, 40)}`,
         result.latencyMs,
-        result.text.slice(0, 2000),
+        redactAiSecret(result.text, cfg.apiKey).slice(0, 2000),
         requested,
       ),
     };
@@ -296,14 +297,14 @@ export async function classifyClaim(cfg: AiConfig, claim: string): Promise<Class
   const wantsEscalation = def.type === ESCALATION_ONLY;
   return {
     type: wantsEscalation ? ESCALATION_FALLBACK : def.type,
-    summary: parsed.summary.slice(0, SUMMARY_MAX) || summaryFromClaim(claim),
+    summary: redactAiSecret(parsed.summary, cfg.apiKey).slice(0, SUMMARY_MAX) || summaryFromClaim(claim),
     classifiedBy: 'ai',
     escalationSuggested: wantsEscalation,
     audit: {
       provider: hostOf(cfg.baseUrl),
       model: cfg.model,
       promptVersion: cfg.promptVersion,
-      rawResponse: result.text.slice(0, 2000),
+      rawResponse: redactAiSecret(result.text, cfg.apiKey).slice(0, 2000),
       requestedType: requested,
       latencyMs: result.latencyMs,
       error: null,

@@ -220,3 +220,46 @@ describe('classifyClaim — guardrails', () => {
     await expect(classifyClaim(CFG, CLAIM)).resolves.toMatchObject({ type: UNCLASSIFIED });
   });
 });
+
+
+describe('classifyClaim — credential redaction', () => {
+  it('filters successful summaries and stored upstream text', async () => {
+    fetchMock.mockResolvedValue(chat(JSON.stringify({ type: 'afk', summary: CFG.apiKey })));
+    const out = await classifyClaim(CFG, CLAIM);
+    expect(out.classifiedBy).toBe('ai');
+    expect(out.summary).toBe('[已隐藏]');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+  });
+  it('filters invalid requested types in error and audit', async () => {
+    fetchMock.mockResolvedValue(chat(JSON.stringify({ type: CFG.apiKey, summary: 'x' })));
+    const out = await classifyClaim(CFG, CLAIM);
+    expect(out.classifiedBy).toBe('fallback');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(out.audit.requestedType).toBe('[已隐藏]');
+  });
+  it.each(['http', 'network', 'invalid', 'retry'])('filters %s failures', async (kind) => {
+    if (kind === 'network') fetchMock.mockRejectedValue(new Error(CFG.apiKey));
+    else if (kind === 'invalid') fetchMock.mockResolvedValue(chat(`invalid ${CFG.apiKey}`));
+    else if (kind === 'retry') fetchMock.mockResolvedValueOnce(new Response('retry', { status: 400 })).mockRejectedValueOnce(new Error(CFG.apiKey));
+    else fetchMock.mockResolvedValue(new Response(CFG.apiKey, { status: 500 }));
+    const out = await classifyClaim(CFG, CLAIM);
+    expect(out.classifiedBy).toBe('fallback');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(JSON.stringify(out)).toContain('[已隐藏]');
+  });
+});
+
+
+it('filters a credential decoded from JSON escapes in a classification summary', async () => {
+  fetchMock.mockResolvedValue(chat('{"type":"afk","summary":"\\u0073k-test"}'));
+  const out = await classifyClaim(CFG, CLAIM);
+  expect(out.classifiedBy).toBe('ai');
+  expect(out.summary).toBe('[已隐藏]');
+});
+
+it('redacts a full credential before truncating invalid classification audit text', async () => {
+  const apiKey = 'sk-fake-long-' + 'k'.repeat(60);
+  fetchMock.mockResolvedValue(chat('x'.repeat(1980) + apiKey));
+  const out = await classifyClaim({ ...CFG, apiKey }, CLAIM);
+  expect(out.audit.rawResponse).toBe('x'.repeat(1980) + '[已隐藏]');
+});
