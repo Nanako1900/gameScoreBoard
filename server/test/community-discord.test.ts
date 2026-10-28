@@ -1,0 +1,150 @@
+import { ChannelType, PermissionFlagsBits as P, Routes, type Client } from 'discord.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createCommunityDiscord, type CommunityDiscord } from '../src/community/discord';
+
+const G='1114391825336250432', SELF='222222222222222222', OWNER='333333333333333333', OTHER='444444444444444444';
+const PARENT='555555555555555555', ROOM='666666666666666666', TEXT='777777777777777777';
+const BOTROLE='888888888888888888', FUN='888888888888888881', ADMIN='888888888888888882', HIGH='888888888888888883', MANAGED='888888888888888884';
+const OP='de52a9a3-56a7-4c35-a145-ed3a207bf206';
+const BASE=P.ViewChannel|P.Connect|P.Speak|P.SendMessages|P.EmbedLinks;
+const BOT=BASE|P.ManageChannels|P.ManageRoles|P.MoveMembers|P.ViewAuditLog;
+const rawMember=(id:string,roles:string[]=[],bot=false)=>({user:{id,username:'name-'+id.slice(-3),bot},nick:null,roles,joined_at:'2026-10-28T00:00:00.000Z'});
+const rawChannel=(id=ROOM,type:number=ChannelType.GuildVoice)=>({id,type,guild_id:G,name:'游戏房',parent_id:PARENT,user_limit:0,permission_overwrites:[] as Array<{id:string;type:number;allow:string;deny:string}>});
+const audit=(id:string,target=ROOM,actor=SELF,reason=`community-room:${OP}`)=>({id,target_id:target,user_id:actor,action_type:10,reason,changes:[{key:'type',new_value:2}]});
+const aid=(n:number)=>String(999999999999999999n+BigInt(n));
+function setup(){
+  let ready=true, available=true, botPermissions=BOT;
+  const roles=[{id:G,name:'@everyone',position:0,permissions:BASE.toString(),managed:false},
+    {id:BOTROLE,name:'Bot',position:10,permissions:BOT.toString(),managed:true},
+    {id:FUN,name:'游戏',position:2,permissions:'0',managed:false},
+    {id:ADMIN,name:'管理',position:3,permissions:P.ManageGuild.toString(),managed:false},
+    {id:HIGH,name:'高层',position:11,permissions:'0',managed:false},
+    {id:MANAGED,name:'托管',position:2,permissions:'0',managed:true}];
+  const members=new Map([[SELF,rawMember(SELF,[BOTROLE],true)],[OWNER,rawMember(OWNER,[FUN])],[OTHER,rawMember(OTHER)]]);
+  const channels=new Map([[PARENT,rawChannel(PARENT,ChannelType.GuildCategory)],[ROOM,rawChannel()],[TEXT,rawChannel(TEXT,ChannelType.GuildText)]]);
+  const voices=new Map([[OWNER,{id:OWNER,channelId:ROOM}],[OTHER,{id:OTHER,channelId:ROOM}]]);
+  const guild={id:G,name:'社区',ownerId:'999999999999999998',get available(){return available},voiceStates:{cache:voices},members:{cache:new Map()}};
+  const pages:unknown[]=[];const memberPages:unknown[]=[];
+  const get=vi.fn(async(route:string,options?:{query?:URLSearchParams})=>{
+    if(route===Routes.guild(G))return{id:G,name:'社区',owner_id:guild.ownerId};
+    if(route===Routes.guildRoles(G))return roles.map(r=>r.id===BOTROLE?{...r,permissions:botPermissions.toString()}:r);
+    if(route===Routes.guildChannels(G))return[...channels.values()];
+    if(route===Routes.guildMembers(G))return memberPages.length?memberPages.shift():[...members.values()];
+    if(route===Routes.guildAuditLog(G))return pages.length?pages.shift():{audit_log_entries:[]};
+    if(route.startsWith(`/guilds/${G}/members/`)){const m=members.get(route.slice(route.lastIndexOf('/')+1));if(!m)throw{status:404,code:10007};return m}
+    if(route.startsWith('/channels/')){const c=channels.get(route.split('/')[2]);if(!c)throw{status:404,code:10003};return c}
+    throw new Error('Unexpected GET '+route);
+  });
+  const post=vi.fn(async(route:string,options:{body:Record<string,unknown>;reason?:string})=>route===Routes.guildChannels(G)?{...rawChannel(),...options.body,id:ROOM}:{id:'900000000000000001'});
+  const patch=vi.fn(async()=>({}));const put=vi.fn(async()=>({}));const del=vi.fn(async()=>({}));
+  const client={user:{id:SELF},isReady:()=>ready,guilds:{cache:new Map([[G,guild]])},rest:{get,post,patch,put,delete:del}} as unknown as Client;
+  const api=createCommunityDiscord(client,G);
+  return{api,client,guild,roles,members,channels,voices,pages,memberPages,get,post,patch,put,del,setReady:(x:boolean)=>ready=x,setAvailable:(x:boolean)=>available=x,setBotPermissions:(x:bigint)=>botPermissions=x};
+}
+
+describe('community Discord resource adapter',()=>{
+  it('reads a complete REST member directory rather than the intentionally empty member cache',async()=>{
+    const s=setup();const data=await s.api.snapshot();expect(data.ready).toBe(true);expect(data.guildName).toBe('社区');expect(data.selfId).toBe(SELF);
+    expect(data.members.map(m=>m.id)).toContain(OWNER);expect(data.resources).toEqual(expect.arrayContaining([expect.objectContaining({id:PARENT,kind:'category'}),expect.objectContaining({id:ROOM,kind:'voice'}),expect.objectContaining({id:TEXT,kind:'text'})]));
+    expect(data.resources.find(r=>r.id===FUN)?.safe).toBe(true);
+    for(const id of[G,BOTROLE,ADMIN,HIGH,MANAGED])expect(data.resources.find(r=>r.id===id)?.safe).toBe(false);
+    expect(s.guild.members.cache.size).toBe(0);
+  });
+  it('paginates more than a thousand members with an increasing member cursor',async()=>{
+    const s=setup();const first=Array.from({length:1000},(_,i)=>rawMember(aid(i+1)));s.memberPages.push(first,[rawMember(aid(1001))]);
+    const result=await s.api.snapshot();expect(result.members).toHaveLength(1001);
+    const calls=s.get.mock.calls.filter(c=>c[0]===Routes.guildMembers(G));expect(calls[1][1]?.query?.get('after')).toBe(aid(1000));
+  });
+  it('does not publish an incomplete or malformed member snapshot',async()=>{
+    const s=setup();s.memberPages.push([{user:{id:OWNER},roles:[]}]);await expect(s.api.snapshot()).rejects.toThrow();
+  });
+  it('returns an explicitly unready snapshot and unknown voice presence while gateway is unavailable',async()=>{
+    const s=setup();s.setAvailable(false);expect((await s.api.snapshot()).ready).toBe(false);expect(s.api.occupants(ROOM)).toBeNull();expect(s.api.channelOf(OWNER)).toBeUndefined();expect(s.get).not.toHaveBeenCalled();
+  });
+  it('reads occupants and current channel from voice state cache, preserving disconnected versus unknown',()=>{
+    const s=setup();expect(s.api.occupants(ROOM)).toEqual([OWNER,OTHER]);expect(s.api.channelOf(OWNER)).toBe(ROOM);expect(s.api.channelOf('999999999999999997')).toBeNull();s.setReady(false);expect(s.api.channelOf(OWNER)).toBeUndefined();
+  });
+  it('fetches current membership afresh and represents departed members as null',async()=>{
+    const s=setup();expect((await s.api.member(OWNER))?.roleIds).toEqual([FUN]);s.members.delete(OWNER);expect(await s.api.member(OWNER)).toBeNull();
+  });
+  it('checks effective channel access, including member overwrites and roles',async()=>{
+    const s=setup();s.channels.get(ROOM)!.permission_overwrites=[{id:G,type:0,allow:'0',deny:(P.ViewChannel|P.Connect).toString()},{id:OWNER,type:1,allow:(P.ViewChannel|P.Connect).toString(),deny:'0'}];
+    expect(await s.api.canView(OWNER,ROOM)).toBe(true);expect(await s.api.canConnect(OWNER,ROOM)).toBe(true);expect(await s.api.canView(OTHER,ROOM)).toBe(false);expect(await s.api.canConnect(OTHER,ROOM)).toBe(false);
+  });
+  it('creates rooms with explicit owner and bot access, without granting owner management power',async()=>{
+    const s=setup();expect(await s.api.createVoice(PARENT,'我的房间',OWNER,'hidden',6,OP)).toBe(ROOM);
+    const call=s.post.mock.calls.find(c=>c[0]===Routes.guildChannels(G))!;expect(call[1].reason).toBe(`community-room:${OP}`);
+    const body=call[1].body;expect(body).toMatchObject({name:'我的房间',type:ChannelType.GuildVoice,parent_id:PARENT,user_limit:6});
+    const overwrites=body.permission_overwrites as Array<{id:string;allow:string;deny:string}>;
+    const bot=overwrites.find(o=>o.id===SELF)!;const owner=overwrites.find(o=>o.id===OWNER)!;const everyone=overwrites.find(o=>o.id===G)!;
+    expect(BigInt(bot.allow)&(P.ViewChannel|P.Connect)).toBe(P.ViewChannel|P.Connect);expect(BigInt(owner.allow)&(P.ManageChannels|P.ManageRoles|P.Administrator)).toBe(0n);expect(BigInt(everyone.deny)&P.ViewChannel).toBe(P.ViewChannel);
+  });
+  it('refuses creation after fresh permission loss, with no Discord write',async()=>{
+    const s=setup();s.setBotPermissions(BASE);await expect(s.api.createVoice(PARENT,'房间',OWNER,'open',0,OP)).rejects.toMatchObject({status:403});expect(s.post).not.toHaveBeenCalled();
+  });
+  it('preserves member grants and bot access when locking a room',async()=>{
+    const s=setup();s.channels.get(ROOM)!.permission_overwrites=[{id:OTHER,type:1,allow:(P.ViewChannel|P.Connect).toString(),deny:'0'}];
+    await s.api.setVisibility(ROOM,OWNER,'locked');const body=(s.patch.mock.calls[0] as unknown[])[1] as {body:{permission_overwrites:Array<{id:string;allow:string;deny:string}>}};
+    expect(body.body.permission_overwrites).toContainEqual(expect.objectContaining({id:OTHER,allow:(P.ViewChannel|P.Connect).toString()}));
+    expect(body.body.permission_overwrites.find(o=>o.id===SELF)?.allow).toBe((P.ViewChannel|P.Connect).toString());
+    expect(BigInt(body.body.permission_overwrites.find(o=>o.id===G)!.deny)&P.Connect).toBe(P.Connect);
+  });
+  it('rejects role overwrites that would bypass a lock rather than modifying manual role access',async()=>{
+    const s=setup();s.channels.get(ROOM)!.permission_overwrites=[{id:FUN,type:0,allow:P.Connect.toString(),deny:'0'}];await expect(s.api.setVisibility(ROOM,OWNER,'locked')).rejects.toMatchObject({status:409});expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('grants and denies only a current guild member’s view/connect access',async()=>{
+    const s=setup();await s.api.grant(ROOM,OTHER);await s.api.deny(ROOM,OTHER);expect(s.put).toHaveBeenCalledTimes(2);
+    expect((s.put.mock.calls[0] as unknown[])[1]).toMatchObject({body:{type:1,allow:(P.ViewChannel|P.Connect).toString()}});
+    s.members.delete(OTHER);await expect(s.api.grant(ROOM,OTHER)).rejects.toMatchObject({status:404});expect(s.put).toHaveBeenCalledTimes(2);
+  });
+  it('does not move a disconnected member back into voice',async()=>{
+    const s=setup();s.voices.delete(OWNER);await expect(s.api.move(OWNER,ROOM)).rejects.toMatchObject({status:409});expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('will not move a member into a channel they cannot access',async()=>{
+    const s=setup();s.channels.get(ROOM)!.permission_overwrites=[{id:G,type:0,allow:'0',deny:P.Connect.toString()}];await expect(s.api.move(OWNER,ROOM)).rejects.toMatchObject({status:403});expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('rechecks occupied status after asynchronous checks before deleting and rejects unknown presence',async()=>{
+    const s=setup();await expect(s.api.delete(ROOM)).rejects.toMatchObject({status:409});s.voices.clear();s.setAvailable(false);await expect(s.api.delete(ROOM)).rejects.toMatchObject({status:503});expect(s.del).not.toHaveBeenCalled();
+  });
+  it('rejects unsafe or newly elevated roles at execution, for add and removal',async()=>{
+    const s=setup();await expect(s.api.addRole(OWNER,ADMIN)).rejects.toMatchObject({status:403});await expect(s.api.removeRole(OWNER,HIGH)).rejects.toMatchObject({status:403});expect(s.put).not.toHaveBeenCalled();expect(s.del).not.toHaveBeenCalled();
+    await s.api.addRole(OWNER,FUN);s.roles.find(r=>r.id===FUN)!.permissions=P.Administrator.toString();await expect(s.api.addRole(OWNER,FUN)).rejects.toMatchObject({status:403});expect(s.put).toHaveBeenCalledTimes(1);
+  });
+  it('never pings from welcome text or the fixed community panel',async()=>{
+    const s=setup();await s.api.sendText(TEXT,'欢迎 @everyone');await s.api.sendPanel(TEXT);
+    for(const [,options]of s.post.mock.calls)expect(options.body.allowed_mentions).toEqual({parse:[]});
+    const panel=s.post.mock.calls[1][1].body;const serialized=JSON.stringify(panel);expect(serialized).toContain('v1:community:room');expect(serialized).toContain('v1:community:roles');expect(serialized).toContain('v1:community:play');
+  });
+  it('edits an existing panel only when it is a message authored by this bot',async()=>{
+    const s=setup();
+    const original=s.get.getMockImplementation()!;
+    s.get.mockImplementation(async(route,options)=>route===Routes.channelMessage(TEXT,'900000000000000001')?{id:'900000000000000001',author:{id:OTHER}}:original(route,options));
+    await expect(s.api.sendPanel(TEXT,'900000000000000001')).rejects.toMatchObject({status:409});expect(s.patch).not.toHaveBeenCalled();
+  });
+});
+
+describe('community voice creation audit recovery',()=>{
+  it('matches only this bot’s exact operation reason and validates the channel',async()=>{
+    const s=setup();s.pages.push({audit_log_entries:[audit(aid(5),ROOM,OTHER),audit(aid(4),ROOM,SELF,'other'),audit(aid(3))]});expect(await s.api.findCreatedVoice(OP)).toBe(ROOM);
+  });
+  it('returns null only after a complete scan and fresh permission recheck',async()=>{
+    const s=setup();expect(await s.api.findCreatedVoice(OP)).toBeNull();expect(s.get.mock.calls.filter(c=>c[0]===Routes.guildRoles(G))).toHaveLength(2);
+  });
+  it('continues through a full audit page using a strictly decreasing before cursor',async()=>{
+    const s=setup();const first=Array.from({length:100},(_,i)=>audit(aid(200-i),ROOM,SELF,'unrelated'));s.pages.push({audit_log_entries:first},{audit_log_entries:[audit(aid(100))]});expect(await s.api.findCreatedVoice(OP)).toBe(ROOM);
+    const calls=s.get.mock.calls.filter(c=>c[0]===Routes.guildAuditLog(G));expect(calls[1][1]?.query?.get('before')).toBe(aid(101));
+  });
+  it('does not guess when two creates carry the operation marker',async()=>{
+    const s=setup();s.pages.push({audit_log_entries:[audit(aid(2)),audit(aid(1),'666666666666666667')]});await expect(s.api.findCreatedVoice(OP)).rejects.toMatchObject({status:409});
+  });
+  it('does not mistake a missing audit permission for no matching room',async()=>{
+    const s=setup();s.setBotPermissions(BOT&~P.ViewAuditLog);await expect(s.api.findCreatedVoice(OP)).rejects.toMatchObject({status:403});expect(s.get.mock.calls.some(c=>c[0]===Routes.guildAuditLog(G))).toBe(false);
+  });
+  it('fails on malformed pages, wrong order or interrupted pagination',async()=>{
+    for(const entries of[null,[audit(aid(1)),audit(aid(2))],[{id:'bad'}]]){const s=setup();s.pages.push({audit_log_entries:entries});await expect(s.api.findCreatedVoice(OP)).rejects.toThrow()}
+    const s=setup();const get=s.get.getMockImplementation()!;s.get.mockImplementation(async(route,options)=>{if(route===Routes.guildAuditLog(G))throw new Error('network down');return get(route,options)});await expect(s.api.findCreatedVoice(OP)).rejects.toThrow();
+  });
+  it('fails if audit permission is revoked during the scan',async()=>{
+    const s=setup();const get=s.get.getMockImplementation()!;s.get.mockImplementation(async(route,options)=>{if(route===Routes.guildAuditLog(G)){s.setBotPermissions(BOT&~P.ViewAuditLog);return{audit_log_entries:[]}}return get(route,options)});await expect(s.api.findCreatedVoice(OP)).rejects.toMatchObject({status:403});
+  });
+});
