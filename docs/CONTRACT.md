@@ -324,11 +324,23 @@ including gap endpoints `{ from, to }`, are second-resolution UTC `YYYY-MM-DD HH
 Daily totals clip each segment to the selected board day and fixed query time, sum seconds for each day, then floor once to minutes.
 A segment crossing midnight appears on both days; `continued` means it began before that day.
 `first_join` is the earliest actual join begun on that day, or null if there is no such join.
-A nonempty day with only continued segments displays 「接上一天」; an empty day displays 「首次 —」.
+A nonempty history day with an explicit continued segment and no actual first join displays 「接上一天」.
+A noncontinued history with no first join says 「首次进入时间未记录」. An empty day says 「无保存记录」
+rather than inventing a zero-minute visit or an arrival time. Day-roster rows have no `continued` field:
+a null `first_join` there says 「首次进入时间未记录」 and never establishes a continuation.
 Original segment timestamps stay intact. Every requested day is returned, including empty days.
 An open segment is capped at the fixed query time for arithmetic and displayed with 「尚未记录离开」 and
 「时长按查询时刻估算」. `bot_online` adds 「机器人上线时已在语音里」;
 `bot_offline` adds 「之后机器人离线，离开时间不确定」.
+
+Web and Discord use `shared/voicePresentation.ts` for personal-history presentation. The full query period
+shows `YYYY-MM-DD — YYYY-MM-DD`, including the year across New Year, followed by newest dates first.
+Within a day, show cumulative duration and first-arrival/continuation text before the channel, exact interval
+and qualifications. Durations are compact: `35分钟`, `1小时`, `1小时5分钟`. Recorded segment endpoints retain
+seconds, e.g. `20:14:05 – 20:14:25`; an endpoint outside that day's context includes `MM-DD`.
+Gap endpoints always include `MM-DD HH:mm:ss`. All use the board offset. 「累计时长按天向下取整到分钟。」
+explains the existing daily arithmetic: a real 20-second segment may have `total_min = 0`, but still shows
+its channel and exact interval. Empty dates stay present as brief rows, without fabricated visit statistics.
 
 `gaps` are the complement of the union of persisted `[started_at, last_seen_at]` coverage intervals,
 clipped to the requested range up to the fixed query time. Readers never extend coverage to the query time,
@@ -339,12 +351,27 @@ A day row's `in_voice_now` is true only for an open segment on the current
 board day whose query time is inside persisted coverage. `has_open_segment` alone only means
 「尚未记录离开」. History details never label an unclosed segment as online.
 
-Render gaps visibly, with second-resolution endpoints and 「这段时间机器人不在线，没有记录不代表没来。」.
+Render gaps visibly, with second-resolution endpoints and 「这些时段没有完整记录，没有记录不代表没来。」.
 Keep the qualifier 「未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。」
 on the web and bot, including truncated bot output; a gap is not a claim that the Gateway was definitely offline.
 An empty result says 「没有保存的语音记录，不代表没来」: the requested period may predate binding,
 or records may have expired or be unavailable.
 Neither a gap nor an empty day proves absence.
+
+The web shows the number of uncovered intervals and an expandable complete list, retaining all endpoints
+when collapsed. Discord `/voice` stays ephemeral, defaults to 7 days and accepts only integer 1–14 days;
+its explicit person option remains limited to judges/admins. A single embed separates query period/timezone,
+daily headings and summaries, channel/time rows, and evidence qualifications. Its normal form includes every
+gap. If too long, first omit segment detail while retaining every date's summary and qualifications; say
+「已省略 N 条分日段明细。」 with the exact sum of the days' segment entries. A cross-midnight segment may
+appear on two dates, so this count is not a unique-session count. If still too long, omit only complete gap
+entries and say 「另 N 段未覆盖时段未展开。」 with the exact omitted-gap count, rather than a generic line count.
+All normal 1–14-day summaries, empty-record/minute-rounding explanations and relevant uncertainty
+qualifications survive this reduction; when gaps exist, both gap warnings stay visible too.
+Keep title/description/footer and combined text within
+the existing 256/4096/2048/6000-character budgets. Names/channels remain escaped, with no Discord or channel IDs.
+The website button opens `/players/<userId>` for an ordinary caller viewing themself, or
+`/tools/voice?user=<encoded Nanako ID>` for staff; it never uses Discord identifiers or bypasses web authorization.
 
 ### Retired scheduling data
 

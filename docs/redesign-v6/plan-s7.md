@@ -31,3 +31,7 @@
 ## 5. 分支、PR与停止点
 
 分支 `codex/voice-record-format`，PR标题 `feat: 优化网页与 Discord 语音记录呈现（S7）`。从最新main开始，一期一个PR，无署名行。创建PR后停下，等待机主检查与合并。不部署、不自行合并、不连接远程数据库；部署与备份由机主处理。
+
+## 6. 提交前结果
+
+八项全量通过：unit **46 / 707**，DOM **51 / 668**，D1 **18 / 555 + 5 todo**，PG **40 / 955 + 5 todo**，server **32 / 384**；typecheck、build、build:pages 通过。全部新增用例先红后绿，无删除旧测试。格式、像素和长度预算验收见 [s7-acceptance.md](s7-acceptance.md)，前后数量见 [HANDOFF](HANDOFF.md#s7-基线与提交前验证)。创建 PR 后停下等待检查。
