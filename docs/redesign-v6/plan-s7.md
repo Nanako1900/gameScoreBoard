@@ -34,4 +34,6 @@
 
 ## 6. 提交前结果
 
-八项全量通过：unit **46 / 707**，DOM **51 / 668**，D1 **18 / 555 + 5 todo**，PG **40 / 955 + 5 todo**，server **32 / 384**；typecheck、build、build:pages 通过。全部新增用例先红后绿，无删除旧测试。格式、像素和长度预算验收见 [s7-acceptance.md](s7-acceptance.md)，前后数量见 [HANDOFF](HANDOFF.md#s7-基线与提交前验证)。创建 PR 后停下等待检查。
+首次八项全量通过：unit **46 / 707**，DOM **51 / 668**，D1 **18 / 555 + 5 todo**，PG **40 / 955 + 5 todo**，server **32 / 384**；typecheck、build、build:pages 通过。全部新增用例先红后绿，无删除旧测试。
+
+提 PR 前 main 新合入 #44（`d7c4b0d`），已合入本分支并再次通过八项：unit **48 / 719**，DOM **56 / 727**，D1 **19 / 561 + 5 todo**，PG **48 / 1085 + 5 todo**，server **43 / 577**；typecheck、build、build:pages 通过。仅衔接上游，未扩大 S7 范围。格式、像素和长度预算验收见 [s7-acceptance.md](s7-acceptance.md)，两轮前后数量见 [HANDOFF](HANDOFF.md#s7-基线与提交前验证)。创建 PR 后停下等待检查。

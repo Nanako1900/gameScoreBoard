@@ -149,3 +149,19 @@ describe('envFlag / envInt', () => {
     expect(warn).toHaveBeenCalledTimes(6);
   });
 });
+
+describe('community backend mount',()=>{
+ it('serves the Node module without OAuth binding secrets or a Bot token',async()=>{
+  const {createPool}=fakePool();
+  const backend=createBackend({...API_ENV,COMMUNITY_ENABLED:'true',GUILD_ID:'1114391825336250432'}, {createPool,log:quietLog()})!;
+  const response=await backend.part.fetch(new Request('https://api.example.com/api/community'));
+  expect(response.status).toBe(401);expect(response.headers.get('Cache-Control')).toBe('no-store');
+  await backend.close(0);
+ });
+ it('keeps the feature absent until explicitly enabled',async()=>{
+  const {createPool}=fakePool();
+  const backend=createBackend({...API_ENV,GUILD_ID:'1114391825336250432'}, {createPool,log:quietLog()})!;
+  expect((await backend.part.fetch(new Request('https://api.example.com/api/community'))).status).toBe(404);
+  await backend.close(0);
+ });
+});

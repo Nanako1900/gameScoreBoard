@@ -607,6 +607,8 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
 - One primary navigation in DOM order serves every viewport: 「首页」「信誉榜」「案件」「设置」.
   The signed-in todo count belongs to 「案件」. The account menu has only 「我的记录」「退出登录」;
   the cases page links judges/admins to 「裁判工具」. There is no separate phone bottom navigation.
+  When the Node/PG community module is available, home adds one 「社区中心」 entry; its room,
+  role and fun pages remain a separate feature group rather than another primary-navigation set.
   `/cases` defaults to 「我的待办」 for signed-in readers and 「公开记录」 for visitors.
   `?view=todo` / `?view=public` selects the section without changing `parseRoute`.
   Public-record filters operate only on the currently loaded records, including withdrawn,
@@ -689,11 +691,15 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   | `/` | overview | `HOME_PATH` |
   | `/board` | complete standings and weekly recovery countdown | `boardPath('list')` |
   | `/cases` | own todo / public records | `CASES_PATH`; `?view=public` selects public records |
+  | `/community` | community room page, scoped to the current actor | community capability required |
+  | `/community/roles` | self-service community interest roles | community capability required |
+  | `/community/play` | community fun tools and authorized results | community capability required |
   | `/settings` | personal profile, same content as `/settings/profile` | default profile alias |
   | `/settings/profile` | personal display name and identity | `settingsPath('profile')` |
   | `/settings/discord` | Discord binding and DM preferences | `settingsPath('discord')` |
   | `/settings/members` | all-account role management, admins only | `settingsPath('members')` |
   | `/settings/ai` | AI connection, credentials and configuration, admins only | `settingsPath('ai')` |
+  | `/settings/community` | community configuration, rooms, operations and audit, admins only | community capability required |
   | `/tools` | judge/admin tool directory | `toolsPath('home')`, also the default `toolsPath()` |
   | `/tools/filing` | judge/admin filing form | `toolsPath('filing')` |
   | `/tools/voice` | judge/admin voice evidence | `toolsPath('voice')` |
@@ -708,6 +714,7 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   | `/board/feed` | current public cases page | preserved old feed address |
   | `/admin`, `/admin/voice` | current voice tool, staff gate retained | preserved old management addresses |
   | `/admin/members`, `/admin/ai` | current members / AI settings, admins only | preserved old management addresses |
+  | `/admin/community` | current community settings, admins only | preserved community-management address |
   | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | every retired scheduling address |
 
   All non-home routes cover the home content, while the global navigation remains available.
@@ -725,7 +732,9 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   Not found: `/players/<userId>` → 「找不到这位选手。」 with 「看信誉榜」; a case →
   「链接里的案件不存在了。」, any other failure → 「打不开链接里的案件，稍后再试。」.
 - Settings are centralized under 「设置」. Signed-in readers see 「个人资料」「Discord 与通知」;
-  admins additionally see 「成员与权限」「AI 模型与密钥」. A signed-out personal settings page
+  admins additionally see 「成员与权限」「AI 模型与密钥」 and, when supported, 「社区管理」.
+  `/settings` continues to mean the profile default; community settings do not replace it or add
+  another account-settings shell. A signed-out personal settings page
   offers login with the ordinary return destination. Members/AI settings require an admin
   before mounting their private form or making its API reads; a judge alone gets NotFound.
   API 403/404 removes unavailable private content; ordinary errors offer a local retry.
@@ -808,3 +817,40 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   Logging out clears the login return and pending welcome destination.
 - A case with `redacted: true` says a statement exists (when `statement_at` is
   set) rather than calling it a verdict in absence, and shows no verdict words.
+
+## 5. 社区 Bot / 网页模块（Node / PostgreSQL 专属）
+
+此新增模块的 Node/PG 边界已由机主确认。`COMMUNITY_ENABLED` 默认关闭；旧 Worker/D1 的下列路径返回 JSON 404，网页隐藏入口。既有信誉、案件、语音证据和绑定契约不变。
+
+所有社区 API 需要现有 Nanako session，返回 `Cache-Control: no-store`。JSON POST 还要求受允许的 Origin，并遵守 READ_ONLY。网页个人控制需当前 Discord 绑定与服务器成员身份；社区管理员只来自当前 `users.is_admin`，无需 Discord 绑定也可配置和管理已有房间。Bot 普通命令不需要绑定。API 不持 Bot Token，只写持久任务；Bot 执行前以及多个外部副作用之间重查身份、权限、版本、租约和目标资源。
+
+| 地址 | 方法 / 返回 |
+|---|---|
+| `/api/community` | GET `{settings: member projection, version, runtime, me}` |
+| `/api/community/rooms` | GET `{rooms}`；POST `{name?, requestKey}` → 202 `{operation}` |
+| `/api/community/rooms/:ref` | GET 当前可见房间；不可见与不存在同为 404 |
+| `/api/community/rooms/:ref/actions` | POST `{action, expectedVersion, requestKey, ...fields}` → 202 `{operation}` |
+| `/api/community/resources?kind=member\|role` | GET `{resources}`，成员只见安全的成员／白名单身份选择器 |
+| `/api/community/roles` | GET `{choices, selectedRefs, maxChoices, enabled}`；POST `{roleRefs, requestKey}` → 202 `{operation}` |
+| `/api/community/fun` | GET `{items}`；POST `{kind, input, roomRef?, requestKey}` → 202 `{operation}` |
+| `/api/community/fun/:ref/actions` | POST `{action: vote\|close\|redraw, choice?, requestKey}` → 202 `{operation}` |
+| `/api/community/operations/:ref` | GET `{operation}`，当前本人身份或管理员可读，目标范围仍须可见 |
+| `/api/admin/community` | GET `{settings, version, runtime}`；POST `{settings, expectedVersion, requestKey}` 原子保存全配置及应用任务，202 返回同结构和 `operation` |
+| `/api/admin/community/resources` | GET `{resources}`，管理员按名称选择分类／文字或语音频道／角色／成员 |
+| `/api/admin/community/operations`、`/audit` | GET `{operations}` / `{audit}`，仅管理员 |
+| `/api/admin/community/sync` | POST `{requestKey, kind?: resources.sync\|panel.refresh}` → 202 `{operation}` |
+| `/api/admin/community/operations/:ref/review` | POST `{confirm: true, requestKey}` → `{operation}`，仅当前管理员二次确认后取消待对账旧任务；不重放动作、不直接恢复房间 |
+
+房间动作：`join`、`rename {name}`、`limit {userLimit}`、`visibility {visibility}`、`grant/deny/kick/transfer {memberRef}`、`accept`、`claim`、`dissolve`、`admin_delete {confirm:true}`。加入前必须已连接语音，不能替未连接成员开始语音；管理员强制关闭必须先移动所有人到独立等候区，失败不删除。
+
+- 所有 ref 是随机 UUID v4，与原始 Discord ID 无可逆关系。DTO、URL、错误、审计与选择器不含原始成员／频道／角色标识、CDN 头像或精确频道链接。管理员配置也只用 opaque refs。
+- 成员配置投影不包含行政资源选择或私有 AI prompt。私房名称、成员、人数、互动与操作结果均按当前可见范围过滤。待对账房间对其他普通成员隔离；本人只见自身可读状态，管理员可诊断。
+- 操作状态：`queued/running/retry_wait/succeeded/failed/conflict/canceled/needs_review`。202 不代表执行成功。相同 actor 和 requestKey 的相同请求返回同一任务，不同内容冲突；房间与同成员的跨端角色任务分别串行。过期 running 进入待对账，不自动重放。
+- `runtime.ready` 有新鲜度限制；`appliedVersion` 与已保存 `version` 分开。恢复时只信完整资源／语音快照、已登记目标和严格审计标记，不把未知当作空房；Gap 后重新观察宽限。
+- 人工 review 只取消旧任务、解除 scope 阻塞并记审计。欢迎保守计作已发送；房间须再经类型、分类、完整访问模型或唯一建房审计证明才能恢复。不可证明时继续隔离。
+- 趣味结果不参与计分。投票同 Discord 身份跨端一票、可在截止前改票；抽签不放回，重抽保存旧记录；分队仅使用明确选定成员。
+- 社区 AI 独立开关／prompt／配额，复用已保存提供商凭据；只用本次主动主题，按现有 reset 时区原子计配额（失败也计）。无房间范围的建议仅创建者与管理员可读；房间范围继承房间 ACL；应用名字是另一次房主管理动作。
+
+新 PG 表均由可重复执行的 `0012_community.sql` 创建：settings、resources、rooms、room_access、operations、audit、fun、poll_votes、ai_usage、role_choices、welcomes（均带 `community_` 前缀）。不删除或复用约局／历史／语音证据表。
+
+本 PR 已基于 `3119a96`（main #43，S6 清爽总览）融合。新增社区页面 `/community`、`/community/roles`、`/community/play`，管理页使用既有集中设置中的 `/settings/community`；`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。

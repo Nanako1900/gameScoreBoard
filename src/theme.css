@@ -23,6 +23,7 @@
   --up: var(--green);
   --down: var(--danger-text);
   --action: var(--gold);
+  --on-action: #ffffff;
   --attn: var(--amber);
   --ok: var(--green);
   --neutral: var(--muted);

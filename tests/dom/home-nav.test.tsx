@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/App';
@@ -53,6 +53,17 @@ describe('header navigation', () => {
       onLogout={vi.fn()} onOpenOnboarding={vi.fn()} />);
     expect(within(nav).getByRole('link', { name: '案件' })).toHaveAttribute('aria-current', 'page');
     expect(within(nav).queryByText('0')).not.toBeInTheDocument();
+  });
+  it.each([
+    [{ name: 'community', tab: 'rooms' }, '首页'],
+    [{ name: 'community', tab: 'roles' }, '首页'],
+    [{ name: 'community', tab: 'play' }, '首页'],
+    [{ name: 'communityAdmin' }, '设置'],
+  ] as const)('marks the existing primary destination for %o without a community navigation item', (route, current) => {
+    render(<Header me={ME} config={CONFIG} route={route} onLogout={vi.fn()} onOpenOnboarding={vi.fn()} />);
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(nav).getAllByRole('link').map(link => link.textContent)).toEqual(['首页', '信誉榜', '案件', '设置']);
+    expect(within(nav).getByRole('link', { name: current })).toHaveAttribute('aria-current', 'page');
   });
   it('marks my own profile as home, other players as board, and old admin settings as settings', () => {
     const props = { me: ME, config: CONFIG, onLogout: vi.fn(), onOpenOnboarding: vi.fn() };
@@ -117,11 +128,14 @@ describe('loading skeleton', () => {
   });
 });
 
-function homeFetch(signedIn = true): void {
+function homeFetch(signedIn = true, community: 'supported' | 'unsupported' = 'unsupported'): void {
   const participants = Array.from({ length: 12 }, (_, i) => ({ ...ME, id: i === 11 ? ME.id : `p${i}`, username: i === 11 ? ME.username : `玩家${i}`, score: 100 - i }));
   const json = (body: unknown): Response => ({ ok: true, status: 200, text: async () => JSON.stringify(body) }) as Response;
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const path = String(input);
+    if (path === '/api/community') return Promise.resolve(community === 'supported'
+      ? Response.json({ settings: { enabled: true }, me: { isAdmin: false } })
+      : Response.json({ error: 'Not found' }, { status: 404 }));
     if (path === '/api/config') return Promise.resolve(json(CONFIG));
     if (path === '/api/me') return Promise.resolve(json({ user: signedIn ? { ...ME, score: 89 } : null, pending: { statements: 0, appeals: 0 } }));
     if (path === '/api/leaderboard') return Promise.resolve(json({ participants }));
@@ -168,6 +182,26 @@ describe('home layout integration', () => {
     expect(screen.getByRole('link', { name: '阅读战报' })).toHaveAttribute('href', '/board/report');
     expect(screen.getByRole('navigation', { name: '主导航' }).querySelectorAll('a')).toHaveLength(4);
     expect(document.querySelector('.btabs')).toBeNull();
+  });
+  it.each([false, true])('keeps community as one home entry without a fifth primary destination, desktop=%s', async (desktop) => {
+    if (desktop) useDesktopViewport();
+    homeFetch(true, 'supported'); render(<App />);
+    const entry = await screen.findByRole('complementary', { name: '社区中心' });
+    expect(within(entry).getByRole('link', { name: '进入社区' })).toHaveAttribute('href', '/community');
+    expect(screen.getAllByRole('link', { name: '进入社区' })).toHaveLength(1);
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(nav).getAllByRole('link').map(link => link.textContent)).toEqual(['首页', '信誉榜', '案件', '设置']);
+    expect(within(nav).queryByRole('link', { name: /社区/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '社区管理' })).not.toBeInTheDocument();
+    expect(document.querySelector('.btabs')).toBeNull();
+  });
+  it('hides the unsupported community entry while keeping the four ordinary destinations', async () => {
+    homeFetch(true, 'unsupported'); render(<App />);
+    await screen.findByText('当前没有待办。');
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === '/api/community')).toBe(true));
+    expect(screen.queryByRole('complementary', { name: '社区中心' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '进入社区' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('link')).toHaveLength(4);
   });
   it('first load has a header and three busy skeletons, with no headings or navigation', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {}))); render(<App />);

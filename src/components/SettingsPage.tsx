@@ -9,6 +9,7 @@ import { VOICE_RETENTION_DAYS } from '@shared/voice';
 import { DISCORD_INVITE_URL } from '../lib/env';
 import { AiSettings } from './AiSettings';
 import { ConfirmInline } from './ConfirmInline';
+import { CommunitySettingsLink } from './CommunitySettingsLink';
 import { DiscordLinkCard } from './DiscordLinkCard';
 import { DiscordNotificationSettings } from './DiscordNotificationSettings';
 import { IdentityForm, type IdentityFormHandle } from './IdentityForm';
@@ -58,7 +59,7 @@ function SettingsContent(props: SettingsPageProps & { me: User }): JSX.Element {
         <nav className="settings-page__nav" aria-label="设置分类">
           <span>个人设置</span>{personal.map(value => <Link key={value} to={settingsPath(value)} aria-current={tab === value ? 'page' : undefined}>{LABELS[value]}</Link>)}
           {me.is_admin && <><span>管理员设置</span>{(['members', 'ai'] as const).map(value => <Link key={value} to={settingsPath(value)}
-            aria-current={tab === value ? 'page' : undefined}>{LABELS[value]}</Link>)}</>}
+            aria-current={tab === value ? 'page' : undefined}>{LABELS[value]}</Link>)}<CommunitySettingsLink me={me} /></>}
         </nav>
         <div className="settings-page__content">
           {tab === 'profile' && <section className="settings-page__card panel"><IdentityForm ref={identity} me={me} mode="settings"
