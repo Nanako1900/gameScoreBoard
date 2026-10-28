@@ -9,4 +9,3 @@
 .welcome-step__body[hidden] { display: none; }
 .welcome-step--disabled { color: var(--muted); }
 .welcome-step__heading:disabled { cursor: default; }
-.welcome-page__error { color: var(--danger-text); }

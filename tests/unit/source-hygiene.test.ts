@@ -25,6 +25,16 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/** Table shape may evolve; only the path cell identifies a route. */
+function routeRow(document: string, route: string): string {
+  const row = document.split('\n').find((line) => line.trimStart().startsWith('|')
+    && line.split('|')[1]?.includes('`' + route + '`'));
+  expect(row, `${route} route is missing from the documentation table`).toBeDefined();
+  return row ?? '';
+}
+
+const normalized = (value: string): string => value.replace(/\s+/g, ' ');
+
 describe('source files', () => {
   it('contain no raw NUL bytes', () => {
     const files = [
@@ -128,7 +138,9 @@ describe('public documentation after sessions retire', () => {
     expect(readme).not.toContain('还能站内**约局**');
     expect(readme).not.toContain('一键点名');
     expect(readme).not.toContain('SESSION_ORGANIZER_CAN_FILE');
-    expect(readme).toContain(`| 其他任何路径 | 页面 | 「这页不存在」，附「${BACK_HOME}」 |`);
+    const fallback = readme.split('\n').find(line => line.startsWith('| 其他任何路径 |'));
+    expect(fallback).toContain('「这页不存在」');
+    expect(fallback).toContain(`「${BACK_HOME}」`);
   });
 });
 
@@ -137,14 +149,15 @@ describe('public documentation after sessions retire', () => {
 describe('welcome and guide documentation', () => {
   it('documents welcome and guide as full pages with server-derived completion', () => {
     const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
-    for (const route of ['/welcome', '/guide']) {
-      const row = contract.split('\n').find((line) => line.startsWith(`  | \`${route}\` |`));
-      expect(row, `${route} route is missing from the contract table`).toBeDefined();
-      expect(row).toContain('full page');
-      expect(row).toContain('same full page');
-    }
+    const frontend = contract.split('## Frontend expectations')[1] ?? '';
+    expect(frontend).toContain('| Path | Page at every viewport |');
+    expect(routeRow(frontend, '/welcome')).toContain('five-step onboarding');
+    expect(routeRow(frontend, '/guide')).toContain('shared bot guide');
     expect(contract).toContain('notify_dm');
     expect(contract).toContain('dm_ok');
+    expect(normalized(contract)).toContain('Step 2 requires a binding; step 3 requires both `notify_dm` and `dm_ok`');
+    expect(normalized(contract)).toContain('step 4 requires `is_participant` or `is_judge`');
+    expect(contract).toContain('Drafts never mark a step complete');
     expect(contract).toContain('404 never marks steps 2 or 3 complete');
     expect(contract).not.toContain('S1 retains `OnboardingDialog`');
   });
@@ -180,7 +193,11 @@ describe('welcome and guide documentation', () => {
     expect(contract).toContain('`edg.todo.onboarding-dismissed`');
     expect(contract).toContain('7 days');
     expect(contract).toContain('step IDs');
-    expect(contract).toMatch(/onboarding card[^\n]*badge[^\n]*dot/);
+    const notice = contract.split('- The home onboarding hint')[1]?.split('\n- ')[0] ?? '';
+    expect(normalized(notice)).toContain('neither a todo badge count nor an attention dot');
+    expect(normalized(notice)).toContain('account, timestamp and missing step IDs');
+    expect(normalized(notice)).toContain('newly missing step makes it reappear');
+    expect(notice).toContain('never proves completion');
   });
 });
 
@@ -229,10 +246,17 @@ describe('voice evidence documentation', () => {
     expect(contract).toContain('`ON DELETE CASCADE`');
     expect(contract).toContain('`worker/voice.ts`');
     expect(contract).toContain('atomically withdraws coverage');
-    expect(contract).toMatch(/\| `\/admin`, `\/admin\/voice` \|[^\n]*full page[^\n]*same full page/);
-    for (const route of ['/admin/ai', '/admin/members']) {
-      expect(contract).toMatch(new RegExp('\\| `' + route + '` \\|[^\\n]*full page[^\\n]*same full page'));
+    const frontend = contract.split('## Frontend expectations')[1] ?? '';
+    expect(frontend).toContain('| Path | Page at every viewport |');
+    for (const route of ['/admin', '/admin/voice']) {
+      expect(routeRow(frontend, route)).toContain('current voice tool');
+      expect(routeRow(frontend, route)).toContain('staff gate retained');
     }
+    for (const route of ['/admin/ai', '/admin/members']) {
+      expect(routeRow(frontend, route)).toContain('current members / AI settings');
+      expect(routeRow(frontend, route)).toContain('admins only');
+    }
+    expect(routeRow(frontend, '/tools/voice')).toContain('judge/admin voice evidence');
     expect(contract).toContain('`target="_blank" rel="noopener"`');
     expect(contract).toContain('`voiceNotice()`');
     expect(contract).not.toContain('S2 does not yet add voice recording');
@@ -265,7 +289,9 @@ describe('voice evidence documentation', () => {
     expect(readme).toContain('`migrations/005_voice.sql`');
     expect(readme).toContain('已有 D1');
     expect(readme).toContain('由机主');
-    expect(readme).toContain('| `/admin`、`/admin/voice` | 手机、桌面均为整页 |');
+    expect(readme).toMatch(/手机(?:、|和)桌面(?:均|都).*整页/);
+    expect(routeRow(readme, '/admin/voice')).toContain('兼容旧地址');
+    expect(routeRow(readme, '/tools/voice')).toContain('裁判或管理员');
     expect(readme).not.toContain('后续语音、信息板与管理路由');
   });
 });
@@ -315,14 +341,21 @@ describe('admin management documentation', () => {
     for (const text of ['500', '501', 'created_at DESC, id ASC', 'private, no-store', '401', '403', 'unlisted accounts', 'no email, OAuth username or Discord fields']) expect(admin).toContain(text);
   });
 
-  it('describes the three admin tabs, client-side member search and limited UI actions', () => {
+  it('documents centralized settings, scoped tools, member search and limited UI actions', () => {
     const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
     const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-    for (const text of ['「语音记录」「AI 设置」「成员」', 'client-side name search', 'self-dismissal', 'no delete, admin-grant or participant-toggle controls', '`/api/records?limit=50`']) expect(contract).toContain(text);
+    for (const text of ['「个人资料」「Discord 与通知」', '「成员与权限」「AI 模型与密钥」', 'client-side name search', 'self-dismissal', 'no delete, admin-grant or participant-toggle controls', '`/api/records?limit=50`']) expect(contract).toContain(text);
     expect(contract).not.toContain('still render NotFound until S5');
     expect(contract).not.toContain('AI dialog as 「AI 设置」 until S5');
-    for (const route of ['/admin/ai', '/admin/members']) expect(readme).toContain('| `' + route + '` | 手机、桌面均为整页 |');
-    expect(readme).toContain('管理 → AI 设置');
+    for (const route of ['/settings/members', '/settings/ai', '/tools/score']) {
+      expect(routeRow(contract, route)).toContain('admins only');
+      expect(routeRow(readme, route)).toContain('仅管理员');
+    }
+    for (const route of ['/admin/ai', '/admin/members']) expect(routeRow(readme, route)).toContain('兼容旧地址');
+    expect(readme).toContain('设置 → AI 模型与密钥');
+    expect(readme).toContain('最新 500 个账号');
+    expect(readme).toContain('搜索只在当前列表内');
+    expect(readme).toContain('不提供删除账号、授予管理员或切换他人上榜状态');
     expect(readme).not.toContain('后续 AI / 成员管理路由');
     expect(readme).not.toContain('**管理员 → AI 裁判配置**');
   });
@@ -331,9 +364,15 @@ describe('admin management documentation', () => {
     const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
     const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
     expect(contract).toContain('two shapes, both requiring `is_judge || is_admin`');
+    expect(contract).toContain('`{ subject_ids: string[], claim, extras?, note? }`');
+    expect(contract).toContain('`{ subject_id, type?, claim?, note? }`');
     expect(contract).not.toContain('two shapes, both requiring `is_judge`:');
     const adminRole = readme.split('\n').find(line => line.startsWith('| 管理员 (`is_admin`)'));
     expect(adminRole).toContain('立案');
-    expect(readme).toContain('「管理 → 成员」');
+    const judgeRole = readme.split('\n').find(line => line.startsWith('| 裁判 (`is_judge`)'));
+    expect(judgeRole).toContain('立案');
+    expect(readme).toContain('中途开溜由裁判或管理员记一笔');
+    expect(readme).toContain('裁判或管理员勾 N 人');
+    expect(readme).toContain('「设置 → 成员与权限」');
   });
 });

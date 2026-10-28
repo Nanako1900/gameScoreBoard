@@ -7,6 +7,7 @@ interface AdminScoreFormProps {
   score: number;
   busy: boolean;
   onSubmit: (score: number) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -14,12 +15,16 @@ interface AdminScoreFormProps {
  * steps (type the number, then confirm), since it moves the board at once and
  * DMs the player.
  */
-export function AdminScoreForm({ username, score, busy, onSubmit }: AdminScoreFormProps): JSX.Element {
+export function AdminScoreForm({ username, score, busy, onSubmit, onDirtyChange }: AdminScoreFormProps): JSX.Element {
   const [value, setValue] = useState(String(score));
   const [confirming, setConfirming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const confirmButton = useRef<HTMLButtonElement>(null);
   const stepped = useRef(false);
+  const dirtyCallback = useRef(onDirtyChange); dirtyCallback.current = onDirtyChange;
+  const dirty = value !== String(score);
+  useEffect(() => { dirtyCallback.current?.(dirty); }, [dirty]);
+  useEffect(() => () => { dirtyCallback.current?.(false); }, []);
   // Keyboard users stay where they were: on 确认改分 when asked, back on the
   // number when they cancel (the element they pressed is gone either way).
   useEffect(() => {

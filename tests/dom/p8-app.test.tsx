@@ -114,15 +114,15 @@ describe('links into the app', () => {
   });
 
   it('opens once — not again on every refresh after an action', async () => {
-    const calls = mockFetch({ ...base(ADMIN), 'POST /api/admin/users/p': () => json(200, { ok: true }) });
+    const calls = mockFetch({ ...base(ADMIN), 'POST /api/admin/records/7/override': () => json(200, { ok: true }) });
     window.history.replaceState(null, '', '/?case=7');
     const user = userEvent.setup();
     render(<App />);
-    const input = await screen.findByRole('spinbutton', { name: '调整分数' });
-    await user.clear(input);
-    await user.type(input, '75');
-    await user.click(screen.getByRole('button', { name: '改分' }));
-    await user.click(screen.getByRole('button', { name: '确认改分' }));
+    await user.click(await screen.findByRole('button', { name: '改判' }));
+    const input = screen.getByRole('spinbutton', { name: /改判为/ });
+    await user.clear(input); await user.type(input, '-15');
+    await user.type(screen.getByRole('textbox', { name: '理由（必填）' }), '补充证据后调整');
+    await user.click(screen.getByRole('button', { name: '确认改判' }));
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/records?limit=50').length).toBeGreaterThan(1));
     await settle();
     expect(calls.filter((c) => c.path === '/api/records/7')).toHaveLength(1);
@@ -147,7 +147,7 @@ describe('links into the app', () => {
     await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => expect(screen.getByRole('button', { name: /机器人怎么用/ })).toHaveAttribute('aria-expanded', 'true'));
     await user.click(screen.getByRole('button', { name: '完成，去首页' }));
-    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/players/p/cases/7');
   });
 

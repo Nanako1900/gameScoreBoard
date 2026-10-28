@@ -5,6 +5,8 @@
 import { useState } from 'react';
 import type { RecordItem, SentencingRange, User } from '../types';
 import { formatRevokeLeft, revokeMsLeft } from '../lib/revoke';
+import { useInlineConfirm } from '../lib/useInlineConfirm';
+import { ConfirmInline } from './ConfirmInline';
 
 interface RevokeState {
   allowed: boolean;
@@ -53,9 +55,24 @@ interface CaseActionsProps {
 }
 
 export function CaseActions(props: CaseActionsProps): JSX.Element | null {
+  const scope = JSON.stringify([props.record.id, props.me?.id ?? null, props.me?.is_admin === true, props.me?.is_judge === true]);
+  return <ScopedCaseActions key={scope} {...props} />;
+}
+
+function ScopedCaseActions(props: CaseActionsProps): JSX.Element | null {
+  const withdraw = useInlineConfirm();
+  const reverse = useInlineConfirm();
   const { record, me, isSelf, busy, overriding, now, note } = props;
+  const revoke = revokeState(record, me, now);
+  const shown = {
+    statement: isSelf && record.status === 'awaiting_statement',
+    appeal: isSelf && record.status === 'decided',
+    withdraw: canWithdraw(record, me),
+    revoke: revoke.allowed,
+    override: me?.is_admin === true && (record.status === 'appealed' || record.status === 'decided'),
+  };
   // Only an admin re-sentences, and an admin always gets the full case: range is null only for a hidden one.
-  if (overriding && record.range) {
+  if (shown.override && overriding && record.range) {
     return (
       <OverrideForm
         record={record}
@@ -65,14 +82,6 @@ export function CaseActions(props: CaseActionsProps): JSX.Element | null {
       />
     );
   }
-  const revoke = revokeState(record, me, now);
-  const shown = {
-    statement: isSelf && record.status === 'awaiting_statement',
-    appeal: isSelf && record.status === 'decided',
-    withdraw: canWithdraw(record, me),
-    revoke: revoke.allowed,
-    override: me?.is_admin === true && (record.status === 'appealed' || record.status === 'decided'),
-  };
   if (!note && !Object.values(shown).some(Boolean)) return null;
 
   return (
@@ -88,16 +97,24 @@ export function CaseActions(props: CaseActionsProps): JSX.Element | null {
           申诉
         </button>
       )}
-      {shown.withdraw && (
-        <button type="button" className="btn btn--ghost btn--sm" onClick={props.onWithdraw} disabled={busy}>
+      {shown.withdraw && (withdraw.confirming ? (
+        <ConfirmInline question="确认撤回这起案件？" confirmLabel="确认撤案" cancelLabel="保留案件"
+          busy={busy} busyLabel="撤案中…" onCancel={withdraw.dismiss}
+          onConfirm={() => { if (!busy && shown.withdraw) props.onWithdraw(); }} />
+      ) : (
+        <button ref={withdraw.triggerRef} type="button" className="btn btn--ghost btn--sm" onClick={withdraw.ask} disabled={busy}>
           {busy ? '撤案中…' : '撤案'}
         </button>
-      )}
-      {shown.revoke && (
-        <button type="button" className="btn btn--ghost btn--sm pd__revoke-btn" onClick={props.onRevoke} disabled={busy}>
+      ))}
+      {shown.revoke && (reverse.confirming ? (
+        <ConfirmInline question="确认撤销这次判决？" confirmLabel="确认撤销" cancelLabel="保留判决"
+          busy={busy} busyLabel="撤销中…" onCancel={reverse.dismiss}
+          onConfirm={() => { if (!busy && shown.revoke) props.onRevoke(); }} />
+      ) : (
+        <button ref={reverse.triggerRef} type="button" className="btn btn--ghost btn--sm pd__revoke-btn" onClick={reverse.ask} disabled={busy}>
           {busy ? '撤销中…' : revokeLabel(revoke.msLeft)}
         </button>
-      )}
+      ))}
       {shown.override && (
         <button type="button" className="btn btn--ghost btn--sm" onClick={props.onStartOverride} disabled={busy}>
           改判

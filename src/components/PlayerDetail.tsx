@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { tierFor } from '@shared/scoring';
 import type { Config, HistoryPoint, RecordItem, User, UserDetailResponse } from '../types';
 import {
@@ -8,14 +8,12 @@ import {
   getUserDetail,
   overrideCase,
   revokeRecord,
-  setJudge,
-  setScore,
   withdrawCase,
 } from '../api';
 import { REVOKE_TICK_MS } from '../lib/constants';
 import { healPreview, healPreviewText } from '../lib/forgiveness';
-import { BACK_HOME, PAGE_BACK_LABEL, PINNED_CASE_LABEL, PLAYER_NOT_FOUND, SEE_BOARD, pinnedCaseEyebrow } from '../lib/routeCopy';
-import { HOME_PATH, boardPath } from '../lib/routes';
+import { BACK_HOME, CASE_GONE, PAGE_BACK_LABEL, PINNED_CASE_LABEL, PLAYER_NOT_FOUND, SEE_BOARD, pinnedCaseEyebrow } from '../lib/routeCopy';
+import { HOME_PATH, boardPath, playerPath, settingsPath, toolsPath } from '../lib/routes';
 import { useNow } from '../lib/useNow';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
@@ -25,7 +23,8 @@ import { ScoreGauge } from './ScoreGauge';
 import { TierBadge } from './TierBadge';
 import { VerdictCard } from './VerdictCard';
 import { HistoryChart } from './HistoryChart';
-import { AdminScoreForm } from './AdminScoreForm';
+import { Link } from './Link';
+import { VoiceLog } from './VoiceLog';
 import { CaseActions } from './CaseActions';
 import { AppealSheet } from './AppealSheet';
 import { ForgivenessNote } from './ForgivenessNote';
@@ -39,7 +38,7 @@ interface PlayerDetailProps {
   onOpenStatement?: (record: RecordItem) => void;
   /** Called after a mutation so parent lists can refresh. */
   onChanged?: () => void;
-  /** A case to bring into view and focus once loaded (a link from Discord). */
+  /** Show only this case and focus it once loaded (a link from Discord). */
   focusRecordId?: number | null;
   /** The board's config: with it, the player's own page previews the weekly heal (P0-5). */
   config?: Config;
@@ -49,6 +48,8 @@ interface PlayerDetailProps {
   pinnedRecord?: RecordItem | null;
   /** Bumped by the app when the cases changed elsewhere (a statement was judged): load again. */
   refreshKey?: number;
+  /** Optional app actor generation for drafts retained by nested forms. */
+  isCurrentActor?: () => boolean;
 }
 
 interface DetailState {
@@ -58,10 +59,6 @@ interface DetailState {
   error: string | null;
 }
 
-/** busyId while the judge role is being changed (record ids are positive). */
-const JUDGE_BUSY = -1;
-/** busyId while the score is being set by hand. */
-const SCORE_BUSY = -2;
 const TITLE_ID = 'player-detail-title';
 const NOT_FOUND_STATUS = 404;
 
@@ -128,7 +125,29 @@ function useFirstFocus(
   }, [ready, focusRecordId, pinnedShown, variant]);
 }
 
-export function PlayerDetail({
+/** A new subject or viewer gets a fresh state before effects, never the old person's data. */
+export function PlayerDetail(props: PlayerDetailProps): JSX.Element {
+  const actorScope = JSON.stringify([props.me?.id ?? null, props.me?.is_admin === true, props.me?.is_judge === true]);
+  const actorLease = useRef({ scope: actorScope });
+  if (actorLease.current.scope !== actorScope) actorLease.current = { scope: actorScope };
+  const lease = actorLease.current;
+  const outerActor = useRef(props.isCurrentActor); outerActor.current = props.isCurrentActor;
+  const isCurrentActor = (): boolean => actorLease.current === lease && outerActor.current?.() !== false;
+  const scope = JSON.stringify([props.userId, props.me?.id ?? null, props.me?.is_admin === true,
+    props.me?.is_judge === true, props.focusRecordId ?? null]);
+  const source = useRef({ record: props.pinnedRecord, scope: scope as string | null });
+  if (source.current.record !== props.pinnedRecord) {
+    source.current = { record: props.pinnedRecord, scope };
+  } else if (source.current.scope !== scope) {
+    // A route seed is viewer-specific too. A refreshed object can establish a new scope.
+    source.current.scope = null;
+  }
+  const safePinned = source.current.scope === scope && props.pinnedRecord?.subject.id === props.userId
+    ? props.pinnedRecord : null;
+  return <PlayerDetailContent key={scope} {...props} pinnedRecord={safePinned} isCurrentActor={isCurrentActor} />;
+}
+
+function PlayerDetailContent({
   userId,
   me,
   onClose,
@@ -139,6 +158,7 @@ export function PlayerDetail({
   variant = 'center',
   pinnedRecord = null,
   refreshKey = 0,
+  isCurrentActor,
 }: PlayerDetailProps): JSX.Element {
   const [state, setState] = useState<DetailState>({
     status: 'loading',
@@ -151,12 +171,22 @@ export function PlayerDetail({
   // One clock for the page: the reporter's revoke countdown and the heal line.
   const now = useNow(REVOKE_TICK_MS);
 
+  const alive = useRef(true);
+  const request = useRef(0);
+  useLayoutEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; request.current += 1; };
+  }, []);
+
   const load = useCallback(async (): Promise<void> => {
+    const version = ++request.current;
     setState({ status: 'loading', data: null, error: null });
     try {
       const data = await getUserDetail(userId);
+      if (!alive.current || version !== request.current) return;
       setState({ status: 'ready', data, error: null });
     } catch (err) {
+      if (!alive.current || version !== request.current) return;
       const gone = variant !== 'center' && err instanceof ApiError && err.status === NOT_FOUND_STATUS;
       setState({
         status: gone ? 'missing' : 'error',
@@ -176,15 +206,17 @@ export function PlayerDetail({
     setBusyId(id);
     try {
       await fn();
+      if (!alive.current) return;
       await load();
-      onChanged?.();
+      if (alive.current) onChanged?.();
     } catch (err) {
+      if (!alive.current) return;
       setState((prev) => ({
         ...prev,
         error: err instanceof ApiError ? err.message : '操作失败',
       }));
     } finally {
-      setBusyId(null);
+      if (alive.current) setBusyId(null);
     }
   };
 
@@ -199,7 +231,7 @@ export function PlayerDetail({
   const canCoSign = (r: RecordItem): boolean =>
     me !== null && (me.is_admin || (me.is_judge && r.reporter.id === me.id));
 
-  // One card, wherever it sits: pinned at the top (focused) or in the list below.
+  // The same case actions and permissions in both the single-case and personal views.
   const renderCase = (r: RecordItem, focusedCard: boolean): JSX.Element => (
     <VerdictCard
       key={r.id}
@@ -264,87 +296,75 @@ export function PlayerDetail({
           </div>
         )}
 
-        {data && (
-          <div className="pd">
-            <header className="pd__header" style={{ ['--accent' as string]: tier.color }}>
-              {/* Everyone's score is public; the 段位 colour and name are the viewer's own only (spec §3.8). */}
-              <ScoreGauge score={score} size={128} strokeWidth={11} tone={isSelf ? 'tier' : 'neutral'} />
-              <div className="pd__id">
-                <div className="pd__name-row">
-                  <Avatar
-                    name={data.user.username}
-                    src={data.user.avatar_url}
-                    size={48}
-                    ring
-                    ringColor={tier.color}
-                  />
-                  <h2 id={TITLE_ID} className="pd__name" tabIndex={-1}>
-                    {data.user.username}
-                  </h2>
-                </div>
-                <div className="pd__badges">
-                  <TierBadge tier={tier} />
-                  {data.user.is_judge && <span className="pd__role">裁判</span>}
-                  {isSelf && <span className="pd__role pd__role--self">这是你</span>}
-                  {/* Judges are appointed by an admin (self-service cannot grant it). */}
-                  {me?.is_admin === true && (
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm pd__judge-toggle"
-                      disabled={busyId === JUDGE_BUSY}
-                      onClick={() => void run(JUDGE_BUSY, () => setJudge(userId, !data.user.is_judge))}
-                    >
-                      {data.user.is_judge ? '取消裁判资格' : '设为裁判'}
-                    </button>
+        {data && focusRecordId !== null && pinned === null && (
+          <NotFound title={CASE_GONE} headingId={TITLE_ID} actions={[{ label: BACK_HOME, to: HOME_PATH }, { label: SEE_BOARD, to: boardPath('list') }]} />
+        )}
+
+        {data && (focusRecordId === null || pinned !== null) && (
+          <div className={`pd${focusRecordId !== null ? ' pd--case' : ''}`}>
+            {pinned ? (
+              <>
+                <header className="pd__case-header">
+                  <h2 id={TITLE_ID} className="pd__name" tabIndex={-1}>案件 #{pinned.id}</h2>
+                  <p className="pd__context">当事人 <Link to={playerPath(userId)}>{data.user.username}</Link></p>
+                </header>
+                <section className="pd__section pd__pinned" aria-label={PINNED_CASE_LABEL}>
+                  <p className="pd__pinned-eyebrow">{pinnedCaseEyebrow(pinned)}</p>
+                  {renderCase(pinned, true)}
+                </section>
+              </>
+            ) : (
+              <>
+                <header className="pd__header">
+                  <ScoreGauge score={score} size={128} strokeWidth={11} tone={isSelf ? 'tier' : 'neutral'} />
+                  <div className="pd__id">
+                    <div className="pd__name-row">
+                      <Avatar name={data.user.username} src={data.user.avatar_url} size={48} />
+                      <h2 id={TITLE_ID} className="pd__name" tabIndex={-1}>{data.user.username}</h2>
+                    </div>
+                    <div className="pd__badges">
+                      {isSelf && <TierBadge tier={tier} />}
+                      {data.user.is_judge && <span className="pd__role">裁判</span>}
+                      {isSelf && <span className="pd__role pd__role--self">这是你</span>}
+                    </div>
+                    {isSelf && <p className="pd__blurb">{tier.blurb}</p>}
+                    {isSelf && config && data.user.is_participant && (
+                      <p className="pd__heal">{healPreviewText(healPreview(data.user.score, config, now))}</p>
+                    )}
+                    <div className="pd__links">
+                      {!isSelf && me !== null && (me.is_admin || me.is_judge) && (
+                        <Link to={toolsPath('voice', userId)}>查看语音记录</Link>
+                      )}
+                      {me?.is_admin === true && <>
+                        <Link to={settingsPath('members')}>管理成员身份</Link>
+                        <Link to={toolsPath('score', userId)}>调整分数</Link>
+                      </>}
+                    </div>
+                  </div>
+                </header>
+
+                <section className="pd__section" aria-label="分数走势">
+                  <h3 className="pd__section-title">分数走势</h3>
+                  <HistoryChart history={data.history} color="var(--score-chip-fg)" />
+                </section>
+
+                <section className="pd__section" aria-label="案件">
+                  <h3 className="pd__section-title">案件 <span className="pd__count">{data.records.length}</span></h3>
+                  {data.records.length === 0 ? <p className="pd__empty">还没有任何记录，保持靠谱！</p> : (
+                    <div className="pd__cases">{data.records.map((r) => renderCase(r, false))}</div>
                   )}
-                </div>
-                <p className="pd__blurb">{tier.blurb}</p>
-                {isSelf && config && data.user.is_participant && (
-                  <p className="pd__heal">{healPreviewText(healPreview(data.user.score, config, now))}</p>
-                )}
-                {me?.is_admin === true && (
-                  <AdminScoreForm
-                    key={data.user.score}
-                    username={data.user.username}
-                    score={data.user.score}
-                    busy={busyId === SCORE_BUSY}
-                    onSubmit={(next) => void run(SCORE_BUSY, () => setScore(userId, next))}
-                  />
-                )}
-              </div>
-            </header>
+                </section>
 
-            {/* Moved here, not copied: the list below skips it, so the page has one #case-N (spec §3.8). */}
-            {pinned && (
-              <section className="pd__section pd__pinned" aria-label={PINNED_CASE_LABEL}>
-                <p className="pd__pinned-eyebrow">{pinnedCaseEyebrow(pinned)}</p>
-                {renderCase(pinned, true)}
-              </section>
+                {isSelf && me && (
+                  <section className="pd__section" aria-label="个人语音记录">
+                    <VoiceLog ownerId={me.id} userId={me.id} offsetHours={config?.boardTzOffsetHours ?? 8}
+                      missingContent={<p className="pd__empty">语音记录暂不可用。</p>} />
+                  </section>
+                )}
+              </>
             )}
 
-            <section className="pd__section" aria-label="分数走势">
-              <h3 className="pd__section-title">分数走势</h3>
-              <HistoryChart history={data.history} color={tier.color} />
-            </section>
-
-            {state.error && (
-              <p className="pd__inline-error" role="alert">
-                {state.error}
-              </p>
-            )}
-
-            <section className="pd__section" aria-label="案件">
-              <h3 className="pd__section-title">
-                案件 <span className="pd__count">{data.records.length}</span>
-              </h3>
-              {data.records.length === 0 ? (
-                <p className="pd__empty">还没有任何记录，保持靠谱！</p>
-              ) : (
-                <div className="pd__cases">
-                  {data.records.filter((r) => r.id !== pinned?.id).map((r) => renderCase(r, false))}
-                </div>
-              )}
-            </section>
+            {state.error && <p className="pd__inline-error" role="alert">{state.error}</p>}
           </div>
         )}
       </Modal>
@@ -354,8 +374,10 @@ export function PlayerDetail({
         <AppealSheet
           key={appealing.id}
           record={appealing}
+          isCurrentActor={isCurrentActor}
           onClose={() => setAppealing(null)}
           onAppealed={() => {
+            if (!alive.current) return;
             setAppealing(null);
             void load();
             onChanged?.();

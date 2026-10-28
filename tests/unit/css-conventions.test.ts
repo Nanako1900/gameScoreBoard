@@ -239,7 +239,7 @@ describe('theme.css primitives later PRs build on', () => {
         .join(', ');
     expect(edged(/border-color:\s*ButtonText/)).toMatch(/\.btn\b.*\binput\b/);
     const chips = edged(/border:\s*1px solid CanvasText/);
-    for (const chip of ['.feed-row__status', '.sdt__chip', '.tier-badge']) {
+    for (const chip of ['.feed-row__status', '.tier-badge']) {
       expect(chips).toContain(chip);
     }
   });

@@ -94,7 +94,7 @@ function routes(overrides: Record<string, Route> = {}): Record<string, Route> {
   };
 }
 
-const clock = (): string => document.querySelector('.hdr__reset-time')?.textContent ?? '';
+const clock = (): string => document.querySelector('.board__reset-time')?.textContent ?? '';
 
 let visibility: DocumentVisibilityState = 'visible';
 
@@ -109,6 +109,7 @@ function leaveAndReturn(): void {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/board');
   visibility = 'visible';
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
 });
@@ -120,7 +121,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('App — the header countdown', () => {
+describe('App — the board recovery countdown', () => {
   it('ticks by the minute and reads 回血中… once the reset has passed', async () => {
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
@@ -194,13 +195,13 @@ describe('App — after an admin write', () => {
   it('设为裁判 invalidates the board, the feed and me — not config or the report', async () => {
     const calls = mockFetch(
       adminRoutes({
-        'GET /api/users/p': () => json(200, { user: PLAYER, records: [], history: [] }),
+        'GET /api/admin/users': () => json(200, { users: [{ ...PLAYER, is_admin: false }], truncated: false }),
         'POST /api/admin/users/p': () => json(200, { ok: true }),
       }),
     );
     const user = userEvent.setup();
+    window.history.replaceState(null, '', '/settings/members');
     render(<App />);
-    await user.click(await screen.findByRole('button', { name: ROW }));
     await user.click(await screen.findByRole('button', { name: '设为裁判' }));
     await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
     await waitFor(() => expect(gets(calls, '/api/records?limit=50')).toBe(2));
@@ -212,6 +213,7 @@ describe('App — after an admin write', () => {
 });
 
 describe('App — the admin re-rolls the weekly report', () => {
+  beforeEach(() => window.history.replaceState(null, '', '/board/report'));
   it('换个说法 refetches the report only', async () => {
     const calls = mockFetch(adminRoutes({ [REGENERATE]: () => json(200, { report: REPORT }) }));
     const user = userEvent.setup();
@@ -312,6 +314,7 @@ describe('App — a refresh that fails', () => {
   });
 
   it('stays up while what failed is still old, even when another part refreshes fine', async () => {
+    window.history.replaceState(null, '', '/board/report');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(START);
     let failing = false;
@@ -323,7 +326,7 @@ describe('App — a refresh that fails', () => {
       }),
     );
     render(<App />);
-    await screen.findByRole('button', { name: ROW });
+    await screen.findByRole('button', { name: '换个说法' });
     failing = true;
     vi.setSystemTime(START + MINUTE + 1_000);
     leaveAndReturn();

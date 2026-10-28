@@ -21,7 +21,7 @@ describe('HistoryChart', () => {
     const { container } = render(<HistoryChart history={HISTORY} color="#4aa3ff" />);
     expect(container.querySelectorAll('svg text')).toHaveLength(0);
     const ticks = [...container.querySelectorAll('.chart__tick')].map((t) => t.textContent);
-    expect(ticks).toEqual(['0', '25', '50', '75', '100']);
+    expect(ticks).toEqual(['100', '75', '50', '25', '0']);
   });
 
   it('shows the latest point until another is picked', () => {

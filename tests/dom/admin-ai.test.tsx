@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../src/api';
 import { App } from '../../src/App';
 import { AdminPage } from '../../src/components/AdminPage';
+import { AiSettings } from '../../src/components/AiSettings';
 import type { AiConfigResponse, AiTestResponse, Config, User } from '../../src/types';
 
 const ADMIN: User = { id: 'admin-a', username: '管理员', oauth_username: '管理员', avatar_url: null,
@@ -17,7 +18,9 @@ const TEST: AiTestResponse = { ok: false, source: 'fallback', verdict: { delta: 
   error: '服务暂不可用', clamped: true, parsed_delta: -100, latency_ms: 87 };
 function json(data: unknown, status = 200): Response { return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(data) } as Response; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { resolve, promise }; }
-function page(me: User | null = ADMIN) { return <AdminPage me={me} config={CONFIG} tab="ai" onChanged={vi.fn()} />; }
+function legacyPage(me: User | null = ADMIN) { return <AdminPage me={me} config={CONFIG} tab="ai" onChanged={vi.fn()} />; }
+// Business tests exercise the shared editor, independently of page navigation.
+function page(me: User | null = ADMIN) { return me?.is_admin ? <AiSettings key={me.id} /> : legacyPage(me); }
 function stubCore(me: User | null = ADMIN) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const path = String(input);
@@ -37,24 +40,36 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe('AI settings in the administration page', () => {
+describe('AI settings and legacy administration entry', () => {
   it('opens the real address as a full page with three prompts and seven-day health', async () => {
     window.history.replaceState(null, '', '/admin/ai'); const { container } = render(<App />);
     expect(await screen.findByLabelText(/^Base URL/)).toHaveValue(AI.base_url);
     expect(screen.getByRole('heading', { level: 3, name: 'AI 裁判配置' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
-    const nav = screen.getByRole('navigation', { name: '管理' });
-    expect(within(nav).getByRole('link', { name: 'AI 设置' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav).getByRole('link', { name: '语音记录' })).toHaveAttribute('href', '/admin/voice');
-    for (const text of ['42', '25%', '5%', '321ms']) expect(screen.getByText(text)).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: '设置分类' });
+    expect(within(nav).getByRole('link', { name: 'AI 模型与密钥' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).queryByRole('link', { name: '语音记录' })).not.toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '个人资料' })).toHaveAttribute('href', '/settings/profile');
+    for (const text of ['42', '25%', '5%', '321ms']) expect(screen.getByText(text)).not.toBeVisible();
     expect(screen.getByText(/服务端尚未配置密钥/)).toBeInTheDocument();
     expect(screen.getByText(/后端环境变量.*AI_API_KEY/)).toBeInTheDocument();
     expect(screen.queryByText(/wrangler secret/)).not.toBeInTheDocument();
-    expect(container.querySelector('.admin-page')?.querySelector('style,[style]')).toBeNull();
+    expect(container.querySelector('.settings-page')?.querySelector('style,[style]')).toBeNull();
+  });
+  it('routes direct legacy administration callers through the same settings page', async () => {
+    render(legacyPage()); await screen.findByLabelText('模型');
+    expect(screen.getByRole('heading', { name: '设置', level: 2 })).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: '设置分类' });
+    expect(within(nav).getByRole('link', { name: 'AI 模型与密钥' })).toHaveAttribute('href', '/settings/ai');
+    expect(within(nav).getByRole('link', { name: 'AI 模型与密钥' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('link', { name: '成员与权限' })).toHaveAttribute('href', '/settings/members');
+    expect(within(nav).queryByRole('link', { name: '语音记录' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '管理' })).not.toBeInTheDocument();
+    expect(screen.getByText('高级参数与提示词', { selector: 'summary' }).closest('details')).not.toHaveAttribute('open');
   });
   it.each([null, { ...ADMIN, is_admin: false }, { ...ADMIN, is_admin: false, is_judge: true }])('refuses a non-admin before fetching AI: %o', async (me) => {
-    render(page(me)); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
+    render(legacyPage(me)); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
     expect(api.getAiConfig).not.toHaveBeenCalled(); expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
   });
   it('saves trimmed endpoint/model and every prompt, then reloads server stats and version', async () => {
@@ -101,7 +116,7 @@ describe('AI settings in the administration page', () => {
   it.each([403, 404])('hides the whole AI entry when reading returns %s', async (status) => {
     vi.mocked(api.getAiConfig).mockRejectedValueOnce(new api.ApiError('private backend detail', status));
     render(page()); await screen.findByRole('heading', { name: '这页不存在' });
-    expect(screen.queryByText('private backend detail')).not.toBeInTheDocument(); expect(screen.queryByRole('link', { name: 'AI 设置' })).not.toBeInTheDocument();
+    expect(screen.queryByText('private backend detail')).not.toBeInTheDocument(); expect(screen.queryByRole('link', { name: 'AI 模型与密钥' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
   });
   it.each(['保存', '用样例案试跑'])('conceals the old form when %s discovers lost permission', async (label) => {

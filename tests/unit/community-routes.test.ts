@@ -10,3 +10,11 @@ describe('community route addresses',()=>{
   expect(formatRoute({name:'communityAdmin'} as never)).toBe('/settings/community');
  });
 });
+
+describe('community within the four primary destinations',()=>{
+ it('keeps member community under home and community management under settings',async()=>{
+  const {primaryNavigationKey}=await import('../../src/lib/navigation');
+  expect(primaryNavigationKey(parseRoute('/community/play'))).toBe('home');
+  expect(primaryNavigationKey(parseRoute('/settings/community'))).toBe('settings');
+ });
+});

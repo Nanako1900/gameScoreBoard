@@ -33,7 +33,7 @@ it('groups all configuration and shows safe resource names with opaque selection
  expect(screen.getByRole('option',{name:'房间分类'})).toHaveValue(ref);
  expect(screen.getByRole('checkbox',{name:'游戏同好'})).toBeEnabled();expect(screen.getByRole('checkbox',{name:'服务器管理（不可自选）'})).toBeDisabled();
  expect(screen.getByRole('spinbutton',{name:'每人最多兴趣身份'})).toHaveAttribute('max','5');
- expect(screen.getByRole('link',{name:'管理模型与密钥'})).toHaveAttribute('href','/admin/ai');
+ expect(screen.getByRole('link',{name:'管理模型与密钥'})).toHaveAttribute('href','/settings/ai');
  expect(screen.queryByText(/111111111111111111/)).not.toBeInTheDocument();
 });
 it('saves one versioned complete draft and distinguishes saved from applied',async()=>{

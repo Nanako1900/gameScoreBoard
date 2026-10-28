@@ -266,7 +266,7 @@ describe('登录回跳 — back from the login page', () => {
     expect(screen.getByText('Discord 绑定成功')).toBeInTheDocument();
     expect(stored()).not.toBeNull();
     await finishWelcome();
-    await screen.findByRole('heading', { name: '当事人' });
+    await screen.findByRole('heading', { name: '案件 #7' });
     expect(window.location.pathname).toBe('/players/q/cases/7');
     expect(window.location.search).toBe('?utm=dc');
     expect(stored()).toBeNull();
@@ -329,7 +329,7 @@ describe('登录回跳 — back from the login page', () => {
     await finishWelcome();
     await waitFor(() => expect(window.location.pathname).toBe(landing));
     if (landing !== '/') {
-      await screen.findByRole('heading', { name: '当事人' });
+      await screen.findByRole('heading', { name: landing.includes('/cases/') ? '案件 #7' : '当事人' });
       expect(window.location.search).toBe('?utm=dc');
     } else {
       expect(await screen.findByText('约局功能已下线')).toBeInTheDocument();
@@ -344,7 +344,7 @@ describe('登录回跳 — back from the login page', () => {
     backFromLogin(stubApi(), null, '/welcome?utm=dc');
     await screen.findByRole('heading', { name: '入户' });
     await finishWelcome();
-    await screen.findByRole('heading', { name: '当事人' });
+    await screen.findByRole('heading', { name: '案件 #7' });
     expect(window.location.pathname).toBe('/players/q/cases/7');
     expect(window.location.search).toBe('?utm=dc');
     expect(sessionStorage.getItem('edg.welcome.return')).toBeNull();
@@ -366,7 +366,7 @@ describe('登录回跳 — back from the login page', () => {
     backFromLogin(stubApi(), null, url);
     await screen.findByRole('heading', { name: '入户' });
     await finishWelcome();
-    await screen.findByRole('heading', { name: '当事人' });
+    await screen.findByRole('heading', { name: landing.includes('/cases/') ? '案件 #7' : '当事人' });
     expect(window.location.pathname).toBe(landing);
     expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();
   });
@@ -394,7 +394,7 @@ describe('登录回跳 — back from the login page', () => {
     window.sessionStorage.setItem(LOGIN_RETURN_KEY, raw);
     stubApi();
     render(<App />);
-    await screen.findByRole('heading', { name: '信誉榜' });
+    await screen.findByRole('heading', { level: 1, name: 'EDG 信誉分' });
     expect(window.location.pathname).toBe('/');
     expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe(raw);
   });
@@ -405,7 +405,7 @@ describe('登录回跳 — back from the login page', () => {
       const stub = stubApi();
       backFromLogin(stub, null);
       const user = userEvent.setup();
-      await screen.findByRole('heading', { name: '要你处理' });
+      await screen.findByRole('heading', { level: 1, name: '你好，选手。' });
       window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/players/q', Date.now()));
       await user.click(screen.getByRole('button', { name: /选手/ }));
       await user.click(screen.getByRole('button', { name: '退出登录' }));

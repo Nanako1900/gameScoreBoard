@@ -1,3 +1,8 @@
+.modal-scroll-lock {
+  /* Override a host's ordinary inline overflow without changing that style. */
+  overflow: hidden !important;
+}
+
 .modal {
   /* Shared by the backdrop padding and the sticky bar's offset below. */
   --modal-top: clamp(1rem, 4vh, 4rem);
@@ -8,8 +13,8 @@
   place-items: start center;
   padding: var(--modal-top) 1rem 3rem;
   overflow-y: auto;
-  background: rgba(4, 7, 12, 0.72);
-  backdrop-filter: blur(6px);
+  overscroll-behavior: contain;
+  background: rgba(49, 54, 63, 0.24);
   animation: modal-fade var(--dur) var(--ease);
 }
 
@@ -18,9 +23,13 @@
   --modal-pad: clamp(1.25rem, 1rem + 2vw, 2rem);
   position: relative;
   width: 100%;
+  min-width: 0;
   padding: var(--modal-pad);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
   animation: modal-rise var(--dur) var(--ease);
-  box-shadow: var(--shadow-pop), var(--inner-glow);
+  box-shadow: var(--shadow-pop);
 }
 
 .modal__panel--sm {
@@ -35,10 +44,12 @@
 
 .modal__close {
   position: absolute;
-  top: 0.85rem;
-  right: 0.85rem;
-  width: 34px;
-  height: 34px;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  min-width: 44px;
+  min-height: 44px;
   display: grid;
   place-items: center;
   border-radius: var(--r-sm);
@@ -53,14 +64,6 @@
     color: var(--text);
     background: var(--panel-2);
     border-color: var(--border);
-  }
-}
-
-/* Moved from theme.css's coarse-pointer block: the ✕ is Modal's own business. */
-@media (pointer: coarse) {
-  .modal__close {
-    min-width: var(--tap-min);
-    min-height: var(--tap-min);
   }
 }
 
@@ -90,6 +93,7 @@
   min-width: 0;
   font-size: var(--fs-lg);
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .modal__bar .modal__close {
@@ -102,6 +106,7 @@
 
 .modal__body {
   padding-top: var(--modal-pad);
+  min-width: 0;
 }
 
 /* Only the sheet renders a grabber, and it only shows while the sheet is pinned
@@ -121,6 +126,15 @@
 /* --- Sheet: pinned to the bottom on phones, centred like a dialog above 600px.
  * Drawer falls back to the same sheet below 1024px. */
 @media (max-width: 600px) {
+  .modal {
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+
+  .modal__panel {
+    --modal-pad: 1rem;
+  }
+
   .modal--sheet,
   .modal--drawer {
     place-items: end stretch;

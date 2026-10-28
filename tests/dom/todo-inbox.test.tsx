@@ -142,24 +142,28 @@ describe('inbox and lobby integration', () => {
     const view = render(<App />); const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: '7 天内不再提示' }));
     expect(readOnboardingDismissed()).toEqual({ userId: ME.id, dismissedAt: NOW, missing: [2, 3] });
-    expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute('aria-current', 'page'); view.unmount();
-    render(<App />); expect(await screen.findByText('没有待办，清清爽爽 ✨')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute('aria-current', 'page');
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('link', { name: '案件' })).toHaveAttribute('href', '/cases'); view.unmount();
+    render(<App />); expect(await screen.findByText('当前没有待办。')).toBeInTheDocument();
     expect(screen.queryByText('还没绑定 Discord')).not.toBeInTheDocument(); expect(screen.queryByRole('button', { name: '7 天内不再提示' })).not.toBeInTheDocument();
   });
   it('has no onboarding card or badge when all server steps are complete', async () => {
     home(ME, { notify_dm: true, dm_ok: true }); render(<App />);
-    await screen.findByText('没有待办，清清爽爽 ✨');
+    await screen.findByText('当前没有待办。');
     expect(screen.queryByText(/还差 .* 步完成入户/)).not.toBeInTheDocument();
     expect(screen.queryByText('还没绑定 Discord')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute('aria-current', 'page');
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('link', { name: '案件' })).toHaveAttribute('href', '/cases');
   });
   it('resurfaces for a newly missing step even when the displayed count is unchanged', async () => {
     vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true }); vi.setSystemTime(NOW);
     dismissOnboarding(ME.id, [2, 3], NOW);
     home({ ...ME, is_participant: false }, { notify_dm: false, dm_ok: true }); render(<App />);
     expect(await screen.findByText('还差 2 步完成入户')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '继续' })).toHaveAttribute('href', '/welcome');
-    expect(screen.getByRole('heading', { name: '要你处理' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '继续入户' })).toHaveAttribute('href', '/welcome');
+    expect(screen.getByText('当前没有待办。')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '待办摘要' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('link', { name: '案件' })).toHaveAttribute('href', '/cases');
   });
 
 });

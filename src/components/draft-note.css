@@ -5,7 +5,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -17,6 +17,7 @@
   color: var(--muted);
   font: inherit;
   cursor: pointer;
+  min-height: var(--tap-min);
 }
 
 @media (hover: hover) {

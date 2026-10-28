@@ -402,7 +402,8 @@ Scheduling and invitation API routes have been removed and return the existing 4
 - `POST /api/admin/users/:id` `{ is_participant?, is_judge?, is_admin?, score?, delete? }` → `{ ok: true }`.
   `score` sets it by hand (clamped to 0–100, logged as `admin_adjust`); on the
   Node backend a real change DMs the player if they are bound (old → new). The
-  player and members pages offer it to admins (type the number, then confirm).
+  player and members pages link admins to `/tools/score?user=<encoded Nanako ID>`
+  (type the number, then confirm on that tool page).
   These existing backend capabilities remain available; the members UI has
   no delete, admin-grant or participant-toggle controls.
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
@@ -565,20 +566,34 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   — and its feed row shows only the name and 「处理中」.
 - Prefer `claim_summary` over the raw `claim` for headlines; fall back to the type
   label when it is null (pre-v3 rows).
-- Home DOM order: 「要你处理」 for signed-in readers / the welcome card for visitors,
-  then the participant's score, `BoardMini`, 「最近案件」 and the compact weekly report.
-  Desktop uses two columns: todo / welcome and recent cases on the left, score / board / report
-  on the right. The same DOM serves both layouts. Recent cases reuse `RecordsFeed` with
-  `previewCount={5}`, retain 「看更多」 and add 「全部动态」 to `/board/feed` below it.
-- Navigation calls the home page 「首页」; no create-session entry remains. Phone bottom tabs are
-  exactly 「首页·N」「信誉榜」「我的」. Judges and admins keep 「记一笔」 in the avatar menu.
-  Todos include statements, escalation, appeal outcomes / admin review and one onboarding card.
-  「还差 N 步完成入户」 replaces the old unbound / failed-DM cards and comes first; 「继续」 links
-  to `/welcome`. N counts the missing server-derived steps 2–4, using the same pure function as
-  the welcome page. The onboarding card contributes neither a todo badge count nor an attention dot.
-  Closing it stores account, timestamp and missing step IDs in `edg.todo.onboarding-dismissed` for
-  7 days. A newly missing step makes it reappear even when the missing count stays the same;
-  completing steps does not undo the dismissal. This local preference never proves completion.
+- Home DOM order is greeting / standings link, an independent onboarding hint when needed,
+  then score before todo summary, 「最近判决」 and a one-line report date/link. Only the score
+  and todo summary sit side by side on wider screens; narrow screens follow the same DOM order.
+  `MyScoreLine`'s optional `overview` variant and page clock retain its legacy `line` / `card`
+  defaults. An unlisted account says 「当前不上榜」 without a score, rank or recovery preview;
+  visitors get the compact welcome card. Zero known todos is one quiet line; unknown supplemental
+  data stays loading rather than asserting zero. Admin appeal counts count cases, not cards.
+  Recent verdicts are the first three in the existing feed order, limited to `decided` / `appealed`,
+  excluding `pending_hidden` and historical bonus types. There is no home expansion or mini board.
+  「全部案件」 opens `/cases?view=public`; the report row opens `/board/report`, never reproduces
+  its narrative or awards, and quietly says 「暂无战报」 when none exists.
+- One primary navigation in DOM order serves every viewport: 「首页」「信誉榜」「案件」「设置」.
+  The signed-in todo count belongs to 「案件」. The account menu has only 「我的记录」「退出登录」;
+  the cases page links judges/admins to 「裁判工具」. There is no separate phone bottom navigation.
+  When the Node/PG community module is available, home adds one 「社区中心」 entry; its room,
+  role and fun pages remain a separate feature group rather than another primary-navigation set.
+  `/cases` defaults to 「我的待办」 for signed-in readers and 「公开记录」 for visitors.
+  `?view=todo` / `?view=public` selects the section without changing `parseRoute`.
+  Public-record filters operate only on the currently loaded records, including withdrawn,
+  revoked and historical bonus rows; protected pending cases remain one 「处理中」 category.
+  The full todo list includes statements, escalation, appeal outcomes and admin review.
+- The home onboarding hint says 「还差 N 步完成入户」 and 「继续入户」 links to `/welcome`.
+  N counts the missing server-derived steps 2–4 using the welcome page's pure function.
+  It contributes neither a todo badge count nor an attention dot and is omitted from the cases
+  todo list. Closing it stores account, timestamp and missing step IDs in
+  `edg.todo.onboarding-dismissed` for 7 days. A newly missing step makes it reappear even when
+  the missing count stays the same; completing steps does not undo the dismissal.
+  This local preference never proves completion.
 - `/welcome` has five ordered, expandable cards: login; join and bind Discord; enable DMs;
   name and identity; guide. Only login is actionable for visitors. Completed cards fold and the
   first unfinished one opens. Step 2 requires a binding; step 3 requires both `notify_dm` and
@@ -587,12 +602,33 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   「裁判资格由管理员授予」 remains. Drafts never mark a step complete.
   A Discord GET 404 never marks steps 2 or 3 complete: controls hide and 「完成，去首页」 stays
   disabled. Loading or failed reads also cannot establish completion.
-- The visitor welcome card's 「开始」 and both account-menu entries 「编辑身份」「通知与 Discord」
-  link to `/welcome`; `OnboardingDialog` is retired. `/guide` is available without login.
-  Both pages are full pages at every viewport size. `GuideContent`, `/help` and `dm.welcome`
-  share `shared/guide.ts`. `GUIDE_TIPS` includes `voiceNotice()` from `shared/voice.ts`, so the guide,
-  `/help`, welcome DM and welcome step 5 show the same recording notice and retention period.
-  The rules also state that the bot records voice entry and exit times as reference. The S4 information-board hint is shared with the same guide; its channel link is added only to welcome DMs.
+- The visitor welcome card's 「开始」 links to `/welcome`; `OnboardingDialog` is retired.
+  Daily account editing lives in `/settings/profile` and `/settings/discord`, independent of
+  onboarding completion. `/guide` is available without login. Both guide and welcome are full
+  pages at every viewport size. `GuideContent`, `/help` and `dm.welcome` share `shared/guide.ts`.
+  `GUIDE_TIPS` includes `voiceNotice()` from `shared/voice.ts`, so the guide, `/help`, welcome DM
+  and welcome step 5 show the same recording notice and retention period. The rules also state
+  that the bot records voice entry/exit as reference. The S4 information-board hint is shared;
+  its raw channel link is added only to welcome DMs.
+- Personal pages show score, history and records. Only the person's own page shows their tier
+  name and description; other viewers never receive a tier label, blurb or tier-colored avatar.
+  All score numerals, gauges and profile charts use stable neutral colors, including the owner's.
+  The own page embeds personal 7 / 14 / 31-day voice history; staff viewing someone else get a
+  scoped voice-tool link. An unavailable own voice module says 「语音记录暂不可用。」 locally,
+  without turning the whole profile into NotFound or treating unavailable evidence as empty.
+  Admin actions link to member settings and the subject's score tool, without inline role or score forms.
+- A single-case page has heading 「案件 #N」, a subject profile link and exactly one focused
+  `case-N` card. It does not stack the subject's other history, chart or voice below the case.
+  Escalation, statement, appeal and override retain existing API role/status rules.
+  Filing excludes the caller, requires at least 10 characters of facts and caps each optional
+  personal supplement at 300 characters. Partial success retries only failed subjects.
+  Statement submission immediately judges the case and cannot be edited afterwards; an appeal
+  may have an empty reason and retains its confirmation. Withdrawal and revocation use inline
+  confirmation with cancel first. Withdrawal remains for the reporter/admin only while
+  `awaiting_statement`, including a reporter who is no longer a judge. Revocation remains for
+  an admin or the reporter before the 15-minute cutoff measured from creation, only on
+  `decided` / `appealed`; an expired reporter confirmation disappears. Override is admin-only,
+  requires a reason and uses the existing server-clamped violation range.
 - `verdict.source === 'fallback'` must be visually distinct from `'ai'`; users
   should never mistake a base-score fallback for an actual AI judgment.
 - Links into the app (the bot's DMs and replies use them) stay valid for ever:
@@ -602,8 +638,8 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   and clears the parameter with replace.
   `/?case=<id>` looks the case up once
   (`GET /api/records/<id>`) and becomes
-  `/players/<subject>/cases/<id>`, where that case is moved (not copied) to the
-  top of its subject's page, scrolled to the centre and focused. Other query
+  `/players/<subject>/cases/<id>`, where only that case is displayed, scrolled
+  to the centre and focused with one `case-<id>`. Other query
   parameters (`utm`, …) are kept. The link only picks which ordinary view
   opens — what it shows and which controls come from the API and `/api/me` as
   always. A link never writes. A case that is gone leaves you on `/` with
@@ -623,19 +659,41 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   router library). Only these exist; every other path renders the front-end
   page 「这页不存在」 with a 「回大厅」 link:
 
-  | Path | Phone (< 1024px) | Desktop (≥ 1024px) |
+  | Path | Page at every viewport | Helper / compatibility |
   |---|---|---|
-  | `/` | the home page | the home page |
-  | `/welcome` | full page: five-step onboarding and account settings | same full page |
-  | `/guide` | full page: shared bot guide | same full page |
-  | `/admin`, `/admin/voice` | full page: private voice evidence for judges and admins | same full page |
-  | `/admin/ai` | full page: AI configuration, admins only | same full page |
-  | `/admin/members` | full page: all-account management, admins only | same full page |
-  | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | the same page |
-  | `/board`, `/board/feed`, `/board/report`, `/board/rules` | standings, feed, full report, rules | the same pages |
-  | `/players/<userId>` | a page with a sticky 「‹ 返回」 bar | a right-hand drawer over the home page |
-  | `/players/<userId>/cases/<id>` | that player's page, the case moved to the top and focused | the same, in the drawer |
-  | `/cases/<id>` | alias: looks the case up once, then replaces itself with the row above | the same |
+  | `/` | overview | `HOME_PATH` |
+  | `/board` | complete standings and weekly recovery countdown | `boardPath('list')` |
+  | `/cases` | own todo / public records | `CASES_PATH`; `?view=public` selects public records |
+  | `/community` | community room page, scoped to the current actor | community capability required |
+  | `/community/roles` | self-service community interest roles | community capability required |
+  | `/community/play` | community fun tools and authorized results | community capability required |
+  | `/settings` | personal profile, same content as `/settings/profile` | default profile alias |
+  | `/settings/profile` | personal display name and identity | `settingsPath('profile')` |
+  | `/settings/discord` | Discord binding and DM preferences | `settingsPath('discord')` |
+  | `/settings/members` | all-account role management, admins only | `settingsPath('members')` |
+  | `/settings/ai` | AI connection, credentials and configuration, admins only | `settingsPath('ai')` |
+  | `/settings/community` | community configuration, rooms, operations and audit, admins only | community capability required |
+  | `/tools` | judge/admin tool directory | `toolsPath('home')`, also the default `toolsPath()` |
+  | `/tools/filing` | judge/admin filing form | `toolsPath('filing')` |
+  | `/tools/voice` | judge/admin voice evidence | `toolsPath('voice')` |
+  | `/tools/score` | account picker or manual score editor, admins only | `toolsPath('score')` |
+  | `/players/<userId>` | profile with a 「返回」 bar | `playerPath(userId)` |
+  | `/players/<userId>/cases/<id>` | one focused case and subject link | `playerCasePath(userId, id)` |
+  | `/cases/<id>` | look up the case once, then replace with its subject's case address | `casePath(id)` alias |
+  | `/welcome` | five-step onboarding | `WELCOME_PATH` |
+  | `/guide` | shared bot guide | `GUIDE_PATH` |
+  | `/board/report` | full weekly report | `boardPath('report')` |
+  | `/board/rules` | rules and guide | `boardPath('rules')` |
+  | `/board/feed` | current public cases page | preserved old feed address |
+  | `/admin`, `/admin/voice` | current voice tool, staff gate retained | preserved old management addresses |
+  | `/admin/members`, `/admin/ai` | current members / AI settings, admins only | preserved old management addresses |
+  | `/admin/community` | current community settings, admins only | preserved community-management address |
+  | `/sessions`, `/sessions/*` | 「约局功能已下线」 landing | every retired scheduling address |
+
+  All non-home routes cover the home content, while the global navigation remains available.
+  The old feed/admin addresses render current pages without requiring a new redirect.
+  `toolsPath('voice', userId)` and `toolsPath('score', userId)` add a URL-encoded `?user=`;
+  other tool tabs do not add that query. Path parsing remains pure and never reads these queries.
 
   Case ids match `^[1-9]\d{0,14}$` (so `/cases/07` is invalid). All paths under `/sessions` are retired landings. A
   user id is the OAuth subject: non-empty, at most 128 characters, no NUL,
@@ -646,29 +704,59 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   「约人直接在 Discord 里喊；迟到、放鸽子由裁判记录。」 and a 「回首页」 button.
   Not found: `/players/<userId>` → 「找不到这位选手。」 with 「看信誉榜」; a case →
   「链接里的案件不存在了。」, any other failure → 「打不开链接里的案件，稍后再试。」.
-- All `/admin` pages share the 「管理」 shell. Admins see 「语音记录」「AI 设置」「成员」;
-  judges see only 「语音记录」. Signed-out readers and users without judge/admin roles render
-  NotFound without fetching private data. `/admin/ai` and `/admin/members` require an admin;
-  judges render NotFound before requesting either API. API 403/404 removes those pages and
-  their navigation without exposing backend details; ordinary errors offer a local retry.
-  On `/admin` or `/admin/voice`, with no `?user`, show a board-date picker (default today)
-  and the day roster; choosing a person pushes
-  `/admin/voice?user=<encoded Nanako ID>`. With `?user`, show 7 / 14 / 31-day history ending today.
-  Invalid IDs and API 404 render NotFound. Scope or viewer changes immediately hide prior evidence;
-  a late response cannot replace the current view. Loading and ordinary errors retain the private page with retry.
-  Judges/admins have a 「管理」 menu link to `/admin`. The old AI dialog and its account-menu
-  entry are retired; AI settings now live at `/admin/ai`, preserving the three prompts,
-  saved-configuration dry run (`{}`), and 7-day health statistics.
-  `/admin/members` uses client-side name search over the returned list, with a visible
-  latest-500/search-scope hint when truncated. Each row shows avatar, effective name, role
-  tags, plain score and registration time in the board timezone. Admins can set or revoke
-  judge status and expand the existing two-step score form; self-dismissal is hidden.
-  Successful writes show a Toast and reload the list, also invalidating leaderboard, me
-  and `/api/records?limit=50`. A failed list reload after a successful write says the
-  change was saved. Owner/tab changes or loss of role hide prior data and invalidate
-  late reads/writes, including their refreshes and Toasts.
-  Each selected CaseDialog subject has 「看 TA 的语音记录」 linking to their history with
-  `target="_blank" rel="noopener"`, preserving the filing draft in its original tab.
+- Settings are centralized under 「设置」. Signed-in readers see 「个人资料」「Discord 与通知」;
+  admins additionally see 「成员与权限」「AI 模型与密钥」 and, when supported, 「社区管理」.
+  `/settings` continues to mean the profile default; community settings do not replace it or add
+  another account-settings shell. A signed-out personal settings page
+  offers login with the ordinary return destination. Members/AI settings require an admin
+  before mounting their private form or making its API reads; a judge alone gets NotFound.
+  API 403/404 removes unavailable private content; ordinary errors offer a local retry.
+  A Discord GET 404 hides that category and its controls, without proving onboarding completion.
+  Profile editing retains the Nanako/custom-name choice and 24-character limit, and can preserve
+  an unlisted account without automatically opting it into the standings. Existing judge
+  relinquishment and administrator self-service rules are unchanged.
+- `/settings/discord` keeps binding controls separate from the saved DM preference form and
+  welcome-DM resend action. AI settings put connection/credentials first; the three advanced
+  prompts and the original four health statistics are collapsed. Dry run uses saved configuration
+  (`{}`), never unsaved input. Credentials are never prefilled or stored in a draft; explicit key
+  clearing preserves the existing API semantics for other submitted settings.
+  `/settings/members` uses client-side name search over the returned latest-500 list and shows the truncation/search
+  scope hint. Rows show avatar, effective name, role tags, neutral score and board-time registration.
+  Admins can set/revoke judge status, with self-dismissal hidden; manual score changes link to
+  `/tools/score?user=<encoded Nanako ID>`. No account deletion, admin-grant or participant-toggle
+  UI is added. Successful role writes show a Toast, reload the list and invalidate `/api/leaderboard`,
+  `/api/me` and `/api/records?limit=50`; a failed follow-up
+  list read explicitly says the change was saved.
+- `/tools` and `/tools/filing` require a judge or admin. The directory links to filing and voice;
+  admins also get appeal review in `/cases` and manual scoring. `/tools/voice`, with no `?user`,
+  shows a board-date picker (default today) and roster. Selecting a person opens
+  `/tools/voice?user=<encoded Nanako ID>`; the personal view offers 7 / 14 / 31 days ending today.
+  Invalid IDs or API 404 render NotFound. The same role checks apply at `/admin` and `/admin/voice`.
+  Each selected filing subject has 「看 TA 的语音记录」 in a new tab with
+  `target="_blank" rel="noopener"`,
+  preserving the current filing draft. `/tools/score` is admin-only and includes unlisted accounts;
+  changing a score keeps the existing input-then-confirm sequence and writes only `score`.
+  Voice privacy, persisted-only coverage, uncertain departure and 90-day retention remain as specified above.
+- Ordinary settings and score forms save independently. Unsaved SPA navigation, browser Back
+  and logout ask inline first; staying restores focus to the previous control. A page unload with
+  dirty input uses the browser's leave warning. Discarding clears the editor and sensitive input.
+  Filing has its own retained draft and inline leave choice; ordinary navigation can leave an
+  already-started filing request running, with partial-success drafts reduced to failed subjects.
+  A successful save is not reported as unsaved merely because its follow-up read failed.
+- Private reads, pinned cases, dialogs, drafts and mutations belong to the current actor's
+  account/permission lease and, where relevant, subject/tab. A lease change hides old content
+  before new effects, invalidates old callbacks and prevents a later role restoration from reviving
+  an old privileged seed. Late responses cannot publish private data, clear another actor's draft,
+  trigger their Toast/global refresh or start follow-up writes. A request already sent may still
+  commit on the server; navigation is not a rollback. Cached feed records are restricted for the
+  current viewer while refresh is pending, without undoing server redaction or replacing API authorization.
+- The visual system is light: white/gray surfaces, charcoal primary actions, semantic status text,
+  system UI fonts and a system monospace stack for numbers, with no external font requests.
+  Body/input text is 16px, explanations 14px, timestamps 12px; standalone controls meet a 44px
+  touch target. DOM order is visual order, with only the 600/1024 breakpoint families; hover rules
+  require `(hover: hover)`, and visible focus, reduced motion and forced colors remain supported.
+  CSP permits no inline `style` attributes, inline style elements or `dangerouslySetInnerHTML`.
+  Static CSS classes and SVG presentation attributes carry the visuals, without gradient/glow decoration.
 - No route starts with `/api`, `/auth` or `/link` (those belong to the API), and
   routing never uses the hash: a `popstate` that only changed the hash is
   ignored. Every host must serve `index.html` for any other path (SPA
@@ -679,7 +767,7 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   position to restore). Opening a deep address without that mark (a new tab, a
   bookmark, a link from Discord) puts one `/` entry under it, once — reloading
   never adds another, so one back from such an address reaches the hall. An
-  overlay (a sheet or a dialog; the routed drawers are addresses of their own)
+  overlay (a statement/appeal sheet or another actual dialog; routed pages have their own addresses)
   adds one entry at the same address: the back key closes only the topmost
   overlay (one that holds a draft asks first, and keeps its entry if the user
   stays), and closing it from the UI goes back over its entry silently, so the
@@ -707,7 +795,7 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
 
 此新增模块的 Node/PG 边界已由机主确认。`COMMUNITY_ENABLED` 默认关闭；旧 Worker/D1 的下列路径返回 JSON 404，网页隐藏入口。既有信誉、案件、语音证据和绑定契约不变。
 
-所有社区 API 需要现有 Nanako session，返回 `Cache-Control: no-store`。JSON POST 还要求受允许的 Origin，并遵守 READ_ONLY。网页个人控制需当前 Discord 绑定与服务器成员身份；社区管理员只来自当前 `users.is_admin`。Bot 普通命令不需要绑定。API 不持 Bot Token，只写持久任务；Bot 执行前以及多个外部副作用之间重查身份、权限、版本、租约和目标资源。
+所有社区 API 需要现有 Nanako session，返回 `Cache-Control: no-store`。JSON POST 还要求受允许的 Origin，并遵守 READ_ONLY。网页个人控制需当前 Discord 绑定与服务器成员身份；社区管理员只来自当前 `users.is_admin`，无需 Discord 绑定也可配置和管理已有房间。Bot 普通命令不需要绑定。API 不持 Bot Token，只写持久任务；Bot 执行前以及多个外部副作用之间重查身份、权限、版本、租约和目标资源。
 
 | 地址 | 方法 / 返回 |
 |---|---|
@@ -738,4 +826,4 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
 
 新 PG 表均由可重复执行的 `0012_community.sql` 创建：settings、resources、rooms、room_access、operations、audit、fun、poll_votes、ai_usage、role_choices、welcomes（均带 `community_` 前缀）。不删除或复用约局／历史／语音证据表。
 
-新增完整页面 `/community`、`/community/roles`、`/community/play`、`/settings`、`/settings/community`；`/admin/community` 为后者兼容别名。原入户和永久深链不变。管理入口集中到设置；社区页面采用浅色布局，不依赖尚未合并的完整网页改版。
+本 PR 已基于 `3119a96`（main #43，S6 清爽总览）融合。新增社区页面 `/community`、`/community/roles`、`/community/play`，管理页使用既有集中设置中的 `/settings/community`；`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。

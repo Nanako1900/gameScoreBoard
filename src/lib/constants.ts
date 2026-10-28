@@ -8,15 +8,11 @@ export const TOAST_ACTION_MIN_MS = 8_000;
 export const TOAST_MAX_VISIBLE = 3;
 /** Coming back to the tab refetches only when the last refresh is older than this. */
 export const VISIBLE_REFRESH_MIN_MS = 60_000;
-/** Header / MyScoreLine countdowns tick once a minute (spec §2.1). */
+/** Board recovery / MyScoreLine countdowns tick once a minute. */
 export const COUNTDOWN_TICK_MS = 60_000;
 /** Feed size the home page loads — must stay 50: tests pin GET /api/records?limit=50. */
 export const CORE_FEED_LIMIT = 50;
 export const PENDING_STATEMENTS_LIMIT = 20;
-
-// --- P0-4 ---
-/** 本周之星: at least this many 守约守时 bonuses this week (spec §5 #1). */
-export const WEEK_STAR_MIN_ON_TIME = 2;
 
 // --- P0-5 ---
 /** Revoke countdowns refresh this often (spec §5 #6). */
@@ -42,8 +38,6 @@ export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
 /** edg.return.path upper bound. */
 export const RETURN_PATH_MAX = 512;
 export const INBOX_APPEALS_LIMIT = 50;
-export const BOARD_MINI_ROWS_PHONE = 5;
-export const BOARD_MINI_ROWS_DESKTOP = 9;
 export const SKELETON_DEFAULT_LINES = 3;
 export const TODO_RANKS = {
   onboarding: 0, 'urgent-statement': 2, statement: 5, escalation: 8, appeals: 9,

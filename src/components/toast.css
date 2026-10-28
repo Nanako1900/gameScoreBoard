@@ -101,6 +101,3 @@
     border: 1px solid CanvasText;
   }
 }
-
-/* Toasts portal to body, alongside the app rather than inside its fixed tab bar. */
-body:has(.app--tabs) .toasts { bottom: calc(4.5rem + 0.75rem + var(--safe-bottom)); }

@@ -5,6 +5,8 @@ import { App } from '../../src/App';
 import type { User } from '../../src/types';
 import { useDesktopViewport } from './viewport';
 import { preventNavigation } from './history';
+import { readWelcomeReturn } from '../../src/lib/welcomeReturn';
+import { simulateReloadForTests } from '../../src/lib/router';
 
 const ME: User = { id: 'me', username: '玩家', oauth_username: '玩家', avatar_url: null, is_participant: true,
   is_judge: false, is_admin: false, score: 100, created_at: '2026-10-01 00:00:00' };
@@ -57,6 +59,18 @@ describe('welcome page', () => {
     expect(calls.filter((call) => call.path === '/api/me/discord')).toHaveLength(1);
     await userEvent.setup().click(within(section(3)).getByRole('button'));
     expect(within(section(3)).getByText('先完成上一步')).toBeInTheDocument();
+  });
+  it('retains a daily-settings destination through Discord binding and the compatible welcome return', async () => {
+    stub(ME, null); window.history.replaceState(null, '', '/settings/discord?from=profile');
+    const view = render(<App />); const bind = await screen.findByRole('link', { name: '绑定 Discord' });
+    const restore = preventNavigation(); try { fireEvent.click(bind); } finally { restore(); }
+    expect(readWelcomeReturn()).toBe('/settings/discord?from=profile');
+    view.unmount(); simulateReloadForTests();
+    window.history.replaceState(null, '', '/?linked=discord'); stub(ME, BOUND); render(<App />);
+    await userEvent.setup().click(await screen.findByRole('button', { name: '完成，去首页' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/discord'));
+    expect(window.location.search).toBe('?from=profile');
+    expect(screen.getByText('@own_name')).toBeInTheDocument();
   });
   it('opens the DM step when off and uses the returned server flags after enabling', async () => {
     const calls = stub(ME, { ...BOUND, notify_dm: false }, {

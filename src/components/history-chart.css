@@ -42,33 +42,30 @@
   color: var(--muted);
 }
 
+.chart__tick--100 { top: 8%; }
+.chart__tick--75 { top: 27.75%; }
+.chart__tick--50 { top: 47.5%; }
+.chart__tick--25 { top: 67.25%; }
+.chart__tick--0 { top: 87%; }
+
 .chart__line {
   fill: none;
-  stroke: var(--accent, var(--blue));
   stroke-width: 2.5;
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent) 45%, transparent));
 }
 
 .chart__dot {
-  fill: var(--bg);
-  stroke: var(--accent, var(--blue));
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
-}
-
-.chart__dot--last,
-.chart__dot--active {
-  fill: var(--accent, var(--blue));
 }
 
 .chart__scrub {
   display: block;
   width: 100%;
   margin: 0.5rem 0 0;
-  accent-color: var(--accent, var(--blue));
+  accent-color: var(--info);
 }
 
 @media (pointer: coarse) {

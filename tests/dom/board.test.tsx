@@ -5,7 +5,6 @@ import { App } from '../../src/App';
 import { Leaderboard } from '../../src/components/Leaderboard';
 import { RecordsFeed } from '../../src/components/RecordsFeed';
 import { RulesPanel } from '../../src/components/RulesPanel';
-import { WeekHighlights } from '../../src/components/WeekHighlights';
 import { WeeklyReportCard } from '../../src/components/WeeklyReportCard';
 import { WelcomeCard } from '../../src/components/WelcomeCard';
 import type {
@@ -117,54 +116,9 @@ describe('Leaderboard', () => {
 
   it('renders the highlights slot between the head and the list', () => {
     const { container } = render(
-      <Leaderboard participants={TIED} trends={{}} counts={{}} onSelect={() => {}} highlights={<p className="wh">x</p>} />,
+      <Leaderboard participants={TIED} trends={{}} counts={{}} onSelect={() => {}} highlights={<p className="board-slot">x</p>} />,
     );
-    expect(container.querySelector('.lb__head + .wh + .lb__list')).not.toBeNull();
-  });
-});
-
-describe('WeekHighlights', () => {
-  it('names this week’s stars, most bonuses first, and links to them', async () => {
-    const onSelectUser = vi.fn();
-    const user = userEvent.setup();
-    const { container } = render(
-      <WeekHighlights records={STAR_FEED} nextResetAt={NEXT_RESET} onSelectUser={onSelectUser} />,
-    );
-    expect(container.textContent).toBe('⭐ 本周之星：阿杰（准时 3 次）、小红（准时 2 次）');
-    await user.click(screen.getByRole('button', { name: '小红' }));
-    expect(onSelectUser).toHaveBeenCalledWith('b');
-  });
-
-  it('renders nothing when the feed does not cover the whole week', () => {
-    const { container } = render(<WeekHighlights records={STAR_FEED.slice(0, -1)} nextResetAt={NEXT_RESET} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('celebrates a clean week and nudges when nobody made it', () => {
-    const { rerender } = render(<WeekHighlights records={[onTime(2, 'a'), OLD]} nextResetAt={NEXT_RESET} />);
-    expect(screen.getByText('本周全员守约 🎉')).toBeInTheDocument();
-    rerender(<WeekHighlights records={[rec(2, 'a', 'no_show', -12), OLD]} nextResetAt={NEXT_RESET} />);
-    expect(screen.getByText('本周还没人摘星。')).toBeInTheDocument();
-  });
-
-  it('is never a heading', () => {
-    render(<WeekHighlights records={STAR_FEED} nextResetAt={NEXT_RESET} />);
-    expect(screen.queryAllByRole('heading')).toEqual([]);
-  });
-
-  it('a low score can still be the star, and the board names no 鸽王', () => {
-    const low = [player('a', '阿杰', 100), player('b', '小红', 30)];
-    const { container } = render(
-      <Leaderboard
-        participants={low}
-        trends={{}}
-        counts={{}}
-        onSelect={() => {}}
-        highlights={<WeekHighlights records={[onTime(3, 'b'), onTime(2, 'b'), OLD]} nextResetAt={NEXT_RESET} />}
-      />,
-    );
-    expect(container.querySelector('.wh')?.textContent).toBe('⭐ 本周之星：小红（准时 2 次）');
-    expect(container.textContent).not.toContain('鸽王');
+    expect(container.querySelector('.lb__head + .board-slot + .lb__list')).not.toBeNull();
   });
 });
 
@@ -362,7 +316,7 @@ async function settle(): Promise<void> {
   });
 }
 
-describe('App — the board on the home page', () => {
+describe('App — separated overview and board', () => {
   const ME: User = { ...TIED[2], oauth_username: 'c', is_admin: false };
   const REPORT = {
     week_start: '2026-10-19',
@@ -392,24 +346,24 @@ describe('App — the board on the home page', () => {
     'GET /api/report/latest': () => json(200, { report: REPORT }),
   });
 
-  it('signed out: welcome card first, recent cases and stars in the board, no 鸽王 anywhere', async () => {
+  it('signed out: compact welcome and recent verdicts, no duplicated board or awards', async () => {
     mockFetch(routes(null));
     render(<App />);
-    expect(await screen.findByRole('heading', { name: '最近案件' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
-    expect(screen.getByText('⭐', { exact: false }).closest('.lb')).not.toBeNull();
+    expect(await screen.findByRole('heading', { name: '最近判决' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '在这里查看信誉记录' })).toBeInTheDocument();
+    expect(document.querySelector('.lb')).toBeNull();
     expect(document.body.textContent).not.toContain('鸽王');
     expect(document.querySelector('.wr-award')).toBeNull();
     expect(document.querySelector('.tier-badge')).toBeNull();
   });
 
-  it('30 秒看懂 opens the rules destination and focuses its title', async () => {
+  it('了解规则 opens the rules destination and focuses its title', async () => {
     mockFetch(routes(null));
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole('link', { name: '30 秒看懂' }));
+    await user.click(await screen.findByRole('link', { name: '了解规则' }));
     expect(window.location.pathname).toBe('/board/rules');
-    await waitFor(() => expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('heading', { name: '规则与指南' })).toHaveFocus());
     for (const title of ['守约', '分数与回血', '出事了怎么办', '计分规则']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
@@ -419,7 +373,9 @@ describe('App — the board on the home page', () => {
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {
     mockFetch(routes(ME));
     render(<App />);
-    await screen.findByRole('heading', { name: '最近案件' });
+    await screen.findByRole('heading', { name: '最近判决' });
+    await userEvent.setup().click(screen.getByRole('link', { name: '信誉榜' }));
+    await screen.findByRole('heading', { name: '全部上榜成员' });
     await settle();
     expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);

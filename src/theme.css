@@ -1,414 +1,116 @@
-/* ===========================================================================
-   EDG 信誉分 — theme tokens + reset + base
-   Direction: dark esports-broadcast leaderboard (电竞记分牌).
-   ======================================================================== */
-
+/* Light, quiet surfaces. Semantic colors always accompany words or symbols. */
 :root {
-  /* ======================================================================
-     Primitive layer — the raw palette. New CSS should reach for the semantic
-     layer below; a future light theme only has to swap these values.
-     Contrast of the text and edge tokens is locked by tests/unit/contrast.test.ts.
-     ====================================================================== */
-
-  /* --- Surfaces & structure --- */
-  --bg: #0a0e14;
-  --bg-elevated: #0d131c;
-  --panel: #141a24;
-  --panel-2: #182030;
-  --border: #232b3a;
-  --border-strong: #2f3a4d;
-  /* Edges of inputs, checkboxes and clickable chips: ≥ 3:1 on every surface. */
-  --border-input: #66738a;
-
-  /* --- Text --- */
-  --text: #e6edf3;
-  --muted: #8b96a5;
-  --faint: #848fa0;
-
-  /* --- Accents --- */
-  --gold: #f5c542;
-  --gold-dim: #b8912a;
-  /* Fills and borders only — #e5484d is 4.2:1 on --panel-2, too dim for text. */
-  --red: #e5484d;
-  --red-dim: #a5343a;
-  /* Every piece of red text (errors, deductions, danger labels). */
-  --danger-text: #ff6b6f;
-  --blue: #4aa3ff;
-  --green: #3ddc84;
-  --amber: #ff8a3d;
-  /* Keyboard focus ring — see :focus-visible below. */
-  --focus: #8ab4ff;
-
-  /* --- Score deltas --- */
-  --up: #3ddc84;
-  /* A deduction is text, so it follows --danger-text rather than the fill red. */
+  --bg: #f6f7f8;
+  --bg-elevated: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f0f2f5;
+  --border: #dde1e7;
+  --border-strong: #b9c0ca;
+  --border-input: #7b8594;
+  --text: #202633;
+  --muted: #626975;
+  --faint: #626975;
+  /* Historical primitive names stay compatible with existing component CSS. */
+  --gold: #202633;
+  --gold-dim: #202633;
+  --red: #9d2f36;
+  --red-dim: #83242d;
+  --danger-text: #9d2f36;
+  --blue: #405bc4;
+  --green: #267143;
+  --amber: #8a5714;
+  --focus: #405bc4;
+  --up: var(--green);
   --down: var(--danger-text);
-
-  /* ======================================================================
-     Semantic layer — one meaning per colour (spec §6.2). Pair every colour
-     with an icon or words: gold and amber are only ~1.45:1 apart.
-     ====================================================================== */
-  --action: var(--gold); /* primary button, current nav item */
-  --attn: var(--amber); /* needs you, deadline < 2h, time moved, dm_ok = 0 */
-  --ok: var(--green); /* going, on time, bonus, heal, full */
-  --neutral: var(--muted); /* maybe, no reply, not going, cancelled — never red */
-  --danger: var(--red); /* danger button fill / edge, deductions — never colours a person */
-  --info: var(--blue); /* Discord, links, AI source */
-  /* Public score chip and public ScoreGauge: the same for everyone, no tier colour. */
+  --action: var(--gold);
+  --on-action: #ffffff;
+  --attn: var(--amber);
+  --ok: var(--green);
+  --neutral: var(--muted);
+  --danger: var(--red);
+  --info: var(--blue);
   --score-chip-bg: var(--panel-2);
   --score-chip-fg: var(--text);
-
-  /* --- Layers & layout primitives (consumed by Modal / Toast from P0-2, P0-3) --- */
   --z-modal: 100;
   --z-toast: 200;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --sheet-max-h: 92dvh;
   --tap-min: 44px;
-
-  /* --- Glow / shadow --- */
-  --glow-gold: 0 0 0 1px rgba(245, 197, 66, 0.35), 0 0 28px -6px rgba(245, 197, 66, 0.45);
-  --glow-red: 0 0 0 1px rgba(229, 72, 77, 0.3), 0 0 26px -8px rgba(229, 72, 77, 0.4);
-  --inner-glow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-    inset 0 0 40px -30px rgba(120, 160, 255, 0.35);
-  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 30px -12px rgba(0, 0, 0, 0.55);
-  --shadow-pop: 0 20px 60px -18px rgba(0, 0, 0, 0.7);
-
-  /* --- Radius --- */
+  --shadow-panel: 0 1px 2px rgb(25 35 50 / 3%);
+  --shadow-pop: 0 12px 40px rgb(25 35 50 / 14%);
   --r-sm: 6px;
   --r-md: 10px;
-  --r-lg: 16px;
+  --r-lg: 14px;
   --r-pill: 999px;
-
-  /* --- Typography --- */
-  /* Rajdhani has no CJK glyphs: Chinese falls through to the system fonts. */
-  --font-display: 'Rajdhani', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', system-ui,
-    sans-serif;
-  --font-body: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans SC',
-    'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
-  --font-num: 'Rajdhani', ui-monospace, 'SF Mono', 'Menlo', monospace;
-
-  /* Type scale — six steps plus hero (spec §6.3). Chinese never goes below --fs-xs,
-     and only timestamps use it; inputs use --fs-md or more (iOS zooms below 16px). */
-  --fs-xs: 0.75rem; /* 12px */
-  --fs-sm: 0.875rem; /* 14px */
-  --fs-md: 1rem; /* 16px — body, inputs */
-  --fs-lg: 1.125rem; /* 18px */
-  --fs-xl: 1.375rem; /* 22px */
-  --fs-2xl: 1.75rem; /* 28px */
-  --fs-hero: 3rem; /* 48px — MyScoreCard and the player page score only */
-
-  /* Deprecated: the v4 fluid sizes. Components move to --fs-* as each is reskinned;
-     don't use these in new CSS. */
-  --text-hero: clamp(2.6rem, 1.2rem + 5.5vw, 5.5rem);
-  --text-h1: clamp(1.6rem, 1.1rem + 2vw, 2.6rem);
-  --text-h2: clamp(1.15rem, 0.95rem + 0.9vw, 1.5rem);
-  --text-base: clamp(0.95rem, 0.9rem + 0.2vw, 1.05rem);
-  --text-sm: 0.85rem;
-  --text-xs: 0.74rem;
-
-  /* --- Rhythm --- */
-  --space-page: clamp(1rem, 0.5rem + 2.5vw, 3rem);
-  --space-section: clamp(2.5rem, 1.5rem + 4vw, 5rem);
-
-  /* --- Motion --- */
+  --font-display: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-num: ui-monospace, 'SF Mono', Menlo, monospace;
+  --fs-xs: .75rem;
+  --fs-sm: .875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.375rem;
+  --fs-2xl: 1.75rem;
+  --fs-hero: 3rem;
+  --text-hero: var(--fs-hero);
+  --text-h1: var(--fs-2xl);
+  --text-h2: var(--fs-xl);
+  --text-base: var(--fs-md);
+  --text-sm: var(--fs-sm);
+  --text-xs: var(--fs-xs);
+  --space-page: clamp(1rem, .5rem + 2.5vw, 2rem);
+  --space-section: 2rem;
   --dur-fast: 130ms;
-  --dur: 240ms;
-  --ease: cubic-bezier(0.16, 1, 0.3, 1);
-
-  --maxw: 1180px;
-  color-scheme: dark;
+  --dur: 200ms;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --maxw: 1080px;
+  color-scheme: light;
 }
-
-/* --- Reset ---------------------------------------------------------------- */
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-* {
-  margin: 0;
-}
-
-html {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
-body {
-  min-height: 100dvh;
-  font-family: var(--font-body);
-  font-size: var(--text-base);
-  line-height: 1.55;
-  color: var(--text);
-  background-color: var(--bg);
-  /* layered atmosphere: two soft radial spotlights + a faint grid tint */
-  background-image:
-    radial-gradient(1200px 620px at 78% -8%, rgba(245, 197, 66, 0.08), transparent 60%),
-    radial-gradient(1000px 560px at 8% 4%, rgba(74, 163, 255, 0.09), transparent 62%),
-    linear-gradient(180deg, #0a0e14 0%, #080b11 100%);
-  background-attachment: fixed;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-
-img,
-svg {
-  display: block;
-  max-width: 100%;
-}
-
-button {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border: none;
-  background: none;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-input,
-select,
-textarea,
-button {
-  font-family: inherit;
-}
-
-h1,
-h2,
-h3 {
-  font-family: var(--font-display);
-  font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: 0.01em;
-}
-
-/* Keyboard focus is a real outline (H9): box-shadows such as the gold button's
-   can't paint over it, it follows each element's own border-radius, and
-   forced-colors mode keeps it. Never remove it — restyle the outline instead. */
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-/* --- Reusable primitives -------------------------------------------------- */
-
-.tabular {
-  font-family: var(--font-num);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-  letter-spacing: 0.01em;
-}
-
-.panel {
-  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-elevated) 100%);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-panel), var(--inner-glow);
-}
-
-.eyebrow {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: var(--text-xs);
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* --- Buttons -------------------------------------------------------------- */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5em;
-  padding: 0.6em 1.15em;
-  border-radius: var(--r-md);
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: var(--text-sm);
-  letter-spacing: 0.03em;
-  color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  transition: transform var(--dur-fast) var(--ease), background var(--dur-fast),
-    border-color var(--dur-fast), box-shadow var(--dur-fast), color var(--dur-fast);
-}
-
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { min-height: 100dvh; font-family: var(--font-body); font-size: var(--fs-md); line-height: 1.65;
+  color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+img, svg { display: block; max-width: 100%; }
+button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
+a { color: inherit; text-decoration: none; }
+input, select, textarea, button { font-family: inherit; }
+input, select, textarea { font-size: var(--fs-md); }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.tabular { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-panel); }
+.eyebrow { font-weight: 600; font-size: var(--fs-xs); color: var(--muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .5em;
+  min-height: var(--tap-min); padding: .6em 1.1em; border-radius: var(--r-sm); font-weight: 600; font-size: var(--fs-sm);
+  color: var(--text); background: var(--panel); border: 1px solid var(--border-input);
+  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+/* Retained class name; the primary action is solid charcoal in this design. */
+.btn--gold { color: #ffffff; background: var(--action); border-color: var(--action); }
+.btn--danger { color: #ffffff; background: var(--danger); border-color: var(--danger); }
+.btn--danger-outline { color: var(--danger-text); background: transparent; border-color: var(--danger); }
+.btn--ghost { background: transparent; border-color: var(--border-input); }
+.btn--sm { padding: .4em .75em; font-size: var(--fs-sm); }
 @media (hover: hover) {
-  .btn:hover {
-    border-color: var(--border-strong);
-    background: #1c2536;
-  }
+  .btn:hover { background: var(--panel-2); }
+  .btn--gold:hover { background: #353e4f; border-color: #353e4f; }
+  .btn--danger:hover { background: var(--red-dim); border-color: var(--red-dim); }
+  .btn--danger-outline:hover { background: color-mix(in srgb, var(--danger) 7%, var(--panel)); border-color: var(--danger); }
 }
-
-.btn:active {
-  transform: translateY(1px);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.btn--gold {
-  color: #17130a;
-  background: linear-gradient(180deg, #ffd75e, var(--gold));
-  border-color: var(--gold-dim);
-  box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.2), 0 8px 24px -12px rgba(245, 197, 66, 0.6);
-}
-
-@media (hover: hover) {
-  .btn--gold:hover {
-    background: linear-gradient(180deg, #ffe083, #ffce4c);
-    border-color: var(--gold);
-    box-shadow: var(--glow-gold);
-  }
-}
-
-.btn--danger {
-  color: #fff;
-  background: linear-gradient(180deg, #ef5a5f, var(--red));
-  border-color: var(--red-dim);
-}
-
-@media (hover: hover) {
-  .btn--danger:hover {
-    box-shadow: var(--glow-red);
-  }
-}
-
-/* The quieter danger button: inline confirms such as ConfirmInline's 「确认取消」,
-   where a solid red block would shout louder than the choice deserves. */
-.btn--danger-outline {
-  color: var(--danger-text);
-  background: transparent;
-  border-color: var(--danger);
-}
-
-@media (hover: hover) {
-  /* Restate the edge: .btn:hover would otherwise grey it out. */
-  .btn--danger-outline:hover {
-    border-color: var(--danger);
-    background: color-mix(in oklab, var(--danger) 14%, transparent);
-  }
-}
-
-.btn--ghost {
-  background: transparent;
-  border-color: var(--border);
-}
-
-@media (hover: hover) {
-  .btn--ghost:hover {
-    background: var(--panel-2);
-  }
-}
-
-.btn--sm {
-  padding: 0.4em 0.75em;
-  font-size: var(--text-xs);
-}
-
-/* Scrollbar flavor */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--r-pill);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
-
-/* --- 触摸设备的最小可点尺寸 --------------------------------------------------
- * 用 `pointer: coarse` 而不是宽度断点：决定手指能不能点准的是输入方式，不是
- * 屏幕多宽（触屏笔电、平板都该按触摸处理，而窄窗口的鼠标用户不需要）。
- * 桌面鼠标下保持原本更紧凑的尺寸。 */
 @media (pointer: coarse) {
-  .btn {
-    min-height: 44px;
-  }
-
-  .btn--sm {
-    min-height: 40px;
-  }
-
-  /* 句子里的文字型按钮：靠内外边距互相抵消把热区撑大，同时不推动周围排版 */
-  .feed-row__subject,
-  .invite__detail,
-  .wr__regen {
-    padding-block: 0.6rem;
-    margin-block: -0.6rem;
-  }
-
-  .sessions__tab {
-    min-height: 40px;
-  }
+  .btn, .btn--sm { min-height: 44px; }
+  .feed-row__subject, .wr__regen { padding-block: .6rem; margin-block: -.6rem; }
 }
-
-/* --- Forced colors (Windows high contrast) ---------------------------------
- * The browser swaps our palette and drops backgrounds: the focus ring takes the
- * system highlight, controls keep an edge, and status chips that were only a
- * tinted fill get a border so they don't vanish. The chips carry an `html`
- * prefix: theme.css loads first, so it needs one more selector to beat the
- * components' own single-class rules (e.g. .feed-row__status--escalate). */
 @media (forced-colors: active) {
-  :focus-visible {
-    outline-color: Highlight;
-  }
-
-  .btn,
-  input,
-  select,
-  textarea {
-    border-color: ButtonText;
-  }
-
-  html .feed-row__status,
-  html .sdt__chip,
-  html .sdt-player__rsvp,
-  html .sdt-player__att,
-  html .srow__game,
-  html .srow__count,
-  html .srow__status,
-  html .rc-row__tag,
-  html .tier-badge {
-    border: 1px solid CanvasText;
-  }
+  :focus-visible { outline-color: Highlight; }
+  .btn, input, select, textarea { border-color: ButtonText; }
+  html .feed-row__status, html .tier-badge { border: 1px solid CanvasText; }
 }

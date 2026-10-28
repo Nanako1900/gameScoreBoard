@@ -38,8 +38,7 @@
   width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
-  padding: clamp(1.5rem, 1rem + 3vw, 3.5rem) var(--space-page)
-    clamp(2rem, 1.5rem + 3vw, 4rem);
+  padding: 2rem var(--space-page) 3rem;
   display: flex;
   flex-direction: column;
   /* Was --space-section (up to 5rem) between EVERY block, which pushed the page
@@ -48,20 +47,8 @@
   gap: clamp(1.1rem, 0.9rem + 1vw, 1.9rem);
 }
 
-/* All viewports share the same reading order: inbox, score, board, cases, report. */
-.app__home { display: flex; flex-direction: column; gap: 1.25rem; }
-.app__home > * { min-width: 0; }
-.app__recent { display: flex; flex-direction: column; align-items: stretch; gap: 0.6rem; }
-.app__all-activity { align-self: flex-start; display: inline-flex; align-items: center; min-height: var(--tap-min); color: var(--action); }
-.app__home--desktop { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  grid-template-areas: "primary score" "primary board" "recent weekly"; align-items: start; gap: 1.5rem; }
-.app__home--desktop > .app__primary { grid-area: primary; }
-.app__home--desktop > .app__score { grid-area: score; }
-.app__home--desktop > .app__board { grid-area: board; }
-.app__home--desktop > .app__recent { grid-area: recent; }
-.app__home--desktop > .wr { grid-area: weekly; }
-.app__home--desktop.app__home--without-score { grid-template-areas: "primary board" "recent weekly"; }
-.app--tabs { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
+.app__notices { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 var(--space-page); }
+.app__notices:empty { display: none; }
 
 /* --- Footer --------------------------------------------------------------- */
 
@@ -70,7 +57,7 @@
   padding: 1.5rem var(--space-page);
   text-align: center;
   color: var(--faint);
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
 }
 
 /* --- Routes (P1-1) ------------------------------------------------------------ */
@@ -78,6 +65,7 @@
 /* A page-form route hides the lobby, which stays mounted. Without this the
    components' own `display` would beat the UA's [hidden] rule. */
 .app__main[hidden],
+.app__filing[hidden],
 .app__footer[hidden] {
   display: none;
 }
@@ -85,9 +73,9 @@
 .app__page {
   flex: 1;
   width: 100%;
-  max-width: 720px;
+  max-width: var(--maxw);
   margin: 0 auto;
-  padding: 0 var(--space-page) clamp(2rem, 1.5rem + 3vw, 4rem);
+  padding: 2rem var(--space-page) 4rem;
 }
 
 .app__page-status {
@@ -95,3 +83,8 @@
   text-align: center;
   color: var(--muted);
 }
+
+.app__footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.25rem 1.5rem; margin-bottom: 0.5rem; }
+.app__footer a { display: inline-flex; align-items: center; min-height: 44px; }
+
+.app__page--detail, .app__filing { max-width: 840px; }

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommunityAuditView, CommunityOperationView, CommunityResourceKind, CommunityResourceView, CommunitySettings } from '@shared/community';
 import { COMMUNITY_TOOLS, parseCommunitySettings } from '@shared/community';
 import { ApiError } from '../api';
 import { communityApi, type CommunityAdminData } from '../community-api';
 import type { User } from '../types';
 import { NOT_FOUND_TITLE } from '../lib/routeCopy';
+import { usePageLeaveGuard } from '../lib/usePageLeaveGuard';
+import { ConfirmInline } from './ConfirmInline';
 import { Link } from './Link';
 import { NotFound } from './NotFound';
 import { OperationNotice, operationLabels, communityActionLabel, toolNames, useCommunityOperation } from './CommunityPage';
@@ -29,20 +31,26 @@ function CommunityAdminContent() {
  const [error,setError]=useState<string|null>(null);const [status,setStatus]=useState(0);const [refresh,setRefresh]=useState(0);const [saved,setSaved]=useState(false);
  const accessEpoch=useRef(0);const baseline=useRef<{json:string;version:number}|null>(null);const dirtyRef=useRef(false);
  const [newVersion,setNewVersion]=useState<number|null>(null);const [discardConfirm,setDiscardConfirm]=useState(false);
+ const [departing,setDeparting]=useState(false);
  const dirty=draft!==null&&(JSON.stringify(draft)!==baseline.current?.json||Object.entries(tagDraft).some(([ref,text])=>text!==(draft.fun.topics.find(topic=>topic.ref===ref)?.tags.join(', ')??'')));
  dirtyRef.current=dirty;
- useEffect(()=>{if(!dirty)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  const reload=useCallback(()=>setRefresh(value=>value+1),[]);
  const inaccessible=useCallback((cause:ApiError)=>{accessEpoch.current++;baseline.current=null;dirtyRef.current=false;setNewVersion(null);setDiscardConfirm(false);setData(null);setDraft(null);setTagDraft({});setReviewRef(null);setSaved(false);setStatus(cause.status);setError(errorMessage(cause));},[]);
  const op=useCommunityOperation(reload,{onUnavailable:inaccessible});
- useEffect(()=>{window.addEventListener('focus',reload);return()=>window.removeEventListener('focus',reload);},[reload]);
+ const guard=usePageLeaveGuard(dirty&&!departing&&![401,403,404].includes(status),{onLeave:()=>{
+  accessEpoch.current++;baseline.current=null;dirtyRef.current=false;op.reset();
+  setData(null);setDraft(null);setTagDraft({});setReviewRef(null);setNewVersion(null);setDiscardConfirm(false);setSaved(false);setDeparting(true);
+ }});
+ useEffect(()=>{if(departing)return;window.addEventListener('focus',reload);return()=>window.removeEventListener('focus',reload);},[reload,departing]);
  useEffect(()=>{
+  if(departing)return;
   const abort=new AbortController();const epoch=accessEpoch.current;setError(null);
   void Promise.all([communityApi.admin(abort.signal),communityApi.resources('',true,abort.signal),communityApi.operations(abort.signal),communityApi.audit(abort.signal)])
    .then(([admin,resources,operations,audit])=>{if(abort.signal.aborted||accessEpoch.current!==epoch)return;setStatus(0);setData({...admin,resources:resources.resources,operations:operations.operations,audit:audit.audit});if(!dirtyRef.current){baseline.current={json:JSON.stringify(admin.settings),version:admin.version};setDraft(structuredClone(admin.settings));setTagDraft({});setNewVersion(null);}else if(baseline.current?.version!==admin.version)setNewVersion(admin.version);})
    .catch(cause=>{if(!abort.signal.aborted){if(cause instanceof ApiError&&[401,403,404].includes(cause.status)){op.reset();inaccessible(cause);}else{setError(errorMessage(cause));setStatus(cause instanceof ApiError?cause.status:500);}}});
   return()=>abort.abort();
- },[refresh]);
+ },[refresh,departing]);
+ if(departing)return <p role="status">正在离开…</p>;
  if(status===403||status===401)return <NotFound title={NOT_FOUND_TITLE}/>;
  if(!data||!draft)return <section className="community-page"><Link to="/settings">← 设置</Link><h1>社区管理</h1>{error?<><p role="alert">{status===404?'当前服务暂未提供社区管理':error}</p>{status!==404&&<button onClick={reload}>重新加载</button>}</>:<p role="status">管理设置加载中…</p>}</section>;
  const change=<K extends keyof CommunitySettings>(group:K,values:Partial<CommunitySettings[K]>)=>setDraft(current=>current?{...current,[group]:{...current[group] as object,...values}}:current);
@@ -52,11 +60,11 @@ function CommunityAdminContent() {
   if(accessEpoch.current!==epoch)return result;
   baseline.current={json:JSON.stringify(result.settings),version:result.version};dirtyRef.current=false;setNewVersion(null);setDiscardConfirm(false);setData(current=>current?{...current,...result}:current);setDraft(structuredClone(result.settings));setTagDraft({});setSaved(true);return result;
  });
- const guardLeaving=(event:MouseEvent<HTMLAnchorElement>)=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;if(dirty&&!window.confirm('还有未保存的社区设置，确认放弃修改并离开？'))event.preventDefault();};
  const restoreLatest=()=>{baseline.current={json:JSON.stringify(data.settings),version:data.version};dirtyRef.current=false;setDraft(structuredClone(data.settings));setTagDraft({});setNewVersion(null);setDiscardConfirm(false);op.reset();};
  const ready=data.runtime.ready&&data.runtime.appliedVersion===data.version;
  return <section className="community-page community-admin">
-  <div className="community-heading"><div><Link className="community-back" to="/settings" onClick={guardLeaving}>← 设置</Link><p className="community-eyebrow">让社区自然运转</p><h1>社区管理</h1><p>频道、欢迎、身份和互动，都在这里统一设置。</p></div><Link className="community-button community-button--quiet" to="/community" onClick={guardLeaving}>查看社区与房间</Link></div>
+  <div className="community-heading"><div><Link className="community-back" to="/settings">← 设置</Link><p className="community-eyebrow">让社区自然运转</p><h1>社区管理</h1><p>频道、欢迎、身份和互动，都在这里统一设置。</p></div><Link className="community-button community-button--quiet" to="/community">查看社区与房间</Link></div>
+  {guard.confirming&&<ConfirmInline question="还有未保存的社区设置" cancelLabel="继续编辑" confirmLabel="放弃修改并离开" onCancel={guard.stay} onConfirm={guard.leave}>尚未提交的修改不会保存；已经开始的保存仍可能完成。</ConfirmInline>}
   <nav className="community-tabs community-admin-nav" aria-label="社区管理分组"><a href="#community-rooms">语音房间</a><a href="#community-welcome">入服欢迎</a><a href="#community-roles">兴趣身份</a><a href="#community-fun">趣味互动</a><a href="#community-runtime">运行与日志</a></nav>
   <div className="community-notice" role="status"><strong>{ready?'机器人已就绪':'配置尚未应用完成'}</strong><p>已保存版本 {data.version} · 机器人已应用版本 {data.runtime.appliedVersion} · 最近同步 {time(data.runtime.syncedAt)}</p>{data.runtime.problem&&<p>{data.runtime.problem}</p>}{saved&&!ready&&<p>已保存待应用</p>}</div>
   {newVersion!==null&&<div className="community-notice community-notice--alert" role="status"><strong>已有新的社区设置版本</strong><p>当前服务器为版本 {newVersion}；你的修改仍保留在版本 {baseline.current?.version}。保存时会检查原版本，避免覆盖其他管理员的更新。</p>{!discardConfirm?<button disabled={op.busy} onClick={()=>setDiscardConfirm(true)}>载入最新设置</button>:<div className="community-actions"><button disabled={op.busy} onClick={restoreLatest}>确认放弃修改并载入</button><button onClick={()=>setDiscardConfirm(false)}>保留当前编辑</button></div>}</div>}
@@ -102,7 +110,7 @@ function CommunityAdminContent() {
       <NumberField label="一次最多骰子" value={draft.fun.maxDiceCount} min={1} max={100} onChange={maxDiceCount=>change('fun',{maxDiceCount})}/>
       <NumberField label="骰子最多面数" value={draft.fun.maxDiceSides} min={2} max={1000000} onChange={maxDiceSides=>change('fun',{maxDiceSides})}/>
      </div><h3 className="community-admin-subheading">话题题库</h3><p className="community-muted">标签用逗号分隔；普通话题卡从此题库选择，AI 暂不可用时也会使用安全题库。</p><div className="community-topic-list">{draft.fun.topics.map((topic,index)=><div className="community-topic-editor" key={topic.ref}><label>话题正文 {index+1}<textarea required maxLength={500} rows={2} value={topic.text} onChange={e=>change('fun',{topics:draft.fun.topics.map(item=>item.ref===topic.ref?{...item,text:e.target.value}:item)})}/></label><label>话题标签 {index+1}<input maxLength={309} value={tagDraft[topic.ref]??topic.tags.join(', ')} onChange={e=>{setTagDraft(current=>({...current,[topic.ref]:e.target.value}));change('fun',{topics:draft.fun.topics.map(item=>item.ref===topic.ref?{...item,tags:e.target.value.split(/[,，]/).map(value=>value.trim()).filter(Boolean)}:item)});}}/></label><button type="button" onClick={()=>change('fun',{topics:draft.fun.topics.filter(item=>item.ref!==topic.ref)})}>删除话题 {index+1}</button></div>)}</div><button type="button" disabled={draft.fun.topics.length>=200} onClick={()=>change('fun',{topics:[...draft.fun.topics,{ref:crypto.randomUUID(),text:'',tags:[]}]})}>添加话题</button>
-     <div className="community-admin-ai"><h3>社区 AI 灵感</h3><p>社区开关、提示词与配额独立设置。只使用成员主动输入的主题，结果需人工确认。<Link to="/admin/ai" onClick={guardLeaving}>管理模型与密钥</Link></p><div className="community-setting-grid">
+     <div className="community-admin-ai"><h3>社区 AI 灵感</h3><p>社区开关、提示词与配额独立设置。只使用成员主动输入的主题，结果需人工确认。<Link to="/settings/ai">管理模型与密钥</Link></p><div className="community-setting-grid">
       <Toggle label="启用社区 AI" checked={draft.fun.ai.enabled} onChange={enabled=>change('fun',{ai:{...draft.fun.ai,enabled}})}/>
       <NumberField label="每人每日 AI 配额" value={draft.fun.ai.userDailyLimit} min={1} max={1000} onChange={userDailyLimit=>change('fun',{ai:{...draft.fun.ai,userDailyLimit}})}/>
       <NumberField label="全服每日 AI 配额" value={draft.fun.ai.guildDailyLimit} min={1} max={10000} onChange={guildDailyLimit=>change('fun',{ai:{...draft.fun.ai,guildDailyLimit}})}/>

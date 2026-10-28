@@ -46,11 +46,52 @@ interface OpenLayer {
   readonly onPop: () => void;
 }
 
+/** A single departure decision. A disposed guard invalidates both callbacks. */
+export interface NavigationAttempt {
+  proceed: () => void;
+  cancel: () => void;
+}
+
+export type NavigationGuard = (attempt: NavigationAttempt) => void;
+
+interface GuardRegistration {
+  readonly guard: NavigationGuard;
+  readonly key: string;
+}
+
+interface HistoryEntry {
+  readonly location: RouterLocation;
+  readonly state: EdgHistoryState | null;
+  readonly scrollY: number;
+}
+
+interface PendingNavigation {
+  readonly owner: GuardRegistration;
+  readonly origin: HistoryEntry;
+  readonly action: () => void;
+  restoring: boolean;
+  asked: boolean;
+  decision: 'proceed' | 'cancel' | null;
+}
+
+interface PermittedPop {
+  readonly idx: number;
+  readonly key?: string;
+}
+
 const listeners = new Set<Listener>();
 let snapshot: RouterLocation | null = null;
 let listening = false;
 /** pathname + search the subscribers were last told about (P1-2: tracked even with no subscriber). */
 let lastKey = '';
+/** The last route/overlay entry accepted by the store, before a browser traversal. */
+let committedEntry: HistoryEntry | null = null;
+/** The page entry below any real overlays, which must close before a page asks. */
+let committedPageEntry: HistoryEntry | null = null;
+const navigationGuards: GuardRegistration[] = [];
+let pendingNavigation: PendingNavigation | null = null;
+/** A confirmed programmatic Back or a replay of a confirmed browser traversal. */
+let permittedPop: PermittedPop | null = null;
 
 /** P1-2: overlays that asked for an entry and have not closed yet, bottom → top. */
 let openLayers: readonly OpenLayer[] = [];
@@ -68,7 +109,26 @@ const currentKey = (): string => keyOf(window.location.pathname, window.location
 const currentState = (): EdgHistoryState | null => readEdgState(window.history.state);
 const currentIndex = (): number => currentState()?.idx ?? 0;
 
+function rawLocation(): RouterLocation {
+  const { pathname, search } = window.location;
+  return { pathname, search, route: parseRoute(pathname) };
+}
+
+function captureEntry(): HistoryEntry {
+  return { location: rawLocation(), state: currentState(), scrollY: window.scrollY };
+}
+
+function commitEntry(): void {
+  committedEntry = captureEntry();
+  if (committedEntry.state?.layer === undefined && committedEntry.state?.sheet === undefined) {
+    committedPageEntry = committedEntry;
+  }
+}
+
 function readLocation(): RouterLocation {
+  // A pop cannot be cancelled. Until its original entry is restored, every
+  // render (not just store subscribers) must keep seeing the mounted editor.
+  if (pendingNavigation !== null) return pendingNavigation.origin.location;
   const { pathname, search } = window.location;
   if (snapshot === null || keyOf(snapshot.pathname, snapshot.search) !== keyOf(pathname, search)) {
     snapshot = { pathname, search, route: parseRoute(pathname) };
@@ -78,6 +138,7 @@ function readLocation(): RouterLocation {
 
 function notify(): void {
   lastKey = currentKey();
+  commitEntry();
   listeners.forEach((listener) => listener());
 }
 
@@ -90,9 +151,11 @@ function moved(): boolean {
 
 /** One window listener for the whole module, only while someone needs it (P1-2: open overlays and silent backs too). */
 function syncListener(): void {
-  const needed = listeners.size > 0 || openLayers.length > 0 || silentBacks > 0;
+  const needed = listeners.size > 0 || openLayers.length > 0 || silentBacks > 0
+    || navigationGuards.length > 0 || pendingNavigation !== null || permittedPop !== null;
   if (needed && !listening) {
     lastKey = currentKey();
+    if (pendingNavigation === null) commitEntry();
     window.addEventListener('popstate', onPopState);
     listening = true;
   } else if (!needed && listening) {
@@ -114,7 +177,7 @@ function subscribe(listener: Listener): () => void {
 
 /** Run now, or after the silent back in flight has landed. */
 function whenSettled(write: () => void): void {
-  if (silentBacks === 0) {
+  if (silentBacks === 0 && pendingNavigation === null) {
     write();
     return;
   }
@@ -122,7 +185,7 @@ function whenSettled(write: () => void): void {
 }
 
 function flushHeld(): void {
-  while (silentBacks === 0 && held.length > 0) {
+  while (silentBacks === 0 && pendingNavigation === null && held.length > 0) {
     const [next, ...rest] = held;
     held = rest;
     next();
@@ -154,12 +217,159 @@ function silentBack(steps: number): void {
 
 function onSilentPop(): void {
   silentBacks -= 1;
+  if (moved()) {
+    // A user traversal can overtake an overlay's queued cleanup. It has
+    // already passed the closed overlays: protect the page before publishing
+    // that route or running writes that were waiting for the cleanup.
+    silentBacks = 0;
+    clearSilentTimer();
+    if (guardBrowserPop(captureEntry())) { syncListener(); return; }
+  } else {
+    // A queued navigation may immediately ask its guard in flushHeld(). Keep
+    // the accepted page index current before that question freezes the store.
+    commitEntry();
+  }
   if (silentBacks === 0) {
     clearSilentTimer();
     flushHeld();
   }
   syncListener();
   if (moved()) notify();
+  else if (pendingNavigation === null) commitEntry();
+}
+
+// ---------------------------------------------------------------- page departure guards
+
+function activeGuard(): GuardRegistration | null {
+  const key = currentKey();
+  for (let i = navigationGuards.length - 1; i >= 0; i -= 1) {
+    if (navigationGuards[i].key === key) return navigationGuards[i];
+  }
+  return null;
+}
+
+function sameEntry(entry: HistoryEntry): boolean {
+  return keyOf(entry.location.pathname, entry.location.search) === currentKey()
+    && entry.state?.idx === currentState()?.idx;
+}
+
+function completeDecision(pending: PendingNavigation): void {
+  if (pendingNavigation !== pending || pending.restoring || pending.decision === null) return;
+  pendingNavigation = null;
+  if (pending.decision === 'proceed') whenSettled(pending.action);
+  flushHeld();
+  syncListener();
+}
+
+function askGuard(pending: PendingNavigation): void {
+  if (pendingNavigation !== pending || pending.asked || pending.restoring) return;
+  if (!navigationGuards.includes(pending.owner)) {
+    pending.decision = 'cancel';
+    completeDecision(pending);
+    return;
+  }
+  pending.asked = true;
+  const decide = (decision: 'proceed' | 'cancel'): void => {
+    if (pendingNavigation !== pending || pending.decision !== null) return;
+    if (!navigationGuards.includes(pending.owner)) return;
+    pending.decision = decision;
+    completeDecision(pending);
+  };
+  pending.owner.guard({ proceed: () => decide('proceed'), cancel: () => decide('cancel') });
+}
+
+/** Restore the exact existing entry; never push a sentinel or replace a neighbour. */
+function restoreGuardedEntry(pending: PendingNavigation): void {
+  if (sameEntry(pending.origin)) {
+    pending.restoring = false;
+    commitEntry();
+    if (Number.isFinite(pending.origin.scrollY)) window.scrollTo(0, pending.origin.scrollY);
+    if (pending.decision !== null) completeDecision(pending);
+    else askGuard(pending);
+    return;
+  }
+  const here = currentState();
+  const origin = pending.origin.state;
+  if (here === null || origin === null || here.idx === origin.idx) return;
+  pending.restoring = true;
+  window.history.go(origin.idx - here.idx);
+}
+
+function guardBrowserPop(target: HistoryEntry): boolean {
+  const owner = activeGuardForCommittedEntry();
+  const origin = committedPageEntry ?? committedEntry;
+  // Every in-document route written by this router is marked. A traversal to
+  // another document is protected by the hook's native beforeunload handler.
+  if (owner === null || origin === null || origin.state === null || target.state === null
+    || origin.state.idx === target.state.idx) return false;
+  const pending: PendingNavigation = {
+    owner,
+    origin: { ...origin, scrollY: window.scrollY },
+    action: () => {
+      const delta = target.state!.idx - currentIndex();
+      if (delta === 0) return;
+      permittedPop = { idx: target.state!.idx, key: keyOf(target.location.pathname, target.location.search) };
+      syncListener();
+      window.history.go(delta);
+    },
+    restoring: true,
+    asked: false,
+    decision: null,
+  };
+  pendingNavigation = pending;
+  // A jump over several entries can skip a real overlay and the page in one
+  // go. Close the skipped overlays first, so an inline page question is not
+  // hidden behind their inert/focus trap; restore the underlying page entry.
+  if (openLayers.length > 0) popLayersAbove(target.state);
+  restoreGuardedEntry(pending);
+  return true;
+}
+
+function activeGuardForCommittedEntry(): GuardRegistration | null {
+  const entry = committedPageEntry ?? committedEntry;
+  if (entry === null) return null;
+  const key = keyOf(entry.location.pathname, entry.location.search);
+  for (let i = navigationGuards.length - 1; i >= 0; i -= 1) {
+    if (navigationGuards[i].key === key) return navigationGuards[i];
+  }
+  return null;
+}
+
+/** The last mounted page guard wins. Disposal cancels its pending departure. */
+export function registerNavigationGuard(guard: NavigationGuard): () => void {
+  const registration: GuardRegistration = { guard, key: currentPath() };
+  navigationGuards.push(registration);
+  syncListener();
+  return () => {
+    const index = navigationGuards.indexOf(registration);
+    if (index < 0) return;
+    navigationGuards.splice(index, 1);
+    const pending = pendingNavigation;
+    if (pending?.owner === registration) {
+      pending.decision = 'cancel';
+      completeDecision(pending);
+    }
+    syncListener();
+  };
+}
+
+/** Ask the current page before an action that leaves it, including logout. */
+export function requestNavigation(action: () => void): void {
+  // One confirmation owns one target; double clicks cannot replace or queue it.
+  if (pendingNavigation !== null) return;
+  whenSettled(() => {
+    if (pendingNavigation !== null) return;
+    const owner = activeGuard();
+    if (owner === null) {
+      action();
+      return;
+    }
+    const pending: PendingNavigation = {
+      owner, origin: captureEntry(), action, restoring: false, asked: false, decision: null,
+    };
+    pendingNavigation = pending;
+    askGuard(pending);
+  });
 }
 
 // ---------------------------------------------------------------- overlays
@@ -218,6 +428,12 @@ function restoreScroll(state: EdgHistoryState | null): void {
 }
 
 function onPopState(): void {
+  if (pendingNavigation !== null) {
+    // A second Back while the question is open is restored as well; the first
+    // requested target remains the one the user will approve or cancel.
+    restoreGuardedEntry(pendingNavigation);
+    return;
+  }
   if (silentBacks > 0) {
     onSilentPop();
     return;
@@ -225,9 +441,14 @@ function onPopState(): void {
   const state = currentState();
   // A popstate that only moved the hash changes nothing here (spec §2.2: no hash routing).
   if (state === null && !moved()) return;
+  const allowed = permittedPop;
+  permittedPop = null;
+  const confirmed = allowed !== null && state?.idx === allowed.idx
+    && (allowed.key === undefined || currentKey() === allowed.key);
+  if (moved() && !confirmed && guardBrowserPop(captureEntry())) return;
   popLayersAbove(state);
   syncListener();
-  if (!moved()) return;
+  if (!moved()) { commitEntry(); return; }
   notify();
   restoreScroll(state);
 }
@@ -244,12 +465,14 @@ export function pushLayerEntry(name: string, onPop: () => void): LayerEntryId {
   openLayers = [...openLayers, { id, onPop }];
   syncListener();
   const sheet = name.slice(0, HISTORY_SHEET_NAME_MAX);
+  const ownerPath = currentPath();
   whenSettled(() => {
-    if (!isOpenLayer(id)) return;
+    if (!isOpenLayer(id) || currentKey() !== ownerPath) return;
     // A navigation from inside the overlay replaces this entry, so the page under it keeps its y here.
     rememberScroll(currentState());
     window.history.pushState({ edg: 1, idx: currentIndex() + 1, sheet, layer: id }, '', currentKey());
     stacked = [...stacked, id];
+    commitEntry();
   });
   return id;
 }
@@ -274,7 +497,8 @@ export function useRoute(): Route {
 
 /** pathname + search of the current entry (LoginLink saves it, P1-3). */
 export function currentPath(): string {
-  return currentKey();
+  const location = readLocation();
+  return keyOf(location.pathname, location.search);
 }
 
 function applyNavigate(target: string, options: NavigateOptions): void {
@@ -302,23 +526,35 @@ export function navigate(path: string, options: NavigateOptions = {}): void {
   }
   const url = new URL(path, window.location.origin);
   if (!isAppPath(url.pathname)) {
-    window.location.assign(path);
+    requestNavigation(() => window.location.assign(path));
     return;
   }
   const target = keyOf(url.pathname, url.search);
-  whenSettled(() => applyNavigate(target, options));
+  if (target === currentPath()) {
+    // Canonical same-address replacements may consume an overlay entry, but
+    // they do not leave the editor and must not open a departure question.
+    if (options.replace === true) whenSettled(() => applyNavigate(target, options));
+    return;
+  }
+  requestNavigation(() => applyNavigate(target, options));
 }
 
 /** Back through our own entries; from the first one, replace with `fallback` instead of leaving the site. */
 export function goBack(fallback: string = HOME_PATH): void {
-  whenSettled(() => {
+  const action = (): void => {
     if (currentIndex() > 0) {
+      permittedPop = { idx: currentIndex() - 1 };
+      syncListener();
       window.history.back();
       return;
     }
     const url = new URL(fallback, window.location.origin);
     applyNavigate(keyOf(url.pathname, url.search), { replace: true });
-  });
+  };
+  // An actual top overlay keeps the old back-closes-layer semantics.
+  const layer = currentState()?.layer;
+  if (layer !== undefined && isOpenLayer(layer)) whenSettled(action);
+  else requestNavigation(action);
 }
 
 /**
@@ -339,12 +575,14 @@ export function bootRouter(): void {
       window.history.replaceState({ edg: 1, idx: 0 }, '', HOME_PATH);
       window.history.pushState({ edg: 1, idx: 1 }, '', here);
     }
+    commitEntry();
     return;
   }
   const staleLayer = state.layer !== undefined && !isOpenLayer(state.layer);
   if (staleLayer || (state.sheet !== undefined && state.layer === undefined)) {
     window.history.replaceState(withoutOverlay(state), '', here);
   }
+  commitEntry();
 }
 
 // ---------------------------------------------------------------- tests only
@@ -355,6 +593,11 @@ function clearModuleState(): void {
   listening = false;
   snapshot = null;
   lastKey = '';
+  committedEntry = null;
+  committedPageEntry = null;
+  navigationGuards.splice(0);
+  pendingNavigation = null;
+  permittedPop = null;
   openLayers = [];
   stacked = [];
   nextLayerEntryId = 1;
