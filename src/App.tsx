@@ -45,6 +45,7 @@ import { BottomTabs } from './components/BottomTabs';
 import { Skeleton } from './components/Skeleton';
 import { RecordsFeed } from './components/RecordsFeed';
 import { Link } from './components/Link';
+import { CommunityEntry } from './components/CommunityEntry';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -274,6 +275,7 @@ function AppMain(): JSX.Element {
         <h1 className="visually-hidden">EDG 信誉分</h1>
         {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
+        {me && <CommunityEntry accountKey={`${me.id}:${me.is_admin}`} />}
         <div className={`app__home${layout === 'drawer' ? ' app__home--desktop' : ''}${score === null ? ' app__home--without-score' : ''}`}>
           <div className="app__primary">{primary}</div>
           {score && <div className="app__score">{score}</div>}

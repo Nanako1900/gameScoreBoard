@@ -401,7 +401,7 @@ describe('App — tab title', () => {
     await settle();
     expect(new Set(calls.map((c) => c.path))).toEqual(
       new Set([
-        '/api/config',
+        '/api/community', '/api/config',
         '/api/leaderboard',
         '/api/records?limit=50',
         '/api/me',

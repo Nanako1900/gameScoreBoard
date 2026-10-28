@@ -15,6 +15,9 @@ export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'welcome' }
   | { readonly name: 'guide' }
+  | { readonly name: 'settings' }
+  | { readonly name: 'community'; readonly tab: 'rooms' | 'roles' | 'play' }
+  | { readonly name: 'communityAdmin' }
   | { readonly name: 'admin'; readonly tab: 'voice' | 'ai' | 'members' }
   | { readonly name: 'sessionGone' }
   | { readonly name: 'player'; readonly userId: string }
@@ -100,6 +103,12 @@ function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
   if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
   if (segments.length === 1 && head === 'guide') return { name: 'guide' };
+  if (segments.length === 1 && head === 'settings') return { name: 'settings' };
+  if (head === 'community') {
+    if (segments.length === 1) return { name: 'community', tab: 'rooms' };
+    if (segments.length === 2 && (first === 'roles' || first === 'play')) return { name: 'community', tab: first };
+  }
+  if (segments.length === 2 && (head === 'settings' || head === 'admin') && first === 'community') return { name: 'communityAdmin' };
   if (head === 'admin' && (segments.length === 1 || (segments.length === 2 && first === 'voice'))) return { name: 'admin', tab: 'voice' };
   if (head === 'admin' && segments.length === 2 && (first === 'ai' || first === 'members')) return { name: 'admin', tab: first };
   if (head === 'sessions') return { name: 'sessionGone' };
@@ -151,6 +160,12 @@ export function formatRoute(route: LinkableRoute): string {
       return WELCOME_PATH;
     case 'guide':
       return GUIDE_PATH;
+    case 'settings':
+      return '/settings';
+    case 'community':
+      return route.tab === 'rooms' ? '/community' : `/community/${route.tab}`;
+    case 'communityAdmin':
+      return '/settings/community';
     case 'admin':
       return route.tab === 'voice' ? adminVoicePath() : `/admin/${route.tab}`;
     case 'sessionGone':
@@ -173,7 +188,10 @@ export function routeCoversHome(route: Route, layout: RouteLayout): boolean {
       return false;
     case 'welcome':
     case 'guide':
+    case 'settings':
     case 'admin':
+    case 'community':
+    case 'communityAdmin':
     case 'notFound':
     case 'sessionGone':
     case 'case':

@@ -11,6 +11,9 @@ import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
 import { AdminPage } from './AdminPage';
+import { CommunityPage } from './CommunityPage';
+import { SettingsPage } from './SettingsPage';
+import { CommunityAdminPage } from './CommunityAdminPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -137,6 +140,12 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} notice={props.welcomeNotice} /></PageShell>;
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
+    case 'settings':
+      return <PageShell><SettingsPage me={props.me} discord={props.discordRead ?? {value:undefined,loading:false}} onDiscordChanged={props.onDiscordChanged ?? (()=>{})} onSaved={props.onMeUpdated ?? (()=>props.onChanged())}/></PageShell>;
+    case 'community':
+      return <PageShell><CommunityPage tab={route.tab} accountKey={`${props.me?.id ?? 'guest'}:${props.me?.is_admin}`} /></PageShell>;
+    case 'communityAdmin':
+      return <PageShell><CommunityAdminPage me={props.me} /></PageShell>;
     case 'admin':
       return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
     case 'board':

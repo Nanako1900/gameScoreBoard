@@ -44,9 +44,9 @@ describe('header navigation', () => {
 
 describe('the shared account menu', () => {
   it.each([
-    [false, false, ['我的', '编辑身份', '通知与 Discord', '退出登录']],
-    [true, false, ['我的', '编辑身份', '通知与 Discord', '记一笔', '管理', '退出登录']],
-    [false, true, ['我的', '编辑身份', '通知与 Discord', '记一笔', '管理', '退出登录']],
+    [false, false, ['我的', '设置', '退出登录']],
+    [true, false, ['我的', '设置', '记一笔', '管理', '退出登录']],
+    [false, true, ['我的', '设置', '记一笔', '管理', '退出登录']],
   ] as const)('orders actions for judge=%s admin=%s', async (judge, admin, expected) => {
     render(<AccountMenu me={{ ...ME, is_judge: judge, is_admin: admin }} myPath="/players/me"
       onOpenOnboarding={vi.fn()} onRecord={vi.fn()} onOpenAdmin={vi.fn()} onLogout={vi.fn()} dot />);
@@ -67,20 +67,20 @@ describe('the shared account menu', () => {
   it('closes on Escape and restores the toggle, or on an outside mouse press', async () => {
     render(<AccountMenu me={ME} myPath="/players/me" onOpenOnboarding={vi.fn()} onLogout={vi.fn()} />);
     const user = userEvent.setup(); const toggle = screen.getByRole('button', { name: '小明' });
-    await user.click(toggle); screen.getByRole('link', { name: '编辑身份' }).focus();
+    await user.click(toggle); screen.getByRole('link', { name: '设置' }).focus();
     await user.keyboard('{Escape}'); expect(toggle).toHaveFocus(); expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle); fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('group', { name: '账户菜单' })).not.toBeInTheDocument();
   });
-  it('links identity and Discord to welcome and retires the old AI callback', async () => {
+  it('concentrates identity and Discord under settings and retires the old AI callback', async () => {
     const onboarding = vi.fn(), record = vi.fn(), admin = vi.fn(), logout = vi.fn();
     render(<AccountMenu me={{ ...ME, is_admin: true }} myPath="/players/me" onOpenOnboarding={onboarding}
       onRecord={record} onOpenAdmin={admin} onLogout={logout} />);
     const user = userEvent.setup();
-    for (const label of ['编辑身份', '通知与 Discord', '记一笔', '退出登录']) {
+    for (const label of ['设置', '记一笔', '退出登录']) {
       await user.click(screen.getByRole('button', { name: '小明' }));
-      const action = screen.getByRole(label === '编辑身份' || label === '通知与 Discord' ? 'link' : 'button', { name: label });
-      if (action.tagName === 'A') expect(action).toHaveAttribute('href', '/welcome');
+      const action = screen.getByRole(label === '设置' ? 'link' : 'button', { name: label });
+      if (action.tagName === 'A') expect(action).toHaveAttribute('href', '/settings');
       await user.click(action);
       expect(screen.queryByRole('group', { name: '账户菜单' })).not.toBeInTheDocument();
     }
