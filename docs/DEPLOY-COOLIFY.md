@@ -39,7 +39,9 @@
    | `SHARE_HOST` / `SITE_URL` / `SITE_NAME` / `GUILD_ID` | 默认值就是现在线上的配置，一般不用改。`SHARE_HOST` 可以逗号分隔多个主机名 |
    | `SERVICE_PASSWORD_POSTGRES` | Coolify 自动生成。**部署后不要再改**：postgres 只在第一次初始化时用它，之后改了就连不上 |
    | `APP_HOST_PORT` | 可选：`app` 在宿主机 `127.0.0.1` 上的端口，默认 `8787`。宿主机上 8787 已被占用时才改 |
-   | API 的变量（`OAUTH_CLIENT_SECRET`、`SESSION_SECRET`、`AI_API_KEY`…） | 打开 API 时才需要，之前留空即可 |
+   | API 的变量（`OAUTH_CLIENT_SECRET`、`SESSION_SECRET`…） | 打开 API 时才需要，之前留空即可 |
+   | `AI_CONFIG_MASTER_KEY` | 开启网页 Key 管理前，用 `openssl rand -base64 32` 一次生成并持久保存；app + bot 必须同值 |
+   | `AI_API_KEY` | 可选旧实例兼容；数据库已有设置或清除标记后不再使用 |
 
 5. **Deploy**。预期：
    - `postgres` healthy；
@@ -48,6 +50,17 @@
      而导入数据时要在主机上用它）；
    - `app` healthy；
    - `bot` healthy 但空闲（没填 `DISCORD_TOKEN` 时不连 Discord）。
+
+## 管理页配置 AI
+
+`compose.yaml` 将同一个运行时 `AI_CONFIG_MASTER_KEY` 传入 app 与 bot，两者共用 PostgreSQL 中的已提交配置。主密钥需独立于 `SESSION_SECRET`，只生成一次，存入密码管理器并备份；不能每次部署重新生成。数据库备份需配套保管对应的原主密钥，并分开存放。
+
+1. 在 Coolify 保存主密钥（runtime-only），**Redeploy 整个 stack**，让 app 和 bot 都拿到同一值。
+2. 管理员到 `/admin/ai` 录入端点、模型、API Key，并设置启用、温度和三套提示词；这些提供商配置无需另设环境变量。Key 仅以 AES-256-GCM 密文进入现有 `app_settings`，无需 SQL 迁移。
+3. 先保存，再网页试跑（使用已保存配置、不改分）；有未保存修改时先保存。随后通过 Discord 测试案件提交陈述，核验 bot 也成功调用。
+4. 日常保留、更换、清除 Key 都无需 Redeploy：输入留空保留原值；明确清除会停用 AI，旧环境 Key 不会复活。下一次网页或 bot 调用读取最新提交配置。
+
+迁入前可以继续保留旧 `AI_API_KEY`，完成网页与 bot 验收后再移除；凭据行存在后它不再生效。主密钥缺失、错配或密文损坏时 AI 走既有回退，公开配置仍返回正常响应；恢复原主密钥后可读取同一密文。丢失原主密钥时，只能在管理页重新录入提供商 Key。
 
 ## 给 `app` 配域名
 

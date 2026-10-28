@@ -76,13 +76,18 @@ https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot+applications.c
 | `GUILD_ID` / `APP_URL` / `FRONTEND_URL` | app + bot | 默认值就是线上配置，一般不用改。bot 只把命令注册到 `GUILD_ID` 这一个服务器。`FRONTEND_URL` 是网页的根地址：私信和回复里的按钮会直接打开某个案件（`?case=<id>`） |
 | `DISCORD_VERDICT_CHANNEL_ID` | bot | 可选：判决播报的私有频道 id，见第 5 节。留空就不播报 |
 | `DISCORD_BOARD_CHANNEL_ID` | bot | 可选：信息板所在的文字频道 id；留空就不发送信息板 |
-| `AI_API_KEY` | app + bot | 和网页同一个 key：在 Discord 里写的陈述当场由 AI 裁决（P6） |
+| `AI_CONFIG_MASTER_KEY` | app + bot | 同一把持久保存的加密主密钥（`openssl rand -base64 32` 只生成一次），用于读取网页保存的 Key |
+| `AI_API_KEY` | app + bot | 可选旧实例兼容；数据库从未设置或清除凭据时才使用 |
 
 `DATABASE_URL` 由 `compose.yaml` 拼好，不用填。`DISCORD_TOKEN` 留空时 bot 只是空闲；填了之后
 bot 启动时会检查其余变量，缺了或格式不对就直接退出，日志里会列出每一项问题（不会打印 token）。
 `app` 没有 `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` 时日志里有一行 `Discord binding disabled`。
 
-改完变量后重新部署整个 stack。
+首次配置或修改主密钥等运行时变量后，重新部署整个 stack，使 app 与 bot 取得相同值。主密钥不能复用 `SESSION_SECRET`，不能在每次部署时重新生成；保存到密码管理器并独立备份，恢复数据库时需要对应的原主密钥。
+
+随后由管理员在 `/admin/ai` 维护端点、模型、API Key、温度、启用和三套提示词。先保存，再点网页试跑（不改分，使用已保存配置；有未保存修改时先保存），再在 Discord 测试案件提交陈述，确认 bot 当场用同一配置裁决。日常更换 Key 无需重新部署。Key 只以密文存入现有 `app_settings`，无需 SQL 迁移。
+
+Key 输入留空保留原值，明确清除后 AI 停用并回退；旧环境 Key 不会因清除而复活。迁入时先保留旧环境 Key 直到网页与 bot 验收通过，数据库已有凭据行后它不再生效。缺少或错配主密钥、密文损坏时 bot 安全回退，网页公开配置仍可读；修复原主密钥即可重新读取原密文。
 
 ## 4. 谁能用哪些命令
 

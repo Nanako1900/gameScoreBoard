@@ -6,6 +6,9 @@ import type { JudgeRequest } from '../../worker/ai/prompt';
 
 const CFG: AiConfig = {
   enabled: true,
+  configuredEnabled: true,
+  apiKeySource: 'environment',
+  apiKeyError: null,
   baseUrl: 'https://api.example.com/v1',
   model: 'test-model',
   apiKey: 'sk-test',
@@ -187,4 +190,68 @@ describe('judgeCase — degradation', () => {
     });
     await expect(judgeCase(CFG, REQ)).resolves.toMatchObject({ source: 'fallback' });
   });
+});
+
+
+describe('judgeCase — credential redaction', () => {
+  it('filters successful narratives, factors and stored upstream text', async () => {
+    fetchMock.mockResolvedValue(chatResponse(JSON.stringify({ delta: -11, headline: `判了 ${CFG.apiKey}`, reasoning: `理由 ${CFG.apiKey}`, factors: [{ kind: 'mitigating', text: CFG.apiKey }], confidence: 0.7 })));
+    const out = await judgeCase(CFG, REQ);
+    expect(out.source).toBe('ai');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(out.headline).toContain('[已隐藏]');
+  });
+  it.each(['http', 'network', 'invalid', 'retry'])('filters %s failure before returning audit', async (kind) => {
+    if (kind === 'network') fetchMock.mockRejectedValue(new Error(`failed ${CFG.apiKey}`));
+    else if (kind === 'invalid') fetchMock.mockResolvedValue(chatResponse(`invalid ${CFG.apiKey}`));
+    else if (kind === 'retry') fetchMock.mockResolvedValueOnce(new Response('retry', { status: 400 })).mockRejectedValueOnce(new Error(CFG.apiKey));
+    else fetchMock.mockResolvedValue(new Response(`failure ${CFG.apiKey}`, { status: 500 }));
+    const out = await judgeCase(CFG, REQ);
+    expect(out.source).toBe('fallback');
+    expect(JSON.stringify(out)).not.toContain(CFG.apiKey);
+    expect(JSON.stringify(out)).toContain('[已隐藏]');
+  });
+});
+
+
+it('filters a credential decoded from JSON escapes in business output', async () => {
+  const content = JSON.stringify({ delta: -11, headline: CFG.apiKey, reasoning: CFG.apiKey, factors: [] })
+    .replaceAll(CFG.apiKey, '\\u0073k-test');
+  fetchMock.mockResolvedValue(chatResponse(content));
+  const out = await judgeCase(CFG, REQ);
+  expect(out.source).toBe('ai');
+  expect(out.headline).toBe('[已隐藏]');
+  expect(out.reasoning).toBe('[已隐藏]');
+});
+
+it('redacts a full credential before truncating invalid audit text', async () => {
+  const apiKey = 'sk-fake-long-' + 'k'.repeat(60);
+  fetchMock.mockResolvedValue(chatResponse('x'.repeat(3980) + apiKey));
+  const out = await judgeCase({ ...CFG, apiKey }, REQ);
+  expect(out.audit.rawResponse).toBe('x'.repeat(3980) + '[已隐藏]');
+});
+
+
+it.each([
+  ['headline', 40],
+  ['reasoning', 600],
+  ['factor', 40],
+] as const)('redacts decoded credentials before the %s field limit', async (field, limit) => {
+  const apiKey = 'sk-fake-secret-1234567890';
+  const prefix = 'x'.repeat(limit - 10);
+  const value = prefix + apiKey;
+  const verdict = {
+    delta: -11,
+    headline: field === 'headline' ? value : '判了',
+    reasoning: field === 'reasoning' ? value : '理由',
+    factors: [{ kind: 'mitigating', text: field === 'factor' ? value : '提前告知' }],
+  };
+  // The inner verdict JSON escapes the first letter, so the current key only
+  // becomes literal after parseVerdict decodes the JSON business strings.
+  const content = JSON.stringify(verdict).replaceAll(apiKey, String.fromCharCode(92) + 'u0073k-fake-secret-1234567890');
+  fetchMock.mockResolvedValue(chatResponse(content));
+  const out = await judgeCase({ ...CFG, apiKey }, REQ);
+  const visible = field === 'factor' ? out.factors[0]?.text : out[field];
+  expect(out.source).toBe('ai');
+  expect(visible).toBe(prefix + '[已隐藏]');
 });

@@ -60,11 +60,12 @@ export interface Env {
   READ_ONLY?: string;        // '1' | 'true' = maintenance: writes + /auth/callback -> 503
   HOST_ONLY_COOKIES?: string; // '1' = __Host-edg_session / __Host-edg_oauth_state (no Domain)
 
-  // AI 裁决 — all overridable at runtime from app_settings EXCEPT AI_API_KEY.
+  // AI 裁决 — saved provider settings override env; credentials are encrypted in app_settings.
   AI_ENABLED?: string;
   AI_BASE_URL?: string;      // must end at /v1; code appends /chat/completions
   AI_MODEL?: string;
-  AI_API_KEY?: string;       // SECRET ONLY — never stored in D1
+  AI_API_KEY?: string;       // legacy fallback only when credential row is absent
+  AI_CONFIG_MASTER_KEY?: string; // external Base64 32-byte master; identical in app + bot
   AI_SYSTEM_PROMPT?: string;
   AI_TEMPERATURE?: string;
   STATEMENT_WINDOW_HOURS?: string;     // default 12
@@ -407,14 +408,36 @@ Scheduling and invitation API routes have been removed and return the existing 4
 - `POST /api/admin/records/:id/override` `{ delta, reason }` → `{ record }`.
   `decided`/`appealed` only; delta is clamped to the violation range; the score
   moves by the difference so the record ends up worth exactly the new delta.
-- `GET /api/admin/ai-config` → current config + `has_api_key` + 7-day health
-  (`total`, `fallbackRate`, `clampRate`, `avgLatencyMs`). Never returns the key.
+- All three AI admin routes require an administrator and return `Cache-Control: private, no-store`.
+- `GET /api/admin/ai-config` → current config + `has_api_key`,
+  `api_key_source: 'database' | 'environment' | 'none'`, `configured_enabled`,
+  `can_update_api_key`, `disabled_reason` + 7-day health
+  (`total`, `fallbackRate`, `clampRate`, `avgLatencyMs`). `enabled` means actually
+  available; `configured_enabled` preserves the saved switch even without a
+  usable key. No credential plaintext or ciphertext is returned.
 - `POST /api/admin/ai-config`
-  `{ enabled?, base_url?, model?, temperature?, prompt?, classify_prompt?, report_prompt? }`
-  → `{ ok, enabled, prompt_version }`. Sending `api_key` is a 400 by design.
+  `{ enabled?, base_url?, model?, api_key?: string | null, temperature?, prompt?, classify_prompt?, report_prompt? }`
+  → `{ ok, enabled, prompt_version }`. Omitted `api_key` preserves the credential;
+  a nonempty string replaces it; `null` explicitly clears it. Reject NUL/CR/LF
+  before trimming, then reject empty or over-4096-character keys. Validate every
+  field and encrypt before one atomic `db.batch()`; any failure leaves all settings
+  unchanged. Keep `updated_by` / `updated_at`, never log key contents.
   Three prompts, all hot-editable: sentencing, classification, weekly narrative.
-- `POST /api/admin/ai-config/test` `{ claim?, statement? }` → dry-run verdict.
-  Writes nothing and touches nobody's score.
+- `POST /api/admin/ai-config/test` `{ claim?, statement? }` → dry-run verdict
+  using saved configuration. No `raw` response; writes nothing and touches nobody's score.
+
+`ai.api_key_encrypted` in the existing `app_settings` stores a versioned JSON
+AES-256-GCM envelope `{v:1,state:'set',iv,ciphertext}` or the explicit clear marker
+`{v:1,state:'cleared'}`. The external `AI_CONFIG_MASTER_KEY` is Base64-encoded
+32-byte randomness shared by app and bot; each encryption has a random 12-byte IV,
+128-bit authentication tag and fixed AAD `edg-credit:ai.api_key:v1`. No SQL migration.
+The old plaintext `ai.api_key` row is ignored. Only an absent credential row may
+fall back to legacy `AI_API_KEY`; clearing or unreadable ciphertext never revives it.
+Without a usable master, ordinary settings and explicit clearing remain available,
+but setting/replacing a key fails without writing. Missing/mismatched master or
+corrupt ciphertext disables AI safely; `/api/config` remains readable. Restoring
+the original master recovers the same ciphertext. App and bot load committed
+settings on each call with no process cache, so future calls see saved changes.
 
 ## AI judging
 
@@ -429,8 +452,11 @@ Expected model output (schema is also spelled out in the system prompt):
  "factors": [{"kind":"mitigating|aggravating","text":"…"}], "confidence": 0.8}
 ```
 
-Every call is audited in `ai_verdicts` (raw response, pre-clamp delta, applied
-delta, `clamped` flag, latency, error). `judgeCase` **never throws**: any failure
+Every call is audited in `ai_verdicts` (filtered response, pre-clamp delta, applied
+delta, `clamped` flag, latency, error). Classification, sentencing and weekly
+narrative clients filter the active key's exact text from upstream content before
+it reaches errors, audits, verdicts or reports; configuration failures use fixed
+messages. The historical column name `raw_response` holds filtered content. `judgeCase` **never throws**: any failure
 resolves to `verdict_source='fallback'` carrying `def.base`, so a case always
 reaches `decided` rather than stranding a player's score.
 

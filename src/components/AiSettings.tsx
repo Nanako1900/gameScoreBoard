@@ -3,6 +3,8 @@ import type { AiConfigPatch, AiConfigResponse, AiTestResponse } from '../types';
 import { ApiError, getAiConfig, testAiConfig, updateAiConfig } from '../api';
 import { NOT_FOUND_TITLE } from '../lib/routeCopy';
 import { NotFound } from './NotFound';
+import { ConfirmInline } from './ConfirmInline';
+import { useInlineConfirm } from '../lib/useInlineConfirm';
 import './admin-ai.css';
 
 interface AiSettingsProps { onUnavailable?: () => void }
@@ -26,14 +28,7 @@ function percent(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
-/**
- * AI 裁判配置 — any OpenAI-compatible endpoint, editable at runtime.
- *
- * The prompt lives here rather than in an env var on purpose: sentencing style
- * needs iterating, and iterating should not require a redeploy. The API key is
- * the deliberate exception — it stays a backend secret and is never round-tripped
- * through this panel.
- */
+/** Runtime provider settings; credentials are write-only and never refilled. */
 export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
   const [cfg, setCfg] = useState<AiConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,18 +49,34 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [test, setTest] = useState<AiTestResponse | null>(null);
+  const [replacingKey, setReplacingKey] = useState(false);
+  const [invalidKey, setInvalidKey] = useState(false);
+  const keyInput = useRef<HTMLInputElement | null>(null);
+  const clearConfirm = useInlineConfirm<HTMLButtonElement>();
+  // Keep the secret in the password element only, outside React state/drafts.
+  // React detaches the ref on account changes, lost access and unmount.
+  const bindKeyInput = useCallback((node: HTMLInputElement | null) => {
+    if (keyInput.current && keyInput.current !== node) keyInput.current.value = '';
+    keyInput.current = node;
+  }, []);
+  const clearKey = useCallback(() => {
+    if (keyInput.current) keyInput.current.value = '';
+    setReplacingKey(false);
+    setInvalidKey(false);
+  }, []);
 
   const showError = useCallback((err: unknown, fallback: string): void => {
     if (!active.current) return;
     if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+      clearKey();
       setUnavailable(true);
       unavailableCallback.current?.();
       return;
     }
     setError(err instanceof ApiError ? err.message : fallback);
-  }, []);
+  }, [clearKey]);
 
-  const load = useCallback(async (): Promise<boolean> => {
+  const load = useCallback(async (afterSave = false): Promise<boolean> => {
     const version = ++readVersion.current;
     setLoading(true);
     try {
@@ -78,26 +89,45 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
       setPrompt(res.prompt);
       setClassifyPrompt(res.classify_prompt);
       setReportPrompt(res.report_prompt);
-      setEnabled(res.enabled);
+      setEnabled(res.configured_enabled ?? res.enabled);
+      clearKey();
       setError(null);
       return true;
     } catch (err) {
-      if (readVersion.current === version) showError(err, '加载配置失败');
+      if (active.current && readVersion.current === version) {
+        const accessLost = err instanceof ApiError && (err.status === 403 || err.status === 404);
+        if (afterSave && !accessLost) setError('修改已保存，状态刷新失败');
+        else showError(err, '加载配置失败');
+      }
       return false;
     } finally {
       if (active.current && readVersion.current === version) setLoading(false);
     }
-  }, [showError]);
+  }, [showError, clearKey]);
 
   useEffect(() => {
     active.current = true;
     void load();
-    return () => { active.current = false; readVersion.current += 1; };
+    return () => {
+      active.current = false;
+      readVersion.current += 1;
+      if (keyInput.current) keyInput.current.value = '';
+    };
   }, [load]);
 
-  const handleSave = async (): Promise<void> => {
+  const handleSave = async (clearCredential = false): Promise<void> => {
+    if (busy || loading || !cfg) return;
+    const rawKey = keyInput.current?.value ?? '';
+    if (!clearCredential && replacingKey && (
+      invalidKey || /[\0\r\n]/.test(rawKey) || rawKey.trim().length === 0 || rawKey.trim().length > 4096
+    )) {
+      setError('API Key 不能为空、超过 4096 字符，或包含 NUL、回车、换行。');
+      return;
+    }
     setBusy(true);
     setStatus(null);
+    setError(null);
+    setTest(null);
     try {
       // Only send fields that carry a value: the API rejects an empty base_url /
       // model outright, so blanket-sending them would make "save" impossible on a
@@ -111,18 +141,29 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
       if (baseUrl.trim().length > 0) patch.base_url = baseUrl.trim();
       if (model.trim().length > 0) patch.model = model.trim();
       if (Number.isFinite(Number(temperature))) patch.temperature = Number(temperature);
+      if (clearCredential) patch.api_key = null;
+      else if (replacingKey) patch.api_key = rawKey.trim();
       await updateAiConfig(patch);
-      if (!active.current || !await load() || !active.current) return;
+      if (!active.current) return;
+      clearKey();
+      clearConfirm.close();
+      if (!await load(true) || !active.current) return;
       setStatus('已保存');
       setError(null);
     } catch (err) {
+      if (active.current) { clearKey(); clearConfirm.close(); }
       showError(err, '保存失败');
     } finally {
       if (active.current) setBusy(false);
     }
   };
 
+  const dirty = cfg !== null && (baseUrl !== cfg.base_url || model !== cfg.model ||
+    temperature !== String(cfg.temperature) || prompt !== cfg.prompt || classifyPrompt !== cfg.classify_prompt ||
+    reportPrompt !== cfg.report_prompt || enabled !== (cfg.configured_enabled ?? cfg.enabled) || replacingKey);
   const handleTest = async (): Promise<void> => {
+    if (busy || loading) return;
+    if (dirty) { setError('请先保存配置，再试跑'); return; }
     setBusy(true);
     setStatus(null);
     setTest(null);
@@ -180,16 +221,51 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
           {cfg.disabled_reason && (
             <p className="aai__warn">⚠️ {cfg.disabled_reason}</p>
           )}
-          {!cfg.has_api_key && (
+          {cfg.can_update_api_key === undefined && !cfg.has_api_key && (
             <p className="aai__warn">
               API Key 不在网页或数据库保存，请由机主在后端环境变量中配置 AI_API_KEY
             </p>
           )}
 
           <div className="aai__form">
+            <div className="aai__credential">
+              <p>API Key：{cfg.has_api_key ? '已设置' : '未设置'}</p>
+              {cfg.api_key_source !== undefined && <p className="aai__hint">来源：{{ database: '数据库', environment: '环境变量', none: '无' }[cfg.api_key_source]}</p>}
+              {cfg.can_update_api_key === false && <p className="aai__warn">需一次性部署 AI_CONFIG_MASTER_KEY 到 app 和 bot，才能在网页设置或更换 API Key；仍可清除现有凭据。</p>}
+              {cfg.can_update_api_key !== undefined && <>
+                {!replacingKey ? <button type="button" className="btn btn--ghost" disabled={busy || loading || !cfg.can_update_api_key}
+                  onClick={() => { setReplacingKey(true); setInvalidKey(false); setError(null); clearConfirm.close(); }}>
+                  {cfg.has_api_key || cfg.api_key_source === 'database' ? '更换 API Key' : '设置 API Key'}
+                </button> : <>
+                  <label className="aai__field">
+                    <span className="aai__label">新 API Key</span>
+                    <input ref={bindKeyInput} className="aai__input" type="password" autoComplete="new-password" aria-label="新 API Key"
+                      disabled={busy || loading} aria-describedby="aai-key-hint"
+                      onChange={() => { setInvalidKey(false); setError(null); }}
+                      onPaste={(event) => {
+                        // Password inputs strip CR/LF before change: inspect the raw clipboard first.
+                        if (/[\0\r\n]/.test(event.clipboardData.getData('text'))) {
+                          event.preventDefault();
+                          if (keyInput.current) keyInput.current.value = '';
+                          setInvalidKey(true);
+                          setError('API Key 不能包含 NUL、回车或换行。');
+                        }
+                      }} />
+                    <span className="aai__hint" id="aai-key-hint">仅本次保存使用，不回填已有 Key。取消更换可保留现有凭据。</span>
+                  </label>
+                  <button type="button" className="btn btn--ghost" disabled={busy || loading} onClick={clearKey}>取消更换</button>
+                </>}
+                {clearConfirm.confirming ? <ConfirmInline question="清除 API Key？" confirmLabel="确认清除" cancelLabel="保留 Key"
+                  busy={busy || loading} busyLabel="正在清除…" onCancel={clearConfirm.dismiss} onConfirm={() => void handleSave(true)}>
+                  清除后会停止 AI，转入现有回退逻辑；不会恢复旧环境变量中的 Key。当前其他配置也会一并保存。
+                </ConfirmInline> : <button ref={clearConfirm.triggerRef} type="button" className="btn btn--danger-outline"
+                  disabled={busy || loading} onClick={clearConfirm.ask}>清除 API Key</button>}
+              </>}
+            </div>
             <label className="aai__toggle">
               <input
                 type="checkbox"
+                disabled={busy || loading}
                 checked={enabled}
                 onChange={(e) => setEnabled(e.target.checked)}
               />
@@ -200,6 +276,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
               <span className="aai__label">Base URL</span>
               <input
                 className="aai__input"
+                disabled={busy || loading}
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.openai.com/v1"
@@ -214,6 +291,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
                 <span className="aai__label">模型</span>
                 <input
                   className="aai__input"
+                  disabled={busy || loading}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder="gpt-4o-mini"
@@ -228,6 +306,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
                   min={0}
                   max={2}
                   step={0.1}
+                  disabled={busy || loading}
                   value={temperature}
                   onChange={(e) => setTemperature(e.target.value)}
                 />
@@ -263,6 +342,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
                   else if (tab === 'classify') setClassifyPrompt(e.target.value);
                   else setReportPrompt(e.target.value);
                 }}
+                disabled={busy || loading}
                 rows={14}
                 maxLength={8000}
                 aria-label={PROMPT_TABS.find((t) => t.value === tab)?.label}
@@ -270,12 +350,13 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
               <span className="aai__hint">{PROMPT_HINTS[tab]}</span>
             </div>
 
+            <p className="aai__hint">试跑仅使用已保存配置，不修改任何人的分数。</p>
             <div className="aai__actions">
               <button
                 type="button"
                 className="btn btn--ghost"
                 onClick={() => void handleTest()}
-                disabled={busy}
+                disabled={busy || loading}
               >
                 {busy ? '请稍候…' : '用样例案试跑'}
               </button>
@@ -283,7 +364,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
                 type="button"
                 className="btn btn--gold"
                 onClick={() => void handleSave()}
-                disabled={busy}
+                disabled={busy || loading}
               >
                 保存
               </button>

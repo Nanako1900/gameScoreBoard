@@ -98,8 +98,8 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Runtime-editable settings (AI base_url / model / prompt …). The API key is
--- deliberately NOT stored here — it lives only in a Worker secret.
+-- Runtime-editable AI settings. ai.api_key_encrypted stores only versioned
+-- AES-256-GCM ciphertext or a cleared marker; its master key stays outside DB.
 CREATE TABLE IF NOT EXISTS app_settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,

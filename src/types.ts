@@ -194,6 +194,9 @@ export interface AiConfigResponse {
   report_prompt: string;
   prompt_version: string;
   has_api_key: boolean;
+  configured_enabled?: boolean;
+  api_key_source?: 'database' | 'environment' | 'none';
+  can_update_api_key?: boolean;
   disabled_reason: string | null;
   recent: {
     total: number;
@@ -204,6 +207,7 @@ export interface AiConfigResponse {
 }
 
 export interface AiConfigPatch {
+  api_key?: string | null;
   enabled?: boolean;
   base_url?: string;
   model?: string;
@@ -258,5 +262,4 @@ export interface AiTestResponse {
   clamped: boolean;
   parsed_delta: number | null;
   latency_ms: number;
-  raw: string | null;
 }

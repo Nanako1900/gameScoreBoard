@@ -8,13 +8,14 @@
 // must leave exactly one score_events row per call.
 
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VIOLATION_MAP } from '../../shared/scoring';
 import worker from '../../worker/index';
-import { readSettings, shortHash } from '../../worker/ai/config';
+import { loadAiConfig, readSettings, shortHash } from '../../worker/ai/config';
 import { DEFAULT_SYSTEM_PROMPT } from '../../worker/ai/prompt';
 import { DEFAULT_CLASSIFY_PROMPT } from '../../worker/ai/classify';
 import { DEFAULT_REPORT_PROMPT } from '../../worker/ai/report';
+import { openAiApiKey, sealAiApiKey } from '../../worker/ai/secrets';
 import { SESSION_COOKIE, signSession } from '../../worker/session';
 import type { Env } from '../../worker/types';
 import { noAiEnv, scoreEventCount, scoreOf, seedUser, statusOf } from './helpers';
@@ -22,6 +23,7 @@ import { noAiEnv, scoreEventCount, scoreOf, seedUser, statusOf } from './helpers
 // The test bindings only carry DB, so the session secret is supplied here.
 const SECRET = 'admin-routes-test-session-secret';
 const ORIGIN = 'https://edg.test';
+const MASTER_KEY = btoa('m'.repeat(32));
 const FAKE_KEY = 'sk-test-DO-NOT-LEAK-7f3a9c';
 const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 const DEFAULT_PROMPT_VERSION = shortHash(
@@ -55,6 +57,7 @@ interface CallResult {
   status: number;
   text: string;
   json: Record<string, unknown>;
+  cacheControl: string | null;
 }
 
 async function call(method: string, path: string, opts: CallOptions = {}): Promise<CallResult> {
@@ -80,7 +83,7 @@ async function call(method: string, path: string, opts: CallOptions = {}): Promi
   } catch {
     // Non-JSON body (should not happen for /api/*); leave json empty.
   }
-  return { status: response.status, text, json };
+  return { status: response.status, text, json, cacheControl: response.headers.get('Cache-Control') };
 }
 
 async function seedAdmin(id = 'admin') {
@@ -343,6 +346,9 @@ describe('GET /api/admin/ai-config — configuration', () => {
     expect(res.status).toBe(200);
     expect(res.json).toEqual({
       enabled: false,
+      configured_enabled: false,
+      api_key_source: 'none',
+      can_update_api_key: false,
       base_url: '',
       model: '',
       temperature: 0.2,
@@ -351,7 +357,7 @@ describe('GET /api/admin/ai-config — configuration', () => {
       report_prompt: DEFAULT_REPORT_PROMPT,
       prompt_version: DEFAULT_PROMPT_VERSION,
       has_api_key: false,
-      disabled_reason: '未配置 AI_BASE_URL',
+      disabled_reason: '未配置 AI 端点，请在管理页设置',
       recent: { total: 0, fallbackRate: 0, clampRate: 0, avgLatencyMs: 0 },
     });
   });
@@ -367,6 +373,9 @@ describe('GET /api/admin/ai-config — configuration', () => {
     expect(Object.keys(res.json)).not.toContain('apiKey');
     expect(Object.keys(res.json).sort()).toEqual(
       [
+        'configured_enabled',
+        'api_key_source',
+        'can_update_api_key',
         'base_url',
         'classify_prompt',
         'disabled_reason',
@@ -393,11 +402,11 @@ describe('GET /api/admin/ai-config — configuration', () => {
   });
 
   it.each([
-    [{ AI_BASE_URL: undefined }, '未配置 AI_BASE_URL'],
-    [{ AI_MODEL: undefined }, '未配置 AI_MODEL'],
+    [{ AI_BASE_URL: undefined }, '未配置 AI 端点，请在管理页设置'],
+    [{ AI_MODEL: undefined }, '未配置 AI 模型，请在管理页设置'],
     [
       { AI_API_KEY: undefined },
-      '未配置 AI_API_KEY（需以 Worker 机密设置：wrangler secret put AI_API_KEY）',
+      '未配置 AI API Key，请在管理页设置',
     ],
     [{}, 'AI 裁决已被手动关闭'],
     [{ AI_ENABLED: 'true' }, null],
@@ -623,7 +632,7 @@ describe('POST /api/admin/ai-config — persistence', () => {
       classify_prompt: 'C1',
       report_prompt: 'R1',
       prompt_version: shortHash('P1\u0000C1\u0000R1'),
-      disabled_reason: '未配置 AI_API_KEY（需以 Worker 机密设置：wrangler secret put AI_API_KEY）',
+      disabled_reason: '未配置 AI API Key，请在管理页设置',
     });
   });
 
@@ -741,15 +750,12 @@ describe('POST /api/admin/ai-config — persistence', () => {
 });
 
 describe('POST /api/admin/ai-config — validation', () => {
-  const KEY_MSG = 'API Key 不存数据库，请用 `wrangler secret put AI_API_KEY` 设置';
+  const KEY_MSG = 'api_key 必须是 1–4096 字符且不含 NUL、回车或换行';
   const HTTPS_MSG = 'base_url 必须是 https（本地调试可用 localhost）';
   const TEMP_MSG = 'temperature 需在 0–2 之间';
 
   it.each([
-    ['api_key string', { api_key: 'sk-123' }, KEY_MSG],
     ['api_key empty', { api_key: '' }, KEY_MSG],
-    ['api_key null', { api_key: null }, KEY_MSG],
-    ['api_key alongside valid fields', { model: 'ok', api_key: 'sk-1' }, KEY_MSG],
     ['enabled as string', { enabled: 'true' }, 'enabled 必须是布尔值'],
     ['enabled as 1', { enabled: 1 }, 'enabled 必须是布尔值'],
     ['enabled null', { enabled: null }, 'enabled 必须是布尔值'],
@@ -788,17 +794,13 @@ describe('POST /api/admin/ai-config — validation', () => {
     await call('POST', '/api/admin/ai-config', { as: 'admin', body: { model: 'good' } });
     const bad = await call('POST', '/api/admin/ai-config', {
       as: 'admin',
-      body: { model: 'bad', api_key: 'sk' },
+      body: { model: 'bad', api_key: '' },
     });
     expect(bad.status).toBe(400);
     expect(await settingsObject()).toEqual({ 'ai.model': 'good' });
   });
 
-  it.todo(
-    'BUG: a 400 is not atomic — {enabled:false, temperature:9} answers 400 yet ai.enabled=false ' +
-      'is persisted, because each writeSetting() starts as soon as its field validates and a ' +
-      'later field then throws (worker/routes-admin.ts:123 vs :145; Promise.all at :158)',
-  );
+
 
   it.todo(
     'BUG (minor): the https rule is skipped for any scheme on localhost, so ftp://localhost/x ' +
@@ -1305,9 +1307,10 @@ describe('POST /api/admin/ai-config/test (dry run)', () => {
       error: 'AI 未启用或未完成配置',
       clamped: false,
       parsed_delta: null,
-      raw: null,
     });
     expect(typeof res.json.latency_ms).toBe('number');
+    expect(res.json).not.toHaveProperty('raw');
+    expect(res.cacheControl).toBe('private, no-store');
     expect(await countRows('ai_verdicts')).toBe(0);
     expect(await countRows('records')).toBe(0);
     expect(await countRows('score_events')).toBe(0);
@@ -1323,5 +1326,142 @@ describe('POST /api/admin/ai-config/test (dry run)', () => {
     });
     expect(res.status).toBe(200);
     expect(res.text).not.toContain(FAKE_KEY);
+  });
+});
+
+
+describe('AI credential administration and atomicity', () => {
+  it('sets encrypted credentials without provider env and preserves, replaces, then explicitly clears them', async () => {
+    await seedAdmin();
+    const runtime = appEnv({ AI_CONFIG_MASTER_KEY: MASTER_KEY });
+    const request = (body: unknown, targetEnv = runtime) => call('POST', '/api/admin/ai-config', { as: 'admin', env: targetEnv, body });
+    const saved = await request({ enabled: true, base_url: 'https://fake.example/v1', model: 'fake', api_key: `  ${FAKE_KEY}  ` });
+    expect(saved.status).toBe(200);
+    expect(saved.json.enabled).toBe(true);
+    expect(saved.cacheControl).toBe('private, no-store');
+    let stored = (await settingsObject())['ai.api_key_encrypted'];
+    expect(stored).toBeDefined();
+    expect(stored).not.toContain(FAKE_KEY);
+    expect(await openAiApiKey(stored, MASTER_KEY)).toBe(FAKE_KEY);
+    const read = await call('GET', '/api/admin/ai-config', { as: 'admin', env: runtime });
+    expect(read.json).toMatchObject({ enabled: true, configured_enabled: true, has_api_key: true, api_key_source: 'database', can_update_api_key: true });
+    expect(read.cacheControl).toBe('private, no-store');
+    expect(read.text + saved.text).not.toContain(FAKE_KEY);
+    expect(read.text + saved.text).not.toContain(stored);
+    await request({ model: 'changed' });
+    expect((await settingsObject())['ai.api_key_encrypted']).toBe(stored);
+    expect((await loadAiConfig(env.DB, runtime)).apiKey).toBe(FAKE_KEY);
+    const replacement = 'sk-fake-replacement';
+    expect((await request({ api_key: replacement })).status).toBe(200);
+    expect((await loadAiConfig(env.DB, runtime)).apiKey).toBe(replacement);
+    expect((await request({ api_key: null }, appEnv({ AI_API_KEY: FAKE_KEY }))).status).toBe(200);
+    expect((await settingsObject())['ai.api_key_encrypted']).toBe('{"v":1,"state":"cleared"}');
+    const cleared = await call('GET', '/api/admin/ai-config', { as: 'admin', env: configuredEnv({ AI_ENABLED: 'true' }) });
+    expect(cleared.json).toMatchObject({ enabled: false, configured_enabled: true, has_api_key: false, api_key_source: 'none', can_update_api_key: false });
+  });
+
+  it.each(['', ' '.repeat(5), 'x'.repeat(4097), 42, true, {}, [], '\0abc', 'abc\r', '\nabc'])('rejects invalid key %j without changing a valid model', async (api_key) => {
+    await seedAdmin();
+    const res = await call('POST', '/api/admin/ai-config', { as: 'admin', env: appEnv({ AI_CONFIG_MASTER_KEY: MASTER_KEY }), body: { model: 'must-not-write', api_key } });
+    expect(res.status).toBe(400);
+    expect(await settingsObject()).toEqual({});
+  });
+
+  it('accepts exactly 4096 key characters', async () => {
+    await seedAdmin();
+    const res = await call('POST', '/api/admin/ai-config', { as: 'admin', env: appEnv({ AI_CONFIG_MASTER_KEY: MASTER_KEY }), body: { api_key: 'x'.repeat(4096) } });
+    expect(res.status).toBe(200);
+    expect(await openAiApiKey((await settingsObject())['ai.api_key_encrypted'], MASTER_KEY)).toHaveLength(4096);
+  });
+
+  it.each([undefined, 'invalid-master'])('fails setting with unusable master %j before any ordinary write', async (master) => {
+    await seedAdmin();
+    const runtime = appEnv({ AI_CONFIG_MASTER_KEY: master });
+    const res = await call('POST', '/api/admin/ai-config', { as: 'admin', env: runtime, body: { model: 'must-not-write', api_key: FAKE_KEY } });
+    expect(res.status).toBe(503);
+    expect(res.text).not.toContain(FAKE_KEY);
+    expect(res.json.error).toContain('AI_CONFIG_MASTER_KEY');
+    expect(await settingsObject()).toEqual({});
+    expect((await call('POST', '/api/admin/ai-config', { as: 'admin', env: runtime, body: { model: 'ordinary' } })).status).toBe(200);
+    expect((await call('POST', '/api/admin/ai-config', { as: 'admin', env: runtime, body: { api_key: null } })).status).toBe(200);
+  });
+
+  it('validates all ordinary fields before writing any', async () => {
+    await seedAdmin();
+    const res = await call('POST', '/api/admin/ai-config', { as: 'admin', body: { model: 'must-not-write', temperature: 9 } });
+    expect(res.status).toBe(400);
+    expect(await settingsObject()).toEqual({});
+  });
+
+  it('rolls back earlier writes when a later database statement fails', async () => {
+    await seedAdmin();
+    // Keep real SQL and a real transaction; append a NOT NULL violation after
+    // valid route statements to reproduce a late database failure on both engines.
+    const broken = new Proxy(env.DB, { get(target, prop) {
+      if (prop === 'batch') return (statements: D1PreparedStatement[]) => target.batch([...statements, target.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').bind('fail-late', null)]);
+      const value = Reflect.get(target, prop);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await call('POST', '/api/admin/ai-config', { as: 'admin', env: appEnv({ DB: broken, AI_CONFIG_MASTER_KEY: MASTER_KEY }), body: { model: 'must-roll-back', api_key: FAKE_KEY } });
+      expect(res.status).toBe(500);
+      expect(await settingsObject()).toEqual({});
+      expect(res.text).not.toContain(FAKE_KEY);
+      expect(log.mock.calls.flat().map(String).join(' ')).not.toContain(FAKE_KEY);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([undefined, 'invalid-master', btoa('w'.repeat(32))])('keeps public config available with unreadable stored credentials and master %j', async (master) => {
+    await seedAdmin();
+    const envelope = await sealAiApiKey(FAKE_KEY, MASTER_KEY);
+    await env.DB.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').bind('ai.api_key_encrypted', envelope).run();
+    const runtime = configuredEnv({ AI_CONFIG_MASTER_KEY: master, AI_ENABLED: 'true', READ_ONLY: '1' });
+    const publicRes = await call('GET', '/api/config', { env: runtime });
+    expect(publicRes.status).toBe(200);
+    expect(publicRes.json.aiEnabled).toBe(false);
+    const adminRes = await call('GET', '/api/admin/ai-config', { as: 'admin', env: runtime });
+    expect(adminRes.json).toMatchObject({ configured_enabled: true, has_api_key: false, api_key_source: 'database', can_update_api_key: master === btoa('w'.repeat(32)) });
+    expect(adminRes.text + publicRes.text).not.toContain(FAKE_KEY);
+    expect(adminRes.text + publicRes.text).not.toContain(envelope);
+  });
+
+  it('guards sensitive requests before JSON parsing, including read-only writes', async () => {
+    await seedAdmin();
+    await seedUser({ id: 'ordinary' });
+    const rawBody = '{"api_key":';
+    expect((await call('POST', '/api/admin/ai-config', { rawBody })).status).toBe(401);
+    expect((await call('POST', '/api/admin/ai-config', { as: 'ordinary', rawBody })).status).toBe(403);
+    const readOnly = await call('POST', '/api/admin/ai-config', { as: 'admin', env: appEnv({ READ_ONLY: '1' }), body: { api_key: FAKE_KEY } });
+    expect(readOnly.status).toBe(503);
+    expect(readOnly.cacheControl).toBe('private, no-store');
+    expect(await settingsObject()).toEqual({});
+  });
+});
+
+
+describe('saved AI config dry-run response', () => {
+  it.each(['success', 'upstream-error'])('filters credentials from %s and omits raw output', async (kind) => {
+    await seedAdmin();
+    const runtime = configuredEnv({ AI_ENABLED: 'true' });
+    const upstream = kind === 'success'
+      ? new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ delta: -11, headline: FAKE_KEY, reasoning: FAKE_KEY, factors: [{ kind: 'mitigating', text: FAKE_KEY }] }) } }] }))
+      : new Response(`rejected ${FAKE_KEY}`, { status: 500 });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(upstream));
+    try {
+      const res = await call('POST', '/api/admin/ai-config/test', { as: 'admin', env: runtime });
+      expect(res.status).toBe(200);
+      expect(res.json.source).toBe(kind === 'success' ? 'ai' : 'fallback');
+      expect(res.text).not.toContain(FAKE_KEY);
+      expect(res.text).toContain('[已隐藏]');
+      expect(res.json).not.toHaveProperty('raw');
+      expect(res.cacheControl).toBe('private, no-store');
+      expect(await countRows('ai_verdicts')).toBe(0);
+      expect(await countRows('score_events')).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
