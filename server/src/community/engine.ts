@@ -37,6 +37,9 @@ export class CommunityEngine {
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
   private async syncNow(): Promise<boolean> {
     try {
+      if (this.options.isReadOnly?.()) { await this.store.setRuntime({ ready: false, problem: 'read_only' }); return false; }
+      const continuous = this.lastSync !== 0 && (await this.store.runtime()).ready;
+      await this.store.setRuntime({ ready: false, problem: 'bot_offline' });
       const snapshot = await this.discord.snapshot();
       if (!snapshot.ready) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       const seen: string[] = [];
@@ -54,9 +57,20 @@ export class CommunityEngine {
       // Only a complete REST snapshot can make a former resource unavailable.
       await this.store.pool.query('UPDATE community_resources SET available=false WHERE guild_id=$1 AND NOT(ref=ANY($2::uuid[]))', [this.store.guildId, seen]);
       await this.store.recoverExpired();
+      // Expired executors may have changed access just before crashing. Hide
+      // unconfirmed rooms before publishing a new ready snapshot.
+      for (const room of await this.store.listRooms()) {
+        if (room.status === 'needs_review') continue;
+        if (await this.awaitingReview(room)) await this.store.patchRoom(room.ref, { status: 'needs_review' }, room.version);
+      }
+      await this.recoverCreations();
+      await this.recoverTrackedRooms();
+      if (!continuous) for (const room of await this.store.listRooms()) {
+        if (room.status === 'active' && (room.emptySince || room.cleanupAt || room.ownerLeftAt))
+          await this.store.patchRoom(room.ref, { emptySince: null, cleanupAt: null, ownerLeftAt: null }, room.version);
+      }
       await this.store.setRuntime({ ready: true, syncedAt: iso(this.now()), problem: null });
       this.lastSync = this.now();
-      await this.recoverCreations();
       return true;
     } catch (error) { await this.store.setRuntime({ ready: false, problem: error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'bot_offline' }); this.options.onError?.(error); return false; }
   }
@@ -78,6 +92,48 @@ export class CommunityEngine {
         await this.store.resolveRecoveredOperation(operation.ref, { roomRef: room.ref });
         await this.store.addAudit({ source: 'system' }, 'room.recover', room.ref, 'succeeded');
       } catch (error) { if (room.status !== 'needs_review') await this.store.patchRoom(room.ref, { status: 'needs_review' }, room.version); this.options.onError?.(error); }
+    }
+  }
+  private async awaitingReview(room: StoredRoom): Promise<boolean> {
+    const pending = await this.store.pool.query(`SELECT 1 FROM community_operations WHERE guild_id=$1 AND status='needs_review'
+      AND (room_ref=$2 OR ref::text=$3) LIMIT 1`, [this.store.guildId, room.ref, typeof room.metadata.operationRef === 'string' ? room.metadata.operationRef : null]);
+    return pending.rows.length > 0;
+  }
+  private async recoverTrackedRooms(): Promise<void> {
+    for (const room of await this.store.listRooms()) {
+      if (room.status !== 'needs_review' || !room.channelRef || await this.awaitingReview(room)) continue;
+      try {
+        const channel = await this.store.resource(room.channelRef, 'voice');
+        if (!channel) continue;
+        const current = await this.discord.channel(channel.externalId);
+        if (!current) { await this.store.patchRoom(room.ref, { status: 'closed', cleanupAt: null, transferToRef: null, transferExpiresAt: null }, room.version); continue; }
+        const config = (await this.store.settings()).settings;
+        const category = config.rooms.categoryRef ? await this.store.resource(config.rooms.categoryRef, 'category') : null;
+        const owner = room.ownerRef ? await this.store.resource(room.ownerRef, 'member') : null;
+        if (!category?.available || !owner || current.kind !== 'voice' || current.parentId !== category.externalId || !this.discord.inspectRoom) continue;
+        const state = await this.discord.inspectRoom(channel.externalId, owner.externalId);
+        if (!state) continue;
+        const acl: Array<{ ref: string; allowed: boolean }> = [];
+        for (const [ids, allowed] of [[state.allowedMemberIds, true], [state.blockedMemberIds, false]] as const) for (const id of ids) {
+          const member = await this.store.resourceByExternal('member', id);
+          if (!member) fail('resource_missing', '房间成员权限尚未完整映射');
+          acl.push({ ref: member.ref, allowed });
+        }
+        const occupants = this.discord.occupants(channel.externalId); if (occupants === null) continue;
+        const present: string[] = [];
+        for (const id of occupants) {
+          const member = await this.store.resourceByExternal('member', id);
+          if (!member) fail('resource_missing', '房间成员状态尚未完整映射'); present.push(member.ref);
+        }
+        // Access is rebuilt while quarantined; ordinary readers cannot see a
+        // partially rebuilt ACL. Only a verified complete projection is active.
+        for (const access of await this.store.roomAccess(room.ref)) await this.store.setRoomAccess(room.ref, access.memberRef, { allowed: false, blocked: false, present: false });
+        for (const access of acl) await this.store.setRoomAccess(room.ref, access.ref, { allowed: access.allowed, blocked: !access.allowed });
+        for (const ref of present) await this.store.setRoomAccess(room.ref, ref, { present: true });
+        await this.store.patchRoom(room.ref, { status: 'active', name: safeCommunityText(state.name), userLimit: state.userLimit,
+          visibility: state.visibility, transferToRef: null, transferExpiresAt: null, emptySince: null, cleanupAt: null, ownerLeftAt: null }, room.version);
+        await this.store.addAudit({ source: 'system' }, 'room.reconcile', room.ref, 'succeeded');
+      } catch (error) { this.options.onError?.(error); }
     }
   }
   tick(): Promise<void> { return this.serial(async () => {
@@ -131,8 +187,9 @@ export class CommunityEngine {
     const op = await this.store.claim(300); if (!op) return false;
     let changed = false, createdRoom: StoredRoom | null = null;
     let executionRoom: StoredRoom | null = null, requiredAdmin = false;
+    let checkedActor: CommunityExecutionActor | null = null;
     const guard = async (): Promise<void> => {
-      const current = await this.authority(op);
+      const current = await this.authority(op); checkedActor = current;
       if (requiredAdmin && !current.isAdmin) fail('not_owner', '管理员权限已变化', 403);
       if (op.actor.source !== 'system' && current.memberRef) await this.member(current.memberRef);
       if (executionRoom) {
@@ -178,6 +235,7 @@ export class CommunityEngine {
           if (!actual || actual.kind !== 'voice' || actual.parentId !== category.externalId) throw new CommunityDiscordError(409, '创建结果需要对账', true);
           const resource = await this.store.upsertResource('voice', channelId, name, { available: true, metadata: { parentId: category.externalId } });
           createdRoom = await this.store.patchRoom(createdRoom.ref, { channelRef: resource.ref, status: 'active' }, createdRoom.version);
+          executionRoom = { ...createdRoom };
           // A delayed create must never pull a disconnected member back into voice.
           if (this.discord.channelOf(owner.id) === source && await this.discord.canConnect(owner.id, channelId)) await effect(() => this.discord.move(owner.id, channelId));
           result = { roomRef: createdRoom.ref };
@@ -260,7 +318,7 @@ export class CommunityEngine {
           } else fail('invalid_input', '不支持此房间操作', 400);
           await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version); executionRoom = null;
           result = { roomRef: room.ref };
-        } else if (this.options.executeExtra) { result = await effect(() => this.options.executeExtra!(op, actor, guard)); }
+        } else if (this.options.executeExtra) { result = await effect(() => this.options.executeExtra!(op, checkedActor ?? actor, guard)); }
         else fail('invalid_input', '不支持此操作', 400);
       }
       await guard();
@@ -272,7 +330,11 @@ export class CommunityEngine {
         if (pending?.status === 'creating' && !pending.channelRef) await this.store.patchRoom(pending.ref, { status: 'closed' }, pending.version).catch(() => undefined);
       }
       if (createdRoom && (uncertain || changed)) {
-        const current = await this.store.getRoom(createdRoom.ref); if (current && current.status !== 'needs_review') await this.store.patchRoom(current.ref, { status: 'needs_review' }, current.version).catch(() => undefined);
+        const current = await this.store.getRoom(createdRoom.ref); if (current && current.status !== 'needs_review' && current.status !== 'closed') await this.store.patchRoom(current.ref, { status: 'needs_review' }, current.version).catch(() => undefined);
+      }
+      if (uncertain && op.roomRef) {
+        const room = await this.store.getRoom(op.roomRef);
+        if (room && room.status !== 'closed' && room.status !== 'needs_review') await this.store.patchRoom(room.ref, { status: 'needs_review' }, room.version).catch(() => undefined);
       }
       const code = uncertain ? 'execution_uncertain' : error instanceof CommunityStoreError ? error.code : error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'discord_error';
       const status = uncertain ? 'needs_review' : error instanceof CommunityStoreError && ['version_conflict', 'room_exists', 'room_limit'].includes(error.code) ? 'conflict' : 'failed';

@@ -111,7 +111,7 @@ it('retains an occupied room when a later waiting-room move fails during admin c
   const value = await room(); positions.set(OWNER, CHANNEL); positions.set(OTHER, CHANNEL);
   vi.mocked(discord.move).mockImplementation(async (id, target) => { if (id === OTHER) throw new CommunityDiscordError(403, '无法移动'); positions.set(id, target); });
   const op = await queue('room.admin_delete', value.ref, { confirm: true }, value.version, { source: 'web', userId: 'admin', memberRef: adminRef });
-  await engine.runOne(); expect((await latest(op.ref))!.status).toBe('needs_review'); expect((await store.getRoom(value.ref))!.status).toBe('active');
+  await engine.runOne(); expect((await latest(op.ref))!.status).toBe('needs_review'); expect((await store.getRoom(value.ref))!.status).toBe('needs_review');
   expect(positions.get(OWNER)).toBe(WAITING); expect(positions.get(OTHER)).toBe(CHANNEL); expect(discord.delete).not.toHaveBeenCalled();
 });
 

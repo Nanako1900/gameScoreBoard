@@ -6,6 +6,7 @@ import { withForwardedProto } from './api';
 
 export interface ApiHostParts {
   linkRoutes: Hono;
+  communityRoutes?: { fetch: (request: Request) => Response | Promise<Response> };
   workerFetch: (req: Request) => Promise<Response>;
 }
 
@@ -17,6 +18,11 @@ function under(path: string, prefix: string): boolean {
 export function isBindingPath(url: string): boolean {
   const path = routedPath(url);
   return under(path, '/link') || under(path, '/api/me/discord');
+}
+
+export function isCommunityPath(url: string): boolean {
+  const path = routedPath(url);
+  return under(path, '/api/community') || under(path, '/api/admin/community');
 }
 
 /**
@@ -36,6 +42,7 @@ export function createApiHost(parts: ApiHostParts): (req: Request) => Promise<Re
   return async (request) => {
     // First, so both apps see the public https origin (CSRF allowlists, own-host checks).
     const req = withForwardedProto(request);
+    if (isCommunityPath(req.url) && parts.communityRoutes) return parts.communityRoutes.fetch(req);
     if (isBindingPath(req.url)) return parts.linkRoutes.fetch(req);
     return parts.workerFetch(req);
   };

@@ -209,6 +209,11 @@ export class CommunityService {
     }
     return operationView(operation);
   }
+  async reviewOperation(operationRef: string, userId: string, confirm: unknown) {
+    this.requireAdmin(await this.actorFromWeb(userId));
+    if (confirm !== true) fail(400, 'confirmation_required', '请先核对 Discord 实际状态，再明确确认已经处理');
+    return operationView(await this.store.acknowledgeOperation(operationRef, { source: 'web', userId }));
+  }
   async operations(userId: string) { this.requireAdmin(await this.actorFromWeb(userId)); return this.store.listOperations(); }
   async audit(userId: string) { this.requireAdmin(await this.actorFromWeb(userId)); return this.store.audit(); }
 }

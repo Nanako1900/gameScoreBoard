@@ -125,6 +125,13 @@ describe('community PostgreSQL foundation', () => {
     const claimed=await Promise.all([store.claim(),store.claim()]);
     expect(claimed.filter(Boolean)).toHaveLength(1);
   });
+  it('serializes role changes from web and Discord for the same member',async()=>{
+    const m=await member();
+    await store.enqueue('roles.set',null,{source:'web',userId:'admin',memberRef:m.ref},{roleRefs:[]},'web-role');
+    await store.enqueue('roles.set',null,{source:'discord',memberRef:m.ref},{roleRefs:[]},'discord-role');
+    const claimed=await Promise.all([store.claim(),store.claim()]);
+    expect(claimed.filter(Boolean)).toHaveLength(1);
+  });
   it('does not blindly repeat an operation whose executor lease expired', async () => {
     const queued=await store.enqueue('room.create',null,actor,{},'1');await store.claim();
     await pool.query("UPDATE community_operations SET lease_until=now()-interval '1 minute' WHERE ref=$1",[queued.ref]);

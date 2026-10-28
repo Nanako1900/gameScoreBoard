@@ -1,12 +1,13 @@
 import type { CommunityJson, CommunityPublicSettings, CommunitySettings, CommunityVisibility } from '../../../shared/community';
 
 export interface CommunityReader { memberRef: string | null; isAdmin: boolean; memberAvailable: boolean }
-export function canReadRoom(actor: CommunityReader, room: { ownerRef: string | null; visibility: CommunityVisibility },
+export function canReadRoom(actor: CommunityReader, room: { ownerRef: string | null; visibility: CommunityVisibility; status?: string },
   access: readonly { memberRef: string; allowed: boolean; blocked: boolean; present: boolean }[]): boolean {
   if (actor.isAdmin) return true;
   if (!actor.memberAvailable || !actor.memberRef) return false;
   const mine = access.find(item => item.memberRef === actor.memberRef);
   if (mine?.blocked) return false;
+  if (room.status === 'needs_review') return room.ownerRef === actor.memberRef;
   return room.ownerRef === actor.memberRef || room.visibility !== 'hidden' || !!(mine?.allowed || mine?.present);
 }
 export function safeCommunityText(value: string): string {

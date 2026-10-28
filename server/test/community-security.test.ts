@@ -17,6 +17,10 @@ describe('community privacy and object authorization', () => {
     expect(canReadRoom({ memberRef: viewer, isAdmin: false, memberAvailable: true }, { ownerRef: owner, visibility: 'open' },
       [{ memberRef: viewer, allowed: false, blocked: true, present: true }])).toBe(false);
   });
+  it('conceals a room with unconfirmed access changes from other members',()=>{
+    expect(canReadRoom({memberRef:viewer,isAdmin:false,memberAvailable:true},{ownerRef:owner,visibility:'open',status:'needs_review'},[])).toBe(false);
+    expect(canReadRoom({memberRef:owner,isAdmin:false,memberAvailable:true},{ownerRef:owner,visibility:'open',status:'needs_review'},[])).toBe(true);
+  });
   it('keeps configuration secrets and administrative resource selections out of the member view', () => {
     const value = defaultCommunitySettings();
     value.fun.ai.prompt = 'private community prompt';

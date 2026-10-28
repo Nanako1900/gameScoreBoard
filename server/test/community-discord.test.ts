@@ -43,6 +43,11 @@ function setup(){
 }
 
 describe('community Discord resource adapter',()=>{
+  it('marks text resources public only when everyone can effectively view them',async()=>{
+    const s=setup();expect((await s.api.snapshot()).resources.find(r=>r.id===TEXT)?.metadata?.publicView).toBe(true);
+    s.channels.get(TEXT)!.permission_overwrites.push({id:G,type:0,allow:'0',deny:P.ViewChannel.toString()});
+    expect((await s.api.snapshot()).resources.find(r=>r.id===TEXT)?.metadata?.publicView).toBe(false);
+  });
   it('reads a complete REST member directory rather than the intentionally empty member cache',async()=>{
     const s=setup();const data=await s.api.snapshot();expect(data.ready).toBe(true);expect(data.guildName).toBe('社区');expect(data.selfId).toBe(SELF);
     expect(data.members.map(m=>m.id)).toContain(OWNER);expect(data.resources).toEqual(expect.arrayContaining([expect.objectContaining({id:PARENT,kind:'category'}),expect.objectContaining({id:ROOM,kind:'voice'}),expect.objectContaining({id:TEXT,kind:'text'})]));
@@ -146,5 +151,106 @@ describe('community voice creation audit recovery',()=>{
   });
   it('fails if audit permission is revoked during the scan',async()=>{
     const s=setup();const get=s.get.getMockImplementation()!;s.get.mockImplementation(async(route,options)=>{if(route===Routes.guildAuditLog(G)){s.setBotPermissions(BOT&~P.ViewAuditLog);return{audit_log_entries:[]}}return get(route,options)});await expect(s.api.findCreatedVoice(OP)).rejects.toMatchObject({status:403});
+  });
+});
+
+describe('community room state inspection',()=>{
+  const ACCESS=P.ViewChannel|P.Connect;
+  function roomAccess(s:ReturnType<typeof setup>,visibility:'open'|'locked'|'hidden'){
+    s.channels.get(ROOM)!.permission_overwrites=[
+      {id:G,type:0,allow:(visibility==='open'?ACCESS:visibility==='locked'?P.ViewChannel:0n).toString(),deny:(visibility==='hidden'?ACCESS:visibility==='locked'?P.Connect:0n).toString()},
+      {id:SELF,type:1,allow:ACCESS.toString(),deny:'0'},
+      {id:OWNER,type:1,allow:ACCESS.toString(),deny:'0'},
+    ];
+  }
+  it.each(['open','locked','hidden'] as const)('reconstructs %s from fresh channel state rather than a cached room model',async visibility=>{
+    const s=setup();roomAccess(s,visibility);s.channels.get(ROOM)!.name='人工改过的房名';s.channels.get(ROOM)!.user_limit=7;
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toEqual({name:'人工改过的房名',userLimit:7,visibility,allowedMemberIds:[],blockedMemberIds:[]});
+    expect(s.get.mock.calls.some(c=>c[0]===Routes.channel(ROOM))).toBe(true);
+    expect(s.get.mock.calls.some(c=>c[0]===Routes.guildMember(G,OWNER))).toBe(true);
+    expect(s.guild.members.cache.size).toBe(0);
+    expect(s.post).not.toHaveBeenCalled();expect(s.patch).not.toHaveBeenCalled();expect(s.put).not.toHaveBeenCalled();expect(s.del).not.toHaveBeenCalled();
+  });
+  it('preserves effective everyone inheritance when there is no everyone overwrite',async()=>{
+    const s=setup();expect(await s.api.inspectRoom(ROOM,OWNER)).toMatchObject({visibility:'open',userLimit:0});
+  });
+  it('reconstructs ordinary member access from ACCESS bits only and excludes bot and owner',async()=>{
+    const s=setup();roomAccess(s,'hidden');const blocked='444444444444444445';
+    s.channels.get(ROOM)!.permission_overwrites.push(
+      {id:OTHER,type:1,allow:(ACCESS|P.Speak).toString(),deny:P.SendMessages.toString()},
+      {id:blocked,type:1,allow:P.Speak.toString(),deny:ACCESS.toString()},
+    );
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toEqual({name:'游戏房',userLimit:0,visibility:'hidden',allowedMemberIds:[OTHER],blockedMemberIds:[blocked]});
+  });
+  it('does not turn unrelated member or role overrides into access grants',async()=>{
+    const s=setup();roomAccess(s,'locked');s.channels.get(ROOM)!.permission_overwrites.push(
+      {id:OTHER,type:1,allow:P.Speak.toString(),deny:P.SendMessages.toString()},
+      {id:FUN,type:0,allow:P.Speak.toString(),deny:P.SendMessages.toString()},
+    );
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toMatchObject({visibility:'locked',allowedMemberIds:[],blockedMemberIds:[]});
+  });
+  it.each([
+    ['locked',P.Connect,0n],['hidden',P.ViewChannel,0n],['open',0n,P.Connect],['open',0n,P.ViewChannel],
+  ] as const)('does not flatten a %s room with conflicting role access into the member ACL model',async(visibility,allow,deny)=>{
+    const s=setup();roomAccess(s,visibility);s.channels.get(ROOM)!.permission_overwrites.push({id:FUN,type:0,allow:allow.toString(),deny:deny.toString()});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it.each([
+    [P.ViewChannel,0n],[0n,P.Connect],[ACCESS,ACCESS],
+  ] as const)('leaves partial or contradictory member access for manual review',async(allow,deny)=>{
+    const s=setup();roomAccess(s,'locked');s.channels.get(ROOM)!.permission_overwrites.push({id:OTHER,type:1,allow:allow.toString(),deny:deny.toString()});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it('accepts a role overwrite only when it preserves the same default access model',async()=>{
+    const s=setup();roomAccess(s,'locked');s.channels.get(ROOM)!.permission_overwrites.push({id:FUN,type:0,allow:P.ViewChannel.toString(),deny:P.Connect.toString()});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toMatchObject({visibility:'locked',allowedMemberIds:[],blockedMemberIds:[]});
+  });
+  it('does not overlook inherited role access when everyone alone cannot view the room',async()=>{
+    const s=setup();s.roles.find(role=>role.id===G)!.permissions=P.Connect.toString();s.roles.find(role=>role.id===FUN)!.permissions=P.ViewChannel.toString();
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it.each(['   ','x'.repeat(101)])('rejects an invalid room name instead of recovering incomplete metadata',async name=>{
+    const s=setup();s.channels.get(ROOM)!.name=name;await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:502});
+  });
+  it('does not recover access through a role missing from the fresh role directory',async()=>{
+    const s=setup();roomAccess(s,'locked');s.channels.get(ROOM)!.permission_overwrites.push({id:'888888888888888889',type:0,allow:ACCESS.toString(),deny:'0'});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it('rejects duplicate overwrite identities rather than choosing an arbitrary ACL',async()=>{
+    const s=setup();roomAccess(s,'open');s.channels.get(ROOM)!.permission_overwrites.push({id:G,type:0,allow:'0',deny:ACCESS.toString()});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it('returns null for a missing or non-voice channel',async()=>{
+    const s=setup();s.channels.delete(ROOM);expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+    expect(await s.api.inspectRoom(TEXT,OWNER)).toBeNull();expect(await s.api.inspectRoom(PARENT,OWNER)).toBeNull();
+  });
+  it('returns null for a departed or bot owner',async()=>{
+    const s=setup();s.members.delete(OWNER);expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+    s.members.set(OWNER,rawMember(OWNER,[],true));expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+  });
+  it('does not infer an ordinary room when the owner can no longer view and connect',async()=>{
+    const s=setup();roomAccess(s,'hidden');s.channels.get(ROOM)!.permission_overwrites=s.channels.get(ROOM)!.permission_overwrites.filter(o=>o.id!==OWNER);
+    await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:403});
+  });
+  it('does not infer an ordinary room when the bot can no longer view and connect',async()=>{
+    const s=setup();roomAccess(s,'hidden');s.channels.get(ROOM)!.permission_overwrites=s.channels.get(ROOM)!.permission_overwrites.filter(o=>o.id!==SELF);
+    await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:403});
+  });
+  it('refuses a channel belonging to another guild',async()=>{
+    const s=setup();s.channels.get(ROOM)!.guild_id='1114391825336250433';await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:403});
+  });
+  it('rejects unavailable gateway state and interrupted REST reads',async()=>{
+    const s=setup();s.setAvailable(false);await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:503});expect(s.get).not.toHaveBeenCalled();
+    s.setAvailable(true);const get=s.get.getMockImplementation()!;s.get.mockImplementation(async(route,options)=>{if(route===Routes.channel(ROOM))throw new Error('network down');return get(route,options)});
+    await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:503});
+  });
+  it.each([undefined,'7',-1,1.5,100])('does not turn an unknown or invalid limit %s into an unlimited room',async limit=>{
+    const s=setup();(s.channels.get(ROOM)! as unknown as {user_limit:unknown}).user_limit=limit;
+    await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:502});
+  });
+  it('rechecks fresh permissions after reading the channel instead of trusting an earlier role response',async()=>{
+    const s=setup();const get=s.get.getMockImplementation()!;
+    s.get.mockImplementation(async(route,options)=>{const result=await get(route,options);if(route===Routes.channel(ROOM)){s.roles.find(role=>role.id===G)!.permissions=P.Speak.toString();s.setBotPermissions(BOT&~ACCESS)}return result});
+    await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:403});
   });
 });

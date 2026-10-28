@@ -3,11 +3,12 @@ import { Client, Events, GatewayIntentBits, Options, type Guild, type VoiceState
 import { VOICE_UNKNOWN_CHANNEL } from '../../../shared/voice';
 import type { VoicePresent, VoiceRecorder } from '../voice/recorder';
 
-export function createClient(): Client {
+export function createClient(options: { community?: boolean } = {}): Client {
   return new Client({
     // No GuildMembers, GuildPresences or MessageContent: slash commands bring
     // the users they mention with them.
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates,
+      ...(options.community ? [GatewayIntentBits.GuildMembers] : [])],
     // Voice states must survive for complete-state reconciliation. Members and
     // users remain uncached; slash commands carry the users they mention.
     makeCache: Options.cacheWithLimits({

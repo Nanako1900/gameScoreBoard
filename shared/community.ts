@@ -104,7 +104,7 @@ export function parseCommunitySettings(input: unknown): CommunitySettings {
       cooldownSeconds: integer(r.cooldownSeconds, 0, 3600, '创建冷却'), emptyGraceSeconds: integer(r.emptyGraceSeconds, 15, 86400, '空房宽限'), ownerGraceSeconds: integer(r.ownerGraceSeconds, 15, 86400, '房主宽限'),
       userLimit: integer(r.userLimit, 0, 99, '默认人数'), maxUserLimit: integer(r.maxUserLimit, 1, 99, '人数上限') },
     welcome: { enabled: bool(w.enabled, '欢迎开关'), channelRef: ref(w.channelRef, '欢迎频道'), template, rejoinCooldownHours: integer(w.rejoinCooldownHours, 1, 720, '重入冷却') },
-    roles: { enabled: bool(roles.enabled, '身份开关'), allowedRefs: refs(roles.allowedRefs, 100, '身份白名单'), maxChoices: integer(roles.maxChoices, 1, 20, '身份数量') },
+    roles: { enabled: bool(roles.enabled, '身份开关'), allowedRefs: refs(roles.allowedRefs, 100, '身份白名单'), maxChoices: integer(roles.maxChoices, 1, 5, '身份数量') },
     fun: { enabled: bool(f.enabled, '互动开关'), enabledTools: [...new Set(f.enabledTools)] as CommunityTool[], cooldownSeconds: integer(f.cooldownSeconds, 0, 3600, '互动冷却'),
       pollMaxHours: integer(f.pollMaxHours, 1, 720, '投票时长'), pollMaxOptions: integer(f.pollMaxOptions, 2, 10, '投票选项'), maxParticipants: integer(f.maxParticipants, 2, 100, '参与人数'),
       maxDiceCount: integer(f.maxDiceCount, 1, 100, '骰子数量'), maxDiceSides: integer(f.maxDiceSides, 2, 1000000, '骰子面数'), topics,

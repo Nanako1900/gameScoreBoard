@@ -83,4 +83,39 @@ describe('community room execution and reconciliation',()=>{
     const op=await s.enqueue('room.dissolve',room.ref,{},room.version);await s.engine.runOne();expect(op.status).not.toBe('succeeded');expect(s.discord.delete).not.toHaveBeenCalled();
   });
 
+  it('does not move the creator after another administrator has closed the newly created room',async()=>{
+    const s=setup();const original=vi.mocked(s.store.patchRoom).getMockImplementation()!;
+    vi.mocked(s.store.patchRoom).mockImplementation(async(ref,patch,version)=>{const room=await original(ref,patch,version);if(patch.status==='active'){room.status='closed';room.version+=1;}return room;});
+    const op=await s.enqueue('room.create');await s.engine.runOne();expect(s.discord.move).not.toHaveBeenCalled();expect(s.rooms[0].status).toBe('closed');expect(op.status).toBe('needs_review');
+  });
+
+  it('restores a reviewed tracked room from verified current access without replaying its old mutation',async()=>{
+    const s=setup();const room=await s.room();room.status='needs_review';
+    Object.assign(s.discord,{inspectRoom:vi.fn(async()=>({name:'实际名字',userLimit:6,visibility:'hidden',allowedMemberIds:['other'],blockedMemberIds:[]}))});
+    await s.engine.sync();expect(room.status).toBe('active');expect(room.name).toBe('实际名字');expect(room.visibility).toBe('hidden');expect(s.discord.rename).not.toHaveBeenCalled();
+    expect((await s.store.roomAccess(room.ref)).some(item=>item.memberRef===s.other&&item.allowed)).toBe(true);
+  });
+  it('does not restore a room whose old execution still awaits human review',async()=>{
+    const s=setup();const room=await s.room();room.status='needs_review';
+    Object.assign(s.discord,{inspectRoom:vi.fn(async()=>({name:'实际',userLimit:0,visibility:'open',allowedMemberIds:[],blockedMemberIds:[]}))});
+    vi.mocked(s.store.pool.query).mockImplementation(async()=>({rows:[{ref:'pending'}],rowCount:1}) as never);
+    await s.engine.sync();expect(room.status).toBe('needs_review');
+  });
+  it('starts a new empty-room grace after a gap instead of treating offline time as continuous emptiness',async()=>{
+    const s=setup();const room=await s.room();room.emptySince=new Date(s.now()-600000).toISOString();room.cleanupAt=new Date(s.now()-480000).toISOString();s.setPresent([]);
+    await s.engine.tick();expect(s.discord.delete).not.toHaveBeenCalled();expect(Date.parse(room.cleanupAt!)).toBeGreaterThan(s.now());
+  });
+
+  it('passes freshly checked administrator privileges to the extra executor',async()=>{
+    const s=setup();const extra=vi.fn(async(_op:unknown,_actor:{isAdmin:boolean})=>({done:true}));
+    let checks=0;s.authorize.mockImplementation(async actor=>({memberRef:actor.memberRef??null,isAdmin:checks++===0}));
+    const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,executeExtra:extra,now:s.now});await s.enqueue('fun.close',null,{ref:s.other});await engine.runOne();expect(extra).toHaveBeenCalled();expect(extra.mock.calls[0][1].isAdmin).toBe(false);
+  });
+
+  it('keeps reviewed rooms quarantined when a member ACL cannot be fully mapped',async()=>{
+    const s=setup();const room=await s.room();room.status='needs_review';
+    Object.assign(s.discord,{inspectRoom:vi.fn(async()=>({name:'实际',userLimit:0,visibility:'hidden',allowedMemberIds:[],blockedMemberIds:['unknown-member']}))});
+    await s.engine.sync();expect(room.status).toBe('needs_review');
+  });
+
 });

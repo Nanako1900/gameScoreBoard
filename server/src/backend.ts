@@ -10,6 +10,7 @@
 //     /status says so, while the share page keeps serving.
 
 import pg from 'pg';
+import { Hono } from 'hono';
 import type { Env } from '../../worker/types';
 import { buildEnv, ConfigError, createApi } from './api';
 import { createApiHost, isBindingPath } from './api-host';
@@ -18,6 +19,11 @@ import { asD1, installTypeParsers, PgD1Database } from './db/d1';
 import { envFlag, envInt, MAX_TIMER_MS } from './env';
 import { hostSet } from './hosts';
 import { createLinkRoutes } from './link-routes';
+import { CommunityStore } from './community/store';
+import { createCommunityRoutes } from './community/routes';
+import { CommunityFunService } from './community/fun-service';
+import { readCommunityRoles } from './community/membership';
+import { resetOffsetHours } from '../../worker/time';
 
 const DEFAULT_JOBS_INTERVAL_MS = 60_000;
 const MIN_JOBS_INTERVAL_MS = 5_000;
@@ -75,7 +81,15 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
     void pool.end().catch(() => undefined);
     return misconfigured(hosts, error.message, log);
   }
-  const fetch = withDiscordBinding(processEnv, env, api.fetch, log);
+  const guildId = (processEnv.GUILD_ID ?? '').trim();
+  const communityEnabled = envFlag(processEnv.COMMUNITY_ENABLED, false, 'COMMUNITY_ENABLED', warn);
+  const communityStore = communityEnabled && /^\d{17,20}$/.test(guildId) ? new CommunityStore(pool, guildId) : null;
+  if (communityEnabled && !communityStore) log.warn('Community disabled: GUILD_ID is missing or invalid');
+  const communityRoutes = communityStore ? createCommunityRoutes({ store: communityStore, db: env.DB, env,
+    membership: { readRoles: ref => readCommunityRoles(communityStore, ref) },
+    fun: new CommunityFunService(communityStore, { db: env.DB, env, offsetHours: resetOffsetHours(env.RESET_TZ_OFFSET) }),
+    onError: (context, error) => log.error(context, error) }) : undefined;
+  const fetch = withDiscordBinding(processEnv, env, api.fetch, log, communityRoutes);
 
   const jobsEnabled = envFlag(processEnv.JOBS_ENABLED, false, 'JOBS_ENABLED', warn);
   const interval = envInt(
@@ -125,6 +139,7 @@ function withDiscordBinding(
   env: Env,
   workerFetch: (request: Request) => Promise<Response>,
   log: Pick<Console, 'warn'>,
+  communityRoutes?: { fetch: (request: Request) => Response | Promise<Response> },
 ): (request: Request) => Promise<Response> {
   const clientId = (processEnv.DISCORD_CLIENT_ID ?? '').trim();
   const clientSecret = (processEnv.DISCORD_CLIENT_SECRET ?? '').trim();
@@ -132,11 +147,12 @@ function withDiscordBinding(
     log.warn('Discord binding disabled: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET not set');
     // A plain 404 — the Worker would send /link/* on to the SPA's front page,
     // so the bot's /link button would quietly land on the scoreboard instead.
-    return async (request) =>
-      isBindingPath(request.url) ? Response.json({ error: 'Not found' }, { status: 404 }) : workerFetch(request);
+    const unavailable = new Hono();
+    unavailable.all('*', c => c.json({ error: 'Not found' }, 404));
+    return createApiHost({ linkRoutes: unavailable, communityRoutes, workerFetch });
   }
   const linkRoutes = createLinkRoutes({ env, db: env.DB, discord: { clientId, clientSecret } });
-  return createApiHost({ linkRoutes, workerFetch });
+  return createApiHost({ linkRoutes, communityRoutes, workerFetch });
 }
 
 function misconfigured(hosts: ReadonlySet<string>, problem: string, log: Pick<Console, 'error'>): Backend {

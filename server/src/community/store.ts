@@ -273,7 +273,14 @@ export class CommunityStore {
       const row = (await client.query(`SELECT pending_ref,last_sent_at FROM community_welcomes
         WHERE guild_id=$1 AND member_ref=$2 FOR UPDATE`, [this.guildId, memberRef])).rows[0];
       await client.query('UPDATE community_welcomes SET joined_at=$3 WHERE guild_id=$1 AND member_ref=$2', [this.guildId, memberRef, joinedAt === null ? null : iso(joinedAt)]);
-      if (row.pending_ref !== null || (row.last_sent_at !== null && Date.now() - Date.parse(iso(row.last_sent_at)!) < cooldownHours * 3_600_000)) return null;
+      if (row.pending_ref !== null) {
+        const pending = (await client.query('SELECT status,error_code FROM community_operations WHERE guild_id=$1 AND ref=$2', [this.guildId, row.pending_ref])).rows[0];
+        // The executor uses needs_review for any possible send. Only a terminal
+        // rejection with no uncertain result can release the slot on a new join.
+        if (!pending || !['canceled', 'failed'].includes(String(pending.status)) || pending.error_code === 'execution_uncertain') return null;
+        await client.query('UPDATE community_welcomes SET pending_ref=NULL WHERE guild_id=$1 AND member_ref=$2', [this.guildId, memberRef]);
+      }
+      if (row.last_sent_at !== null && Date.now() - Date.parse(iso(row.last_sent_at)!) < cooldownHours * 3_600_000) return null;
       const queued = await this.enqueueInTransaction(client, 'welcome.send', null, { source: 'system', memberRef },
         { joinedAt: joinedAt === null ? null : iso(joinedAt) }, randomUUID(), undefined, 120);
       await client.query('UPDATE community_welcomes SET pending_ref=$3 WHERE guild_id=$1 AND member_ref=$2', [this.guildId, memberRef, queued.operation.ref]);
@@ -285,7 +292,7 @@ export class CommunityStore {
     label(kind, 100); label(requestKey, 200); count(ttlSeconds, 1, 86400); if (expectedVersion !== undefined) count(expectedVersion);
     const actorKey = this.actorKey(actor); const clean = json(payload);
     const hash = createHash('sha256').update(JSON.stringify(cleanJson({ kind, roomRef, actor: actor as unknown as CommunityJson, payload: clean, expectedVersion: expectedVersion ?? null, ttlSeconds }))).digest('hex');
-    const scopeKey = roomRef ?? (kind === 'settings.apply' ? 'settings' : actorKey);
+    const scopeKey = roomRef ?? (kind === 'settings.apply' ? 'settings' : kind === 'roles.set' && actor.memberRef ? 'roles:' + actor.memberRef : actorKey);
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['community:enqueue:' + this.guildId + ':' + actorKey + ':' + requestKey]);
       const existing = (await client.query('SELECT * FROM community_operations WHERE guild_id=$1 AND actor_key=$2 AND request_key=$3', [this.guildId, actorKey, requestKey])).rows[0];
       if (existing) { if (existing.request_hash !== hash) reject('idempotency_conflict', '同一个请求标识不能用于不同操作', 409); return { operation: operationRow(existing as Row), created: false }; }
@@ -354,6 +361,35 @@ export class CommunityStore {
     const changed = await this.pool.query(`UPDATE community_operations SET status='succeeded',result=$3,error_code=NULL,finished_at=now(),claim_token=NULL,lease_until=NULL
       WHERE guild_id=$1 AND ref=$2 AND status='needs_review' RETURNING ref`, [this.guildId, operationRef, JSON.stringify(json(result))]);
     return (changed.rowCount ?? 0) > 0;
+  }
+  /** Human acknowledgment releases a frozen scope without asserting that the
+   * external action failed, replaying it, or changing room ownership/state. */
+  async acknowledgeOperation(operationRef: string, actor: { source: 'web'; userId: string }): Promise<StoredOperation> {
+    if (actor.source !== 'web' || !actor.userId) reject('forbidden', '需要管理员权限', 403);
+    return this.tx(async client => {
+      // Hold current authority through the state change: revocation and review
+      // serialize on the same users row, even after service-level validation.
+      const user = (await client.query('SELECT is_admin,COALESCE(display_name,username) AS name FROM users WHERE id=$1 FOR UPDATE', [actor.userId])).rows[0];
+      if (!user || Number(user.is_admin) !== 1) reject('forbidden', '需要管理员权限', 403);
+      if (!isCommunityRef(operationRef)) reject('not_found', '操作不存在', 404);
+      const existing = (await client.query('SELECT * FROM community_operations WHERE guild_id=$1 AND ref=$2 FOR UPDATE', [this.guildId, operationRef])).rows[0];
+      if (!existing) reject('not_found', '操作不存在', 404);
+      if (existing.status === 'canceled' && object(existing.result).reviewed === true) return operationRow(existing as Row);
+      if (existing.status !== 'needs_review') reject('version_conflict', '只有待人工核对的操作可以确认处理', 409);
+      const updated = await client.query(`UPDATE community_operations SET status='canceled',result='{"reviewed":true}'::jsonb,
+        error_code=NULL,finished_at=now(),claim_token=NULL,claimed_at=NULL,lease_until=NULL
+        WHERE guild_id=$1 AND ref=$2 RETURNING *`, [this.guildId, operationRef]);
+      if (existing.kind === 'welcome.send') {
+        // An uncertain welcome may already have reached Discord. Reviewing it
+        // counts as delivered for cooldown purposes and must never send again.
+        await client.query(`UPDATE community_welcomes SET last_sent_at=now(),pending_ref=NULL
+          WHERE guild_id=$1 AND pending_ref=$2`, [this.guildId, operationRef]);
+      }
+      const actorLabel = String(user.name ?? '管理员').replace(/\b\d{17,20}\b/g, '[隐藏]');
+      await client.query(`INSERT INTO community_audit(guild_id,actor_source,actor_user_id,actor_label,action,target_ref,outcome)
+        VALUES($1,'web',$2,$3,'operation.review',$4,'canceled')`, [this.guildId, actor.userId, actorLabel, operationRef]);
+      return operationRow(updated.rows[0] as Row);
+    });
   }
   async addAudit(actor: CommunityActor, action: string, target: string | null, outcome: string): Promise<void> {
     this.actorKey(actor);label(action, 100);label(outcome, 100);if (target !== null) ref(target);

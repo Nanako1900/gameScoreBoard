@@ -123,6 +123,11 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     return c.json({ resources: await service.resources(user(c), requested as CommunityResourceKind | undefined) });
   });
   app.get('/api/admin/community/operations', async c => c.json({ operations: await service.operations(user(c)) }));
+  app.post('/api/admin/community/operations/:ref/review', async c => {
+    const input = await body(c); exact(input, ['confirm', 'requestKey']); key(input);
+    if (input.confirm !== true) fail(400, 'confirmation_required', '请先核对 Discord 实际状态，再明确确认已经处理');
+    return c.json({ operation: await service.reviewOperation(c.req.param('ref'), user(c), input.confirm) });
+  });
   app.get('/api/admin/community/audit', async c => c.json({ audit: await service.audit(user(c)) }));
   app.post('/api/admin/community/sync', async c => {
     const input = await body(c); exact(input, ['requestKey', 'kind']);
