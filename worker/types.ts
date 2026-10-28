@@ -23,11 +23,12 @@ export interface Env {
 
   // --- AI 裁决 (any OpenAI-compatible endpoint) --------------------------------
   // Defaults only. `app_settings` rows of the same name override every one of
-  // these at runtime EXCEPT AI_API_KEY, which is never stored in the database.
+  // these at runtime. API keys use encrypted database credentials when present.
   AI_ENABLED?: string; // 'false' disables AI judging (everything falls back to base)
   AI_BASE_URL?: string; // e.g. https://api.openai.com/v1  (no trailing /chat/completions)
   AI_MODEL?: string;
-  AI_API_KEY?: string; // SECRET ONLY — `wrangler secret put AI_API_KEY`
+  AI_API_KEY?: string; // Legacy fallback, only when no credential row exists.
+  AI_CONFIG_MASTER_KEY?: string; // Secret: Base64-encoded 32-byte encryption key.
   AI_SYSTEM_PROMPT?: string;
   AI_TEMPERATURE?: string;
   /** Hours a subject gets to file a statement; default STATEMENT_WINDOW_HOURS. */

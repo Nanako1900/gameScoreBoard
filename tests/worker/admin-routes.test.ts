@@ -351,7 +351,7 @@ describe('GET /api/admin/ai-config — configuration', () => {
       report_prompt: DEFAULT_REPORT_PROMPT,
       prompt_version: DEFAULT_PROMPT_VERSION,
       has_api_key: false,
-      disabled_reason: '未配置 AI_BASE_URL',
+      disabled_reason: '未配置 AI 端点，请在管理页设置',
       recent: { total: 0, fallbackRate: 0, clampRate: 0, avgLatencyMs: 0 },
     });
   });
@@ -393,11 +393,11 @@ describe('GET /api/admin/ai-config — configuration', () => {
   });
 
   it.each([
-    [{ AI_BASE_URL: undefined }, '未配置 AI_BASE_URL'],
-    [{ AI_MODEL: undefined }, '未配置 AI_MODEL'],
+    [{ AI_BASE_URL: undefined }, '未配置 AI 端点，请在管理页设置'],
+    [{ AI_MODEL: undefined }, '未配置 AI 模型，请在管理页设置'],
     [
       { AI_API_KEY: undefined },
-      '未配置 AI_API_KEY（需以 Worker 机密设置：wrangler secret put AI_API_KEY）',
+      '未配置 AI API Key，请在管理页设置',
     ],
     [{}, 'AI 裁决已被手动关闭'],
     [{ AI_ENABLED: 'true' }, null],
@@ -623,7 +623,7 @@ describe('POST /api/admin/ai-config — persistence', () => {
       classify_prompt: 'C1',
       report_prompt: 'R1',
       prompt_version: shortHash('P1\u0000C1\u0000R1'),
-      disabled_reason: '未配置 AI_API_KEY（需以 Worker 机密设置：wrangler secret put AI_API_KEY）',
+      disabled_reason: '未配置 AI API Key，请在管理页设置',
     });
   });
 

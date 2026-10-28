@@ -92,7 +92,7 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
   app.get('/api/admin/ai-config', async (c) => {
     requireAdmin(c.get('user'));
     const settings = await readSettings(c.env.DB);
-    const cfg = resolveAiConfig(settings, c.env);
+    const cfg = await resolveAiConfig(settings, c.env);
     const stats = await c.env.DB
       .prepare(
         `SELECT COUNT(*) AS total,
@@ -113,8 +113,8 @@ export function registerAdminRoutes(app: Hono<AppEnv>): void {
       classify_prompt: cfg.classifyPrompt,
       report_prompt: cfg.reportPrompt,
       prompt_version: cfg.promptVersion,
-      has_api_key: (c.env.AI_API_KEY ?? '').length > 0,
-      disabled_reason: aiDisabledReason(cfg, c.env),
+      has_api_key: cfg.apiKey.length > 0,
+      disabled_reason: aiDisabledReason(cfg),
       recent: {
         total,
         fallbackRate: total > 0 ? (stats?.fallbacks ?? 0) / total : 0,

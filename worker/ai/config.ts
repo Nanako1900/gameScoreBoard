@@ -1,16 +1,16 @@
-// Runtime AI configuration.
-//
-// Resolution order: app_settings row > env var > built-in default.
-// The API KEY is the one exception — it is read ONLY from the Worker secret and
-// is never written to, or read from, the database. Storing it in D1 would mean
-// any SQL read path (or a future admin export) leaks it.
+// Runtime AI configuration: database > environment > defaults. Only an absent
+// encrypted credential row permits fallback to the legacy environment key.
 
 import { DEFAULT_SYSTEM_PROMPT } from './prompt';
 import { DEFAULT_CLASSIFY_PROMPT } from './classify';
 import { DEFAULT_REPORT_PROMPT } from './report';
+import { AiSecretError, openAiApiKey } from './secrets';
 
 export interface AiConfig {
   enabled: boolean;
+  configuredEnabled: boolean;
+  apiKeySource: 'database' | 'environment' | 'none';
+  apiKeyError: 'master_key_missing' | 'master_key_invalid' | 'decrypt_failed' | null;
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -27,6 +27,7 @@ export interface AiConfig {
 
 export const AI_SETTING_KEYS = {
   enabled: 'ai.enabled',
+  apiKeyEncrypted: 'ai.api_key_encrypted',
   baseUrl: 'ai.base_url',
   model: 'ai.model',
   temperature: 'ai.temperature',
@@ -112,11 +113,44 @@ export interface AiEnvSlice {
   AI_BASE_URL?: string;
   AI_MODEL?: string;
   AI_API_KEY?: string;
+  AI_CONFIG_MASTER_KEY?: string;
   AI_SYSTEM_PROMPT?: string;
   AI_TEMPERATURE?: string;
 }
 
-export function resolveAiConfig(settings: Map<string, string>, env: AiEnvSlice): AiConfig {
+async function resolveApiKey(
+  settings: Map<string, string>, env: AiEnvSlice,
+): Promise<Pick<AiConfig, 'apiKey' | 'apiKeySource' | 'apiKeyError'>> {
+  const envelope = settings.get(AI_SETTING_KEYS.apiKeyEncrypted);
+  if (envelope === undefined) {
+    const apiKey = env.AI_API_KEY ?? '';
+    return { apiKey, apiKeySource: apiKey ? 'environment' : 'none', apiKeyError: null };
+  }
+  try {
+    const value: unknown = JSON.parse(envelope);
+    if (value && typeof value === 'object' && !Array.isArray(value) &&
+        Object.keys(value).length === 2 &&
+        'v' in value && value.v === 1 && 'state' in value && value.state === 'cleared') {
+      return { apiKey: '', apiKeySource: 'none', apiKeyError: null };
+    }
+  } catch {
+    // The credential opener below turns malformed rows into a fixed state.
+  }
+  if (!env.AI_CONFIG_MASTER_KEY) {
+    return { apiKey: '', apiKeySource: 'database', apiKeyError: 'master_key_missing' };
+  }
+  try {
+    const apiKey = await openAiApiKey(envelope, env.AI_CONFIG_MASTER_KEY);
+    return { apiKey, apiKeySource: 'database', apiKeyError: null };
+  } catch (error) {
+    return {
+      apiKey: '', apiKeySource: 'database',
+      apiKeyError: error instanceof AiSecretError ? error.code : 'decrypt_failed',
+    };
+  }
+}
+
+export async function resolveAiConfig(settings: Map<string, string>, env: AiEnvSlice): Promise<AiConfig> {
   const prompt = pick(
     settings,
     AI_SETTING_KEYS.prompt,
@@ -137,15 +171,19 @@ export function resolveAiConfig(settings: Map<string, string>, env: AiEnvSlice):
   );
   const baseUrl = normalizeBaseUrl(pick(settings, AI_SETTING_KEYS.baseUrl, env.AI_BASE_URL, ''));
   const model = pick(settings, AI_SETTING_KEYS.model, env.AI_MODEL, '');
-  const apiKey = env.AI_API_KEY ?? '';
+  const { apiKey, apiKeySource, apiKeyError } = await resolveApiKey(settings, env);
+  const configuredEnabled = parseBool(pick(settings, AI_SETTING_KEYS.enabled, env.AI_ENABLED, 'true'), true);
   const enabled =
-    parseBool(pick(settings, AI_SETTING_KEYS.enabled, env.AI_ENABLED, 'true'), true) &&
+    configuredEnabled &&
     baseUrl.length > 0 &&
     model.length > 0 &&
     apiKey.length > 0;
 
   return {
     enabled,
+    configuredEnabled,
+    apiKeySource,
+    apiKeyError,
     baseUrl,
     model,
     apiKey,
@@ -167,12 +205,13 @@ export async function loadAiConfig(db: D1Database, env: AiEnvSlice): Promise<AiC
 }
 
 /** Why AI judging is unavailable — surfaced in the admin panel, not to players. */
-export function aiDisabledReason(cfg: AiConfig, env: AiEnvSlice): string | null {
-  if (cfg.baseUrl.length === 0) return '未配置 AI_BASE_URL';
-  if (cfg.model.length === 0) return '未配置 AI_MODEL';
-  if ((env.AI_API_KEY ?? '').length === 0) {
-    return '未配置 AI_API_KEY（需以 Worker 机密设置：wrangler secret put AI_API_KEY）';
-  }
-  if (!cfg.enabled) return 'AI 裁决已被手动关闭';
+export function aiDisabledReason(cfg: AiConfig): string | null {
+  if (cfg.baseUrl.length === 0) return '未配置 AI 端点，请在管理页设置';
+  if (cfg.model.length === 0) return '未配置 AI 模型，请在管理页设置';
+  if (cfg.apiKeyError === 'master_key_missing') return '缺少 AI_CONFIG_MASTER_KEY，请在服务端配置主密钥后重新部署';
+  if (cfg.apiKeyError === 'master_key_invalid') return 'AI_CONFIG_MASTER_KEY 格式无效，请配置 Base64 编码的 32 字节主密钥后重新部署';
+  if (cfg.apiKeyError === 'decrypt_failed') return 'AI API Key 解密失败，请检查服务端主密钥或在管理页重新设置 API Key';
+  if (cfg.apiKey.length === 0) return '未配置 AI API Key，请在管理页设置';
+  if (!cfg.configuredEnabled) return 'AI 裁决已被手动关闭';
   return null;
 }

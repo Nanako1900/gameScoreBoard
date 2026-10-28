@@ -16,6 +16,9 @@ import { VerdictParseError } from '../../worker/ai/prompt';
 
 const CFG: AiConfig = {
   enabled: true,
+  configuredEnabled: true,
+  apiKeySource: 'environment',
+  apiKeyError: null,
   baseUrl: 'https://api.example.com/v1',
   model: 'test-model',
   apiKey: 'sk-test',
