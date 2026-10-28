@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
 import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
-import { bootRouter, navigate, useLocation } from './lib/router';
+import { bootRouter, navigate, requestNavigation, useLocation } from './lib/router';
 import { HOME_PATH, WELCOME_PATH, parseRoute, playerPath, routeCoversHome } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
@@ -113,8 +113,9 @@ function AppMain(): JSX.Element {
     welcomeReturnTo: welcomeEntry.requested ? welcomeEntry.returnTo : undefined,
   });
   const rememberWelcomeReturn = useCallback((): void => {
-    saveWelcomeReturn(welcomePending ? welcomeEntry.entryPath : null);
-  }, [welcomePending, welcomeEntry]);
+    saveWelcomeReturn(welcomePending ? welcomeEntry.entryPath
+      : location.route.name === 'settings' ? location.pathname + location.search : null);
+  }, [welcomePending, welcomeEntry, location]);
   const finishWelcome = useCallback((): void => {
     clearWelcomeReturn();
     navigate(HOME_PATH);
@@ -264,7 +265,7 @@ function AppMain(): JSX.Element {
         onRecord={canRecord ? () => setCaseOpen(true) : undefined}
         config={config}
         me={me}
-        onLogout={() => void handleLogout()}
+        onLogout={() => requestNavigation(() => { void handleLogout(); })}
         onOpenOnboarding={() => navigate(WELCOME_PATH)}
       />
 
@@ -288,6 +289,7 @@ function AppMain(): JSX.Element {
         onMeUpdated={handleMeUpdated}
         onWelcomeDone={finishWelcome}
         onBeforeWelcomeBind={rememberWelcomeReturn}
+        onRetryDiscord={() => setTodoRefreshKey((n) => n + 1)}
         welcomeNotice={discordLinked ? <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} /> : null}
         location={location}
         layout={layout}

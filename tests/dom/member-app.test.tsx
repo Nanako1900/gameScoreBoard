@@ -35,7 +35,7 @@ describe('members page inside App', () => {
     useDesktopViewport(); const calls = backend(); window.history.replaceState(null, '', '/admin/members');
     const { container } = render(<App />); const user = userEvent.setup(); await screen.findByText('不上榜账号');
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden'); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '管理' })).toHaveFocus();
+    expect(screen.getByRole('heading', { name: '设置' })).toHaveFocus();
     const account = screen.getByRole('listitem', { name: '不上榜账号的账号' });
     if (operation === 'judge') await user.click(within(account).getByRole('button', { name: '设为裁判' }));
     else {
@@ -48,6 +48,6 @@ describe('members page inside App', () => {
     }
     expect(calls.filter(call => call.method === 'POST')).toEqual([{ path: '/api/admin/users/member%2Fa', method: 'POST', body: operation === 'judge' ? { is_judge: true } : { score: 75 } }]);
     expect(document.querySelector('.toasts')).toHaveTextContent(operation === 'judge' ? '已设为裁判' : '已调整分数');
-    expect(container.querySelector('.admin-page style, .admin-page [style]')).toBeNull();
+    expect(container.querySelector('.settings-page style, .settings-page [style]')).toBeNull();
   });
 });

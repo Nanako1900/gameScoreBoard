@@ -78,12 +78,6 @@
   margin-top: 1.2rem;
 }
 
-.aai__row {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 0.9rem;
-}
-
 .aai__field {
   display: flex;
   flex-direction: column;
@@ -195,12 +189,6 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 600px) {
-  .aai__row {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* --- v3: 三套提示词切换 ---------------------------------------------------- */
 
 .aai__tabs {
@@ -242,4 +230,35 @@
 
 .aai__credential > button {
   justify-self: start;
+}
+
+.aai__advanced,
+.aai__statistics {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.aai__statistics {
+  margin-top: 1.2rem;
+}
+
+.aai__advanced > summary,
+.aai__statistics > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.aai__advanced-body {
+  display: grid;
+  gap: 0.95rem;
+  margin-top: 0.9rem;
+}
+
+@media (pointer: coarse) {
+  .aai__advanced > summary,
+  .aai__statistics > summary {
+    min-height: var(--tap-min);
+  }
 }

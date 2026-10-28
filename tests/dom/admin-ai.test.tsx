@@ -44,14 +44,15 @@ describe('AI settings in the administration page', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'AI 裁判配置' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
-    const nav = screen.getByRole('navigation', { name: '管理' });
-    expect(within(nav).getByRole('link', { name: 'AI 设置' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav).getByRole('link', { name: '语音记录' })).toHaveAttribute('href', '/admin/voice');
+    const nav = screen.getByRole('navigation', { name: '设置分类' });
+    expect(within(nav).getByRole('link', { name: 'AI 模型与密钥' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).queryByRole('link', { name: '语音记录' })).not.toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '个人资料' })).toHaveAttribute('href', '/settings/profile');
     for (const text of ['42', '25%', '5%', '321ms']) expect(screen.getByText(text)).toBeInTheDocument();
     expect(screen.getByText(/服务端尚未配置密钥/)).toBeInTheDocument();
     expect(screen.getByText(/后端环境变量.*AI_API_KEY/)).toBeInTheDocument();
     expect(screen.queryByText(/wrangler secret/)).not.toBeInTheDocument();
-    expect(container.querySelector('.admin-page')?.querySelector('style,[style]')).toBeNull();
+    expect(container.querySelector('.settings-page')?.querySelector('style,[style]')).toBeNull();
   });
   it.each([null, { ...ADMIN, is_admin: false }, { ...ADMIN, is_admin: false, is_judge: true }])('refuses a non-admin before fetching AI: %o', async (me) => {
     render(page(me)); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();

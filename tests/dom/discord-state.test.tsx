@@ -83,4 +83,16 @@ describe('shared Discord state', () => {
     expect(await screen.findByRole('link', { name: '绑定 Discord' })).toHaveFocus();
     expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/me/discord/unlink', expect.objectContaining({ method: 'POST' }));
   });
+  it('ignores a confirmed unlink after the component unmounts', async () => {
+    const response = deferred(); const changes = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(() => response.promise));
+    const view = render(<DiscordLinkCard linkState={{ value: FRESH, loading: false }} onChanged={changes} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '解绑' }));
+    await user.click(screen.getByRole('button', { name: '确认解绑' }));
+    view.unmount();
+    await act(async () => response.resolve(json({ ok: true })));
+    expect(changes).not.toHaveBeenCalled();
+  });
+
 });

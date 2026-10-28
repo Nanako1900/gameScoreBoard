@@ -1,0 +1,28 @@
+.settings-page { max-width: var(--maxw); margin: 0 auto; padding: var(--space-page); min-width: 0; }
+.settings-page__heading { margin-bottom: 1.5rem; }
+.settings-page__heading > div > p { color: var(--muted); margin-top: .45rem; }
+.settings-page__layout { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 1.75rem; }
+.settings-page__nav { display: flex; flex-direction: column; gap: .3rem; align-self: start; }
+.settings-page__nav > span { color: var(--muted); font-size: var(--fs-xs); padding: .6rem .75rem; }
+.settings-page__nav > span:not(:first-child) { margin-top: .8rem; }
+.settings-page__nav > a { padding: .65rem .75rem; min-height: var(--tap-min); border-radius: var(--r-sm); color: var(--muted); }
+.settings-page__nav > a[aria-current="page"] { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.settings-page__content { display: grid; align-content: start; gap: 1.25rem; min-width: 0; }
+.settings-page__card { padding: 1.5rem; min-width: 0; }
+.settings-page__card > h3 { margin-bottom: 1rem; }
+.settings-page__actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: 1rem; }
+.settings-page__hint { color: var(--muted); font-size: var(--fs-sm); }
+.settings-page__error { color: var(--danger-text); }
+.settings-page__success { color: var(--ok); }
+.settings-page__notice { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); color: var(--muted); font-size: var(--fs-sm); line-height: 1.8; }
+.settings-page--guest { display: grid; gap: 1rem; justify-items: start; }
+.discord-notify { display: grid; justify-items: start; gap: 1rem; min-width: 0; }
+.discord-notify > p { overflow-wrap: anywhere; }
+@media (max-width: 1023px) {
+  .settings-page__layout { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .settings-page__nav { flex-direction: row; flex-wrap: wrap; }
+  .settings-page__nav > span { display: none; }
+}
+@media (max-width: 600px) { .settings-page__card { padding: 1.1rem; } }
+@media (hover: hover) { .settings-page__nav > a:hover { background: var(--panel-2); color: var(--text); } }
+@media (forced-colors: active) { .settings-page__nav > a[aria-current="page"] { outline: 1px solid Highlight; } }

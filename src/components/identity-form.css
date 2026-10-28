@@ -177,3 +177,39 @@
     grid-template-columns: 1fr;
   }
 }
+
+.identity-form--settings .ob__title {
+  margin-top: 0;
+  font-size: var(--fs-lg);
+}
+
+.ob__settings-roles {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.ob__settings-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: var(--tap-min);
+  font-size: var(--fs-md);
+}
+
+.ob__settings-role input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--action);
+}
+
+.ob__settings-description {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.ob__dirty {
+  align-self: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}

@@ -11,6 +11,7 @@ import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
 import { AdminPage } from './AdminPage';
+import { SettingsPage } from './SettingsPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -33,6 +34,7 @@ interface RouteViewProps {
   onWelcomeDone?: () => void;
   onBeforeWelcomeBind?: () => void;
   welcomeNotice?: React.ReactNode;
+  onRetryDiscord?: () => void;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
@@ -142,14 +144,16 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
     case 'admin':
-      return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
+      if (route.tab === 'voice') return <PageShell><AdminPage me={props.me} config={props.config} tab="voice" onChanged={props.onChanged} /></PageShell>;
+      return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
+        onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
     case 'cases':
       return <PageShell><BoardPage tab="feed" config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'settings':
-      if (route.tab === 'ai' || route.tab === 'members') return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
-      return <PageShell><WelcomePage key={props.me?.id ?? 'guest'} me={props.me} discord={props.discordRead ?? { value: undefined, loading: false }}
-        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())}
-        onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} /></PageShell>;
+      return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
+        onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
     case 'tools':
       return <PageShell><AdminPage me={props.me} config={props.config} onChanged={props.onChanged} /></PageShell>;
     case 'board':
