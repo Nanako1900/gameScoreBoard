@@ -115,6 +115,11 @@ describe('community Discord resource adapter',()=>{
     const s=setup();await expect(s.api.addRole(OWNER,ADMIN)).rejects.toMatchObject({status:403});await expect(s.api.removeRole(OWNER,HIGH)).rejects.toMatchObject({status:403});expect(s.put).not.toHaveBeenCalled();expect(s.del).not.toHaveBeenCalled();
     await s.api.addRole(OWNER,FUN);s.roles.find(r=>r.id===FUN)!.permissions=P.Administrator.toString();await expect(s.api.addRole(OWNER,FUN)).rejects.toMatchObject({status:403});expect(s.put).toHaveBeenCalledTimes(1);
   });
+  it('refuses welcome delivery when the channel became private after a directory snapshot',async()=>{
+    const s=setup();await s.api.snapshot();
+    s.channels.get(TEXT)!.permission_overwrites.push({id:G,type:0,allow:'0',deny:P.ViewChannel.toString()},{id:SELF,type:1,allow:P.ViewChannel.toString(),deny:'0'});
+    await expect(s.api.sendText(TEXT,'欢迎')).rejects.toMatchObject({status:403});expect(s.post).not.toHaveBeenCalled();
+  });
   it('never pings from welcome text or the fixed community panel',async()=>{
     const s=setup();await s.api.sendText(TEXT,'欢迎 @everyone');await s.api.sendPanel(TEXT);
     for(const [,options]of s.post.mock.calls)expect(options.body.allowed_mentions).toEqual({parse:[]});

@@ -39,7 +39,7 @@ export class CommunityEngine {
     try {
       if (this.options.isReadOnly?.()) { await this.store.setRuntime({ ready: false, problem: 'read_only' }); return false; }
       const continuous = this.lastSync !== 0 && (await this.store.runtime()).ready;
-      await this.store.setRuntime({ ready: false, problem: 'bot_offline' });
+      if (!continuous) await this.store.setRuntime({ ready: false, problem: 'bot_offline' });
       const snapshot = await this.discord.snapshot();
       if (!snapshot.ready) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       const seen: string[] = [];

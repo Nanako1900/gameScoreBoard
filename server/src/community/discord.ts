@@ -401,7 +401,9 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     removeRole: (memberId, roleId) => roleChange(memberId, roleId, true),
     async sendText(channelId, content) {
       if (!content.trim() || content.length > 2000) throw new CommunityDiscordError(400, '社区消息须为 1–2000 字');
-      await textChannel(channelId); assertReady(); const sent = raw(await request('post', Routes.channelMessages(channelId), { body: { content, allowed_mentions: { parse: [] } } })); return id(sent.id);
+      const { ctx, channel } = await textChannel(channelId);
+      if (!has(channelPermissions({ id: '0', name: '', bot: false, roleIds: [], joinedAt: null }, channel, ctx, guildId), P.ViewChannel)) throw forbidden();
+      assertReady(); const sent = raw(await request('post', Routes.channelMessages(channelId), { body: { content, allowed_mentions: { parse: [] } } })); return id(sent.id);
     },
     async sendPanel(channelId, messageId) {
       const { ctx } = await textChannel(channelId);

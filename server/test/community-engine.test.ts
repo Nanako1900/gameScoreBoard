@@ -118,4 +118,9 @@ describe('community room execution and reconciliation',()=>{
     await s.engine.sync();expect(room.status).toBe('needs_review');
   });
 
+  it('keeps healthy periodic refreshes from transiently revoking the current member session',async()=>{
+    const s=setup();await s.engine.sync();vi.mocked(s.store.setRuntime).mockClear();await s.engine.sync();
+    expect(vi.mocked(s.store.setRuntime).mock.calls.some(([patch])=>patch.ready===false)).toBe(false);
+  });
+
 });
