@@ -14,7 +14,7 @@ const AI: AiConfigResponse = { enabled: true, base_url: 'https://example.test/v1
   prompt: '量刑提示', classify_prompt: '归类提示 {{CATALOGUE}}', report_prompt: '战报提示', prompt_version: 'old-version',
   has_api_key: false, disabled_reason: '服务端尚未配置密钥', recent: { total: 42, fallbackRate: 0.25, clampRate: 0.05, avgLatencyMs: 321 } };
 const TEST: AiTestResponse = { ok: false, source: 'fallback', verdict: { delta: -3, headline: '<img src=x> 原判', reasoning: '按基准分处理', factors: [] },
-  error: '服务暂不可用', clamped: true, parsed_delta: -100, latency_ms: 87, raw: null };
+  error: '服务暂不可用', clamped: true, parsed_delta: -100, latency_ms: 87 };
 function json(data: unknown, status = 200): Response { return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(data) } as Response; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { resolve, promise }; }
 function page(me: User | null = ADMIN) { return <AdminPage me={me} config={CONFIG} tab="ai" onChanged={vi.fn()} />; }
@@ -80,11 +80,9 @@ describe('AI settings in the administration page', () => {
   });
   it('tests the saved configuration without submitting unsaved form values and renders escaped results', async () => {
     const { container } = render(page()); await screen.findByLabelText('模型');
-    fireEvent.change(screen.getByLabelText('模型'), { target: { value: 'unsaved-model' } });
     await userEvent.setup().click(screen.getByRole('button', { name: '用样例案试跑' }));
     expect(await screen.findByText(/回退到基准分/)).toBeInTheDocument(); expect(api.testAiConfig).toHaveBeenCalledExactlyOnceWith({});
     expect(api.updateAiConfig).not.toHaveBeenCalled(); expect(api.getAiConfig).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText('模型')).toHaveValue('unsaved-model');
     expect(screen.getByText('<img src=x> 原判', { exact: false })).toBeInTheDocument(); expect(container.querySelector('img')).toBeNull();
     expect(screen.getByText('服务暂不可用')).toBeInTheDocument(); expect(screen.getByText(/超出区间已被夹回/)).toBeInTheDocument();
   });
@@ -134,5 +132,149 @@ describe('AI settings in the administration page', () => {
     view.rerender(page({ ...ADMIN, is_admin: false, is_judge: true }));
     expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument(); expect(screen.queryByLabelText('模型')).not.toBeInTheDocument();
     await act(async () => tested.resolve(TEST)); expect(screen.queryByText(/回退到基准分/)).not.toBeInTheDocument();
+  });
+});
+
+
+const MANAGED_AI: AiConfigResponse = { ...AI, has_api_key: true, disabled_reason: null,
+  configured_enabled: true, api_key_source: 'database', can_update_api_key: true };
+
+describe('administrator-managed AI credentials', () => {
+  beforeEach(() => { vi.mocked(api.getAiConfig).mockResolvedValue(MANAGED_AI); });
+  async function replacement() {
+    const user = userEvent.setup();
+    render(page()); await screen.findByLabelText('模型');
+    await user.click(screen.getByRole('button', { name: '更换 API Key' }));
+    return user;
+  }
+  it.each([
+    { source: 'database', label: '数据库', has: true },
+    { source: 'environment', label: '环境变量', has: true },
+    { source: 'none', label: '无', has: false },
+  ] as const)('shows credential status and source for $source', async ({ source, label, has }) => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({ ...MANAGED_AI, api_key_source: source, has_api_key: has });
+    render(page()); await screen.findByLabelText('模型');
+    expect(screen.getByText(`API Key：${has ? '已设置' : '未设置'}`)).toBeInTheDocument();
+    expect(screen.getByText(`来源：${label}`)).toBeInTheDocument();
+    expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+  });
+  it('keeps configured enablement when the effective service is disabled and ordinary save omits the key', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({ ...MANAGED_AI, enabled: false, has_api_key: false });
+    render(page()); await screen.findByLabelText('模型');
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    await userEvent.setup().click(screen.getByRole('button', { name: '保存' })); await screen.findByText('已保存');
+    expect(vi.mocked(api.updateAiConfig).mock.calls[0][0]).toMatchObject({ enabled: true });
+    expect(vi.mocked(api.updateAiConfig).mock.calls[0][0]).not.toHaveProperty('api_key');
+  });
+  it('submits a trimmed replacement only after explicit replacement and clears the password after success', async () => {
+    const user = await replacement(); const input = screen.getByLabelText('新 API Key');
+    expect(input).toHaveAttribute('type', 'password'); expect(input).toHaveAttribute('autocomplete', 'new-password'); expect(input).toHaveValue('');
+    await user.type(input, ' synthetic-ui-key ');
+    await user.click(screen.getByRole('button', { name: '保存' })); await screen.findByText('已保存');
+    expect(vi.mocked(api.updateAiConfig).mock.calls[0][0]).toMatchObject({ api_key: 'synthetic-ui-key' });
+    expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更换 API Key' })); expect(screen.getByLabelText('新 API Key')).toHaveValue('');
+  });
+  it('requires two steps to clear and cancellation restores the trigger focus without writing', async () => {
+    const user = userEvent.setup(); render(page()); await screen.findByLabelText('模型');
+    await user.click(screen.getByRole('button', { name: '清除 API Key' }));
+    expect(api.updateAiConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole('group', { name: '清除 API Key？' })).toHaveTextContent('停止 AI');
+    await user.click(screen.getByRole('button', { name: '保留 Key' }));
+    expect(screen.getByRole('button', { name: '清除 API Key' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: '清除 API Key' }));
+    await user.click(screen.getByRole('button', { name: '确认清除' })); await screen.findByText('已保存');
+    expect(vi.mocked(api.updateAiConfig).mock.calls[0][0]).toMatchObject({ api_key: null });
+  });
+  it('disables replacement without deployment master key but still clears unreadable database credentials', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({ ...MANAGED_AI, has_api_key: false, can_update_api_key: false });
+    const user = userEvent.setup(); render(page()); await screen.findByLabelText('模型');
+    expect(screen.getByRole('button', { name: '更换 API Key' })).toBeDisabled();
+    expect(screen.getByText(/一次性.*AI_CONFIG_MASTER_KEY.*app.*bot/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '清除 API Key' })); await user.click(screen.getByRole('button', { name: '确认清除' }));
+    await screen.findByText('已保存'); expect(vi.mocked(api.updateAiConfig).mock.calls[0][0]).toMatchObject({ api_key: null });
+  });
+  it('does not offer credential writes against old backends', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue(AI); render(page()); await screen.findByLabelText('模型');
+    expect(screen.queryByRole('button', { name: /更换 API Key|设置 API Key|清除 API Key/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+  });
+  it.each(['', '   ', 'synthetic\0key', 'k'.repeat(4097)])('blocks invalid replacement %j before sending', async (value) => {
+    const user = await replacement();
+    fireEvent.change(screen.getByLabelText('新 API Key'), { target: { value } });
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('API Key'); expect(api.updateAiConfig).not.toHaveBeenCalled();
+  });
+  it.each(['\nsynthetic-key', 'synthetic-key\r', 'synthetic\nkey'])('rejects raw clipboard line breaks before password input sanitization', async (value) => {
+    const user = await replacement(); await user.click(screen.getByLabelText('新 API Key')); await user.paste(value);
+    expect(await screen.findByRole('alert')).toHaveTextContent('API Key');
+    expect(screen.getByLabelText('新 API Key')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: '保存' })); expect(api.updateAiConfig).not.toHaveBeenCalled();
+  });
+  it('clears failed replacement while keeping ordinary edits for retry', async () => {
+    vi.mocked(api.updateAiConfig).mockRejectedValueOnce(new api.ApiError('保存暂不可用', 500));
+    const user = await replacement(); await user.type(screen.getByLabelText('新 API Key'), 'synthetic-key');
+    fireEvent.change(screen.getByLabelText('模型'), { target: { value: 'keep-edits' } });
+    await user.click(screen.getByRole('button', { name: '保存' })); await screen.findByRole('alert');
+    expect(screen.getByLabelText('模型')).toHaveValue('keep-edits');
+    expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更换 API Key' })); expect(screen.getByLabelText('新 API Key')).toHaveValue('');
+  });
+  it('reports a committed write separately from refresh failure and never repeats the write', async () => {
+    const user = await replacement(); await user.type(screen.getByLabelText('新 API Key'), 'synthetic-key');
+    vi.mocked(api.getAiConfig).mockRejectedValueOnce(new Error('refresh offline'));
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByText('修改已保存，状态刷新失败')).toBeInTheDocument();
+    expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    expect(api.updateAiConfig).toHaveBeenCalledOnce(); expect(await screen.findByLabelText('模型')).toHaveValue(AI.model);
+  });
+  it.each(['model', 'key'])('blocks saved-only testing with dirty %s form', async (field) => {
+    const user = await replacement();
+    if (field === 'key') await user.type(screen.getByLabelText('新 API Key'), 'synthetic-key');
+    else fireEvent.change(screen.getByLabelText('模型'), { target: { value: 'unsaved-model' } });
+    await user.click(screen.getByRole('button', { name: '用样例案试跑' }));
+    expect(await screen.findByText('请先保存配置，再试跑')).toBeInTheDocument();
+    expect(api.testAiConfig).not.toHaveBeenCalled(); expect(api.updateAiConfig).not.toHaveBeenCalled();
+  });
+  it('clears password immediately on account change and ignores a pending save', async () => {
+    const saved = deferred<{ ok: true; enabled: boolean; prompt_version: string }>();
+    vi.mocked(api.updateAiConfig).mockReturnValueOnce(saved.promise);
+    const user = userEvent.setup(); const view = render(page()); await screen.findByLabelText('模型');
+    await user.click(screen.getByRole('button', { name: '更换 API Key' })); await user.type(screen.getByLabelText('新 API Key'), 'synthetic-key');
+    await user.click(screen.getByRole('button', { name: '保存' })); view.rerender(page({ ...ADMIN, id: 'admin-b' }));
+    await screen.findByLabelText('模型'); expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await act(async () => saved.resolve({ ok: true, enabled: true, prompt_version: 'late' }));
+    expect(api.getAiConfig).toHaveBeenCalledTimes(2); expect(screen.queryByText('已保存')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更换 API Key' })); expect(screen.getByLabelText('新 API Key')).toHaveValue('');
+  });
+  it('erases the detached password element on unmount and ignores the pending write', async () => {
+    const saved = deferred<{ ok: true; enabled: boolean; prompt_version: string }>();
+    vi.mocked(api.updateAiConfig).mockReturnValueOnce(saved.promise);
+    const user = userEvent.setup(); const view = render(page()); await screen.findByLabelText('模型');
+    await user.click(screen.getByRole('button', { name: '更换 API Key' }));
+    const input = screen.getByLabelText('新 API Key'); await user.type(input, 'synthetic-key');
+    await user.click(screen.getByRole('button', { name: '保存' })); view.unmount();
+    expect(input).toHaveValue('');
+    await act(async () => saved.resolve({ ok: true, enabled: true, prompt_version: 'late' }));
+    expect(api.getAiConfig).toHaveBeenCalledOnce();
+  });
+  it('erases a committed password before a slow status refresh completes', async () => {
+    const refreshed = deferred<AiConfigResponse>(); const user = await replacement();
+    const input = screen.getByLabelText('新 API Key'); await user.type(input, 'synthetic-key');
+    vi.mocked(api.getAiConfig).mockReturnValueOnce(refreshed.promise);
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(input).toHaveValue(''); expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await act(async () => refreshed.resolve(MANAGED_AI));
+    expect(screen.getByText('已保存')).toBeInTheDocument();
+  });
+  it('clears password on permission loss and ignores a pending credential write', async () => {
+    const saved = deferred<{ ok: true; enabled: boolean; prompt_version: string }>(); vi.mocked(api.updateAiConfig).mockReturnValueOnce(saved.promise);
+    const user = userEvent.setup(); const view = render(page()); await screen.findByLabelText('模型');
+    await user.click(screen.getByRole('button', { name: '更换 API Key' })); await user.type(screen.getByLabelText('新 API Key'), 'synthetic-key');
+    await user.click(screen.getByRole('button', { name: '保存' })); view.rerender(page({ ...ADMIN, is_admin: false }));
+    expect(screen.queryByLabelText('新 API Key')).not.toBeInTheDocument();
+    await act(async () => saved.resolve({ ok: true, enabled: true, prompt_version: 'late' }));
+    expect(api.getAiConfig).toHaveBeenCalledOnce(); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
   });
 });

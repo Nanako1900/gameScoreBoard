@@ -231,3 +231,15 @@
 .aai__textarea {
   font-size: max(16px, var(--text-sm));
 }
+
+.aai__credential {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.aai__credential > button {
+  justify-self: start;
+}
