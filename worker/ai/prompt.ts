@@ -9,6 +9,7 @@
 // Only layer 3 actually bounds the damage; 1 and 2 just make injection harder.
 
 import { MAX_NARRATIVE_LEN, type ViolationDef } from '../../shared/scoring';
+import { redactAiSecret } from './redact';
 
 export const DEFAULT_SYSTEM_PROMPT = `你是「EDG 信誉分」的量刑裁判。这是朋友之间开黑的娱乐性信誉分系统，处罚的目的是促成守约，不是羞辱。
 
@@ -139,14 +140,14 @@ function asString(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-function parseFactors(v: unknown): ParsedVerdict['factors'] {
+function parseFactors(v: unknown, apiKey: string): ParsedVerdict['factors'] {
   if (!Array.isArray(v)) return [];
   const out: ParsedVerdict['factors'] = [];
   for (const item of v) {
     if (typeof item !== 'object' || item === null) continue;
     const rec = item as Record<string, unknown>;
     const kind = asString(rec.kind);
-    const text = asString(rec.text);
+    const text = redactAiSecret(asString(rec.text), apiKey);
     if (text.length === 0) continue;
     if (kind !== 'mitigating' && kind !== 'aggravating') continue;
     out.push({ kind, text: text.slice(0, FACTOR_TEXT_MAX) });
@@ -160,7 +161,7 @@ function parseFactors(v: unknown): ParsedVerdict['factors'] {
  * the shape is unusable — the caller then falls back to the base sentence.
  * NOTE: `delta` is returned RAW; the caller must clamp it via clampVerdictDelta.
  */
-export function parseVerdict(text: string): ParsedVerdict {
+export function parseVerdict(text: string, apiKey = ''): ParsedVerdict {
   const json = extractJsonObject(text);
   let value: unknown;
   try {
@@ -179,7 +180,9 @@ export function parseVerdict(text: string): ParsedVerdict {
     throw new VerdictParseError('delta 不是有效数字');
   }
 
-  const reasoning = asString(rec.reasoning) || asString(rec.reason);
+  // JSON escapes may hide a credential until decoding. Filter the complete
+  // decoded string before any field limit can retain only a secret prefix.
+  const reasoning = redactAiSecret(asString(rec.reasoning) || asString(rec.reason), apiKey);
   if (reasoning.length === 0) throw new VerdictParseError('缺少判词');
 
   const rawConfidence = typeof rec.confidence === 'string' ? Number(rec.confidence) : rec.confidence;
@@ -190,9 +193,9 @@ export function parseVerdict(text: string): ParsedVerdict {
 
   return {
     delta: rawDelta,
-    headline: (asString(rec.headline) || '已裁决').slice(0, HEADLINE_MAX),
+    headline: redactAiSecret(asString(rec.headline) || '已裁决', apiKey).slice(0, HEADLINE_MAX),
     reasoning: reasoning.slice(0, REASONING_MAX),
-    factors: parseFactors(rec.factors),
+    factors: parseFactors(rec.factors, apiKey),
     confidence,
   };
 }

@@ -230,3 +230,28 @@ it('redacts a full credential before truncating invalid audit text', async () =>
   const out = await judgeCase({ ...CFG, apiKey }, REQ);
   expect(out.audit.rawResponse).toBe('x'.repeat(3980) + '[已隐藏]');
 });
+
+
+it.each([
+  ['headline', 40],
+  ['reasoning', 600],
+  ['factor', 40],
+] as const)('redacts decoded credentials before the %s field limit', async (field, limit) => {
+  const apiKey = 'sk-fake-secret-1234567890';
+  const prefix = 'x'.repeat(limit - 10);
+  const value = prefix + apiKey;
+  const verdict = {
+    delta: -11,
+    headline: field === 'headline' ? value : '判了',
+    reasoning: field === 'reasoning' ? value : '理由',
+    factors: [{ kind: 'mitigating', text: field === 'factor' ? value : '提前告知' }],
+  };
+  // The inner verdict JSON escapes the first letter, so the current key only
+  // becomes literal after parseVerdict decodes the JSON business strings.
+  const content = JSON.stringify(verdict).replaceAll(apiKey, String.fromCharCode(92) + 'u0073k-fake-secret-1234567890');
+  fetchMock.mockResolvedValue(chatResponse(content));
+  const out = await judgeCase({ ...CFG, apiKey }, REQ);
+  const visible = field === 'factor' ? out.factors[0]?.text : out[field];
+  expect(out.source).toBe('ai');
+  expect(visible).toBe(prefix + '[已隐藏]');
+});

@@ -204,7 +204,7 @@ export async function judgeCase(cfg: AiConfig, req: JudgeRequest): Promise<Judge
 
   let parsed: ParsedVerdict;
   try {
-    parsed = parseVerdict(result.text);
+    parsed = parseVerdict(result.text, cfg.apiKey);
   } catch (err) {
     return fallbackOutcome(
       req,

@@ -263,3 +263,14 @@ it('redacts a full credential before truncating invalid classification audit tex
   const out = await classifyClaim({ ...CFG, apiKey }, CLAIM);
   expect(out.audit.rawResponse).toBe('x'.repeat(1980) + '[已隐藏]');
 });
+
+
+it('redacts decoded credentials before the classification summary limit', async () => {
+  const apiKey = 'sk-fake-secret-1234567890';
+  const content = JSON.stringify({ type: 'afk', summary: 'x'.repeat(30) + apiKey })
+    .replaceAll(apiKey, String.fromCharCode(92) + 'u0073k-fake-secret-1234567890');
+  fetchMock.mockResolvedValue(chat(content));
+  const out = await classifyClaim({ ...CFG, apiKey }, CLAIM);
+  expect(out.classifiedBy).toBe('ai');
+  expect(out.summary).toBe('x'.repeat(30) + '[已隐藏]');
+});
