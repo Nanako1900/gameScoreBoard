@@ -5,7 +5,7 @@ import { VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voic
 import { LIMITS } from '../src/discord/render';
 import { renderVoiceHistory } from '../src/discord/voice';
 
-const NOTICE = '这段时间机器人不在线，没有记录不代表没来。';
+const NOTICE = '这些时段没有完整记录，没有记录不代表没来。';
 const EXPLANATION = '未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。';
 const FULL = '完整记录请找裁判在网页查看';
 function segment(patch: Partial<VoiceDaySegment> = {}): VoiceDaySegment {
@@ -34,8 +34,8 @@ describe('shared voice presentation', () => {
     expect(voiceTime('2026-10-27 00:30:00', -3.5, true)).toBe('10-26 21:00');
     expect(voiceTime('2026-10-27 00:30:00', 5.5, true)).toBe('10-27 06:00');
     expect(voiceDayLabel('2026-10-27')).toBe('10-27 周二');
-    expect(voiceDuration(155)).toBe('2 小时 35 分');
-    expect(voiceDuration(30)).toBe('30 分'); expect(voiceDuration(0)).toBe('0 分');
+    expect(voiceDuration(155)).toBe('2小时35分钟');
+    expect(voiceDuration(30)).toBe('30分钟'); expect(voiceDuration(0)).toBe('0分钟');
     expect(VOICE_GAP_NOTICE).toBe(NOTICE);
   });
   it('retains every evidence qualification and does not claim an open row is realtime presence', () => {
@@ -53,7 +53,7 @@ describe('voice history embed', () => {
   it('lists daily summaries and segments in board time', () => {
     const embed = renderVoiceHistory(history(), 8); const out = JSON.stringify(embed);
     expect(out).toContain('小明'); expect(out).toContain('10-27 周二');
-    expect(out).toContain('首次 20:14'); expect(out).toContain('共 2 小时 35 分');
+    expect(out).toContain('首次 20:14'); expect(out).toContain('共 2小时35分钟');
     expect(out).toContain('20:14–22:49'); expect(out).toContain('开黑一号');
     expect(out).toContain('北京时间'); expect(out).toContain('90 天');
     expect(out).not.toContain('private-nanako-id'); expect(out).not.toContain(FULL); limits(history());
@@ -67,7 +67,7 @@ describe('voice history embed', () => {
     const data = history({ days: [{ date: '2026-10-27', first_join: null, total_min: 30,
       segments: [segment({ joined_at: '2026-10-26 15:30:00', left_at: '2026-10-26 16:30:00', continued: true })] }] });
     const out = text(data);
-    expect(out).toContain('首次 —'); expect(out).toContain('共 30 分'); expect(out).toContain('接上一天');
+    expect(out).toContain('首次 —'); expect(out).toContain('共 30分钟'); expect(out).toContain('接上一天');
     expect(out).toContain('10-26 23:30'); expect(out).toContain('00:30');
   });
   it('keeps uncertain online/offline explanations and only an estimated unclosed duration', () => {
@@ -81,7 +81,7 @@ describe('voice history embed', () => {
   it('shows gaps even when the day has no records', () => {
     const data = history({ days: [{ date: '2026-10-27', first_join: null, total_min: 0, segments: [] }],
       gaps: [{ from: '2026-10-26 16:00:00', to: '2026-10-27 16:00:00' }] });
-    expect(text(data)).toContain(NOTICE); expect(text(data)).toContain('共 0 分');
+    expect(text(data)).toContain(NOTICE); expect(text(data)).toContain('共 0分钟');
     expect(renderVoiceHistory(data, 8).description).toContain(EXPLANATION);
     expect(text(data)).toContain('10-27 00:00'); expect(text(data)).toContain('10-28 00:00');
   });
@@ -106,7 +106,7 @@ describe('voice history embed', () => {
     data.gaps = [{ from: '2026-10-27 02:00:10', to: '2026-10-27 02:00:30' }];
     const out = text(data);
     expect(renderVoiceHistory(data, 8).description).toContain(EXPLANATION);
-    expect(out).not.toContain('明细频道'); expect(out).toContain('10-27 周二'); expect(out).toContain('共 2 小时 35 分');
+    expect(out).not.toContain('明细频道'); expect(out).toContain('10-27 周二'); expect(out).toContain('共 2小时35分钟');
     for (const note of ['接上一天', '机器人上线时已在语音里', '之后机器人离线，离开时间不确定']) expect(out).toContain(note);
     expect(out).toContain(FULL); limits(data);
   });

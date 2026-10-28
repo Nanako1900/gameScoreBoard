@@ -26,8 +26,8 @@ describe('/voice private evidence command', () => {
       VALUES ('self', $1, 'secret-channel', '开黑一号', '2026-10-27 10:00:00', '2026-10-27 10:12:00', 'joined', 'left')`, [CALLER]);
     const reply = await command(); const body = text(reply);
     expect(reply.ephemeral).toBe(true); expect(reply.embeds).toHaveLength(1);
-    expect(body.match(/周[一二三四五六日]/g)).toHaveLength(7); expect(body).toContain('12 分');
-    expect(body).toContain('开黑一号'); expect(body).toContain('这段时间机器人不在线，没有记录不代表没来。');
+    expect(body.match(/周[一二三四五六日]/g)).toHaveLength(7); expect(body).toContain('12分钟');
+    expect(body).toContain('开黑一号'); expect(body).toContain('这些时段没有完整记录，没有记录不代表没来。');
     expect(JSON.stringify(reply)).not.toMatch(/private-binding-nickname|secret-channel|discord_user_id|channel_id|40000000000000000[12]/);
   });
   it('refuses an explicit person option for an ordinary caller', async () => {
