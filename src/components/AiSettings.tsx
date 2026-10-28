@@ -7,7 +7,27 @@ import { ConfirmInline } from './ConfirmInline';
 import { useInlineConfirm } from '../lib/useInlineConfirm';
 import './admin-ai.css';
 
-interface AiSettingsProps { onUnavailable?: () => void }
+interface AiSettingsProps {
+  onUnavailable?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  /** The consolidated settings page starts with only common fields expanded. */
+  collapsedAdvanced?: boolean;
+}
+
+interface FormSnapshot {
+  baseUrl: string;
+  model: string;
+  temperature: string;
+  prompt: string;
+  classifyPrompt: string;
+  reportPrompt: string;
+  enabled: boolean;
+}
+
+function snapshotOf(cfg: AiConfigResponse): FormSnapshot {
+  return { baseUrl: cfg.base_url, model: cfg.model, temperature: String(cfg.temperature), prompt: cfg.prompt,
+    classifyPrompt: cfg.classify_prompt, reportPrompt: cfg.report_prompt, enabled: cfg.configured_enabled ?? cfg.enabled };
+}
 
 type PromptTab = 'sentence' | 'classify' | 'report';
 
@@ -29,14 +49,17 @@ function percent(n: number): string {
 }
 
 /** Runtime provider settings; credentials are write-only and never refilled. */
-export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
+export function AiSettings({ onUnavailable, onDirtyChange, collapsedAdvanced = false }: AiSettingsProps): JSX.Element {
   const [cfg, setCfg] = useState<AiConfigResponse | null>(null);
+  const [baseline, setBaseline] = useState<FormSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
   const active = useRef(false);
   const readVersion = useRef(0);
   const unavailableCallback = useRef(onUnavailable);
   unavailableCallback.current = onUnavailable;
+  const dirtyCallback = useRef(onDirtyChange);
+  dirtyCallback.current = onDirtyChange;
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState('0.2');
@@ -83,6 +106,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
       const res = await getAiConfig();
       if (!active.current || readVersion.current !== version) return false;
       setCfg(res);
+      setBaseline(snapshotOf(res));
       setBaseUrl(res.base_url);
       setModel(res.model);
       setTemperature(String(res.temperature));
@@ -112,6 +136,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
       active.current = false;
       readVersion.current += 1;
       if (keyInput.current) keyInput.current.value = '';
+      dirtyCallback.current?.(false);
     };
   }, [load]);
 
@@ -128,6 +153,9 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
     setStatus(null);
     setError(null);
     setTest(null);
+    // The snapshot is non-secret and matches the fields this request commits.
+    // A successful write is clean even when the subsequent status read fails.
+    const submitted: FormSnapshot = { baseUrl, model, temperature, prompt, classifyPrompt, reportPrompt, enabled };
     try {
       // Only send fields that carry a value: the API rejects an empty base_url /
       // model outright, so blanket-sending them would make "save" impossible on a
@@ -145,6 +173,7 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
       else if (replacingKey) patch.api_key = rawKey.trim();
       await updateAiConfig(patch);
       if (!active.current) return;
+      setBaseline(submitted);
       clearKey();
       clearConfirm.close();
       if (!await load(true) || !active.current) return;
@@ -158,9 +187,10 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
     }
   };
 
-  const dirty = cfg !== null && (baseUrl !== cfg.base_url || model !== cfg.model ||
-    temperature !== String(cfg.temperature) || prompt !== cfg.prompt || classifyPrompt !== cfg.classify_prompt ||
-    reportPrompt !== cfg.report_prompt || enabled !== (cfg.configured_enabled ?? cfg.enabled) || replacingKey);
+  const dirty = !unavailable && baseline !== null && (baseUrl !== baseline.baseUrl || model !== baseline.model ||
+    temperature !== baseline.temperature || prompt !== baseline.prompt || classifyPrompt !== baseline.classifyPrompt ||
+    reportPrompt !== baseline.reportPrompt || enabled !== baseline.enabled || replacingKey);
+  useEffect(() => { dirtyCallback.current?.(dirty); }, [dirty]);
   const handleTest = async (): Promise<void> => {
     if (busy || loading) return;
     if (dirty) { setError('请先保存配置，再试跑'); return; }
@@ -201,23 +231,6 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
 
       {cfg && (
         <>
-          <div className="aai__health">
-            <Stat label="近 7 天判罚" value={String(cfg.recent.total)} />
-            <Stat
-              label="回退率"
-              value={percent(cfg.recent.fallbackRate)}
-              warn={cfg.recent.fallbackRate > 0.1}
-              hint="AI 不可用而按基准分判的比例"
-            />
-            <Stat
-              label="越界率"
-              value={percent(cfg.recent.clampRate)}
-              warn={cfg.recent.clampRate > 0.1}
-              hint="AI 给出的分值被强制夹回区间的比例。持续偏高说明提示词或模型有问题"
-            />
-            <Stat label="平均耗时" value={`${cfg.recent.avgLatencyMs}ms`} />
-          </div>
-
           {cfg.disabled_reason && (
             <p className="aai__warn">⚠️ {cfg.disabled_reason}</p>
           )}
@@ -228,6 +241,41 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
           )}
 
           <div className="aai__form">
+            <label className="aai__toggle">
+              <input
+                type="checkbox"
+                disabled={busy || loading}
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              <span>启用 AI 量刑（关闭后一律按基准分判罚）</span>
+            </label>
+
+            <label className="aai__field">
+              <span className="aai__label">Base URL</span>
+              <input
+                className="aai__input"
+                disabled={busy || loading}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+              <span className="aai__hint">
+                以 <code>/v1</code> 结尾，代码只会拼接 <code>/chat/completions</code>
+              </span>
+            </label>
+
+            <label className="aai__field">
+              <span className="aai__label">模型</span>
+              <input
+                className="aai__input"
+                disabled={busy || loading}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            </label>
+
             <div className="aai__credential">
               <p>API Key：{cfg.has_api_key ? '已设置' : '未设置'}</p>
               {cfg.api_key_source !== undefined && <p className="aai__hint">来源：{{ database: '数据库', environment: '环境变量', none: '无' }[cfg.api_key_source]}</p>}
@@ -262,93 +310,62 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
                   disabled={busy || loading} onClick={clearConfirm.ask}>清除 API Key</button>}
               </>}
             </div>
-            <label className="aai__toggle">
-              <input
-                type="checkbox"
-                disabled={busy || loading}
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
-              <span>启用 AI 量刑（关闭后一律按基准分判罚）</span>
-            </label>
 
-            <label className="aai__field">
-              <span className="aai__label">Base URL</span>
-              <input
-                className="aai__input"
-                disabled={busy || loading}
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.openai.com/v1"
-              />
-              <span className="aai__hint">
-                以 <code>/v1</code> 结尾，代码只会拼接 <code>/chat/completions</code>
-              </span>
-            </label>
+            <details className="aai__advanced" open={!collapsedAdvanced}>
+              <summary>高级参数与提示词</summary>
+              <div className="aai__advanced-body">
+                <label className="aai__field">
+                  <span className="aai__label">Temperature</span>
+                  <input
+                    className="aai__input tabular"
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    disabled={busy || loading}
+                    value={temperature}
+                    onChange={(e) => setTemperature(e.target.value)}
+                  />
+                  <span className="aai__hint">判罚要可复现，建议 ≤ 0.3</span>
+                </label>
 
-            <div className="aai__row">
-              <label className="aai__field">
-                <span className="aai__label">模型</span>
-                <input
-                  className="aai__input"
-                  disabled={busy || loading}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="gpt-4o-mini"
-                />
-              </label>
-
-              <label className="aai__field">
-                <span className="aai__label">Temperature</span>
-                <input
-                  className="aai__input tabular"
-                  type="number"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  disabled={busy || loading}
-                  value={temperature}
-                  onChange={(e) => setTemperature(e.target.value)}
-                />
-                <span className="aai__hint">判罚要可复现，建议 ≤ 0.3</span>
-              </label>
-            </div>
-
-            <div className="aai__field">
-              <span className="aai__label">
-                提示词 <span className="aai__version tabular">v{cfg.prompt_version}</span>
-              </span>
-              <div className="aai__tabs" role="tablist" aria-label="提示词">
-                {PROMPT_TABS.map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === t.value}
-                    className={`aai__tab${tab === t.value ? ' aai__tab--active' : ''}`}
-                    onClick={() => setTab(t.value)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+                <div className="aai__field">
+                  <span className="aai__label">
+                    提示词 <span className="aai__version tabular">v{cfg.prompt_version}</span>
+                  </span>
+                  <div className="aai__tabs" role="tablist" aria-label="提示词">
+                    {PROMPT_TABS.map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === t.value}
+                        className={`aai__tab${tab === t.value ? ' aai__tab--active' : ''}`}
+                        onClick={() => setTab(t.value)}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    className="aai__textarea"
+                    value={
+                      tab === 'sentence' ? prompt : tab === 'classify' ? classifyPrompt : reportPrompt
+                    }
+                    onChange={(e) => {
+                      if (tab === 'sentence') setPrompt(e.target.value);
+                      else if (tab === 'classify') setClassifyPrompt(e.target.value);
+                      else setReportPrompt(e.target.value);
+                    }}
+                    disabled={busy || loading}
+                    rows={14}
+                    maxLength={8000}
+                    aria-label={PROMPT_TABS.find((t) => t.value === tab)?.label}
+                  />
+                  <span className="aai__hint">{PROMPT_HINTS[tab]}</span>
+                </div>
               </div>
-              <textarea
-                className="aai__textarea"
-                value={
-                  tab === 'sentence' ? prompt : tab === 'classify' ? classifyPrompt : reportPrompt
-                }
-                onChange={(e) => {
-                  if (tab === 'sentence') setPrompt(e.target.value);
-                  else if (tab === 'classify') setClassifyPrompt(e.target.value);
-                  else setReportPrompt(e.target.value);
-                }}
-                disabled={busy || loading}
-                rows={14}
-                maxLength={8000}
-                aria-label={PROMPT_TABS.find((t) => t.value === tab)?.label}
-              />
-              <span className="aai__hint">{PROMPT_HINTS[tab]}</span>
-            </div>
+            </details>
 
             <p className="aai__hint">试跑仅使用已保存配置，不修改任何人的分数。</p>
             <div className="aai__actions">
@@ -370,6 +387,26 @@ export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
               </button>
             </div>
           </div>
+
+          <details className="aai__statistics" open={!collapsedAdvanced}>
+            <summary>运行统计</summary>
+            <div className="aai__health">
+              <Stat label="近 7 天判罚" value={String(cfg.recent.total)} />
+              <Stat
+                label="回退率"
+                value={percent(cfg.recent.fallbackRate)}
+                warn={cfg.recent.fallbackRate > 0.1}
+                hint="AI 不可用而按基准分判的比例"
+              />
+              <Stat
+                label="越界率"
+                value={percent(cfg.recent.clampRate)}
+                warn={cfg.recent.clampRate > 0.1}
+                hint="AI 给出的分值被强制夹回区间的比例。持续偏高说明提示词或模型有问题"
+              />
+              <Stat label="平均耗时" value={`${cfg.recent.avgLatencyMs}ms`} />
+            </div>
+          </details>
 
           {test && (
             <div className={`aai__test${test.ok ? '' : ' aai__test--fail'}`}>

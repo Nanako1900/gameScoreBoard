@@ -6,7 +6,7 @@
 //   upper dialog and Tab cycles only inside it (M10).
 // - The inert count keeps `#root` inert while at least one portaled layer is open:
 //   only the first acquire marks it, only the last release clears it.
-// - The scroll-lock count does the same for `overflow: hidden` on <body>. Each
+// - The scroll-lock count does the same for a CSS class on <body>. Each
 //   Modal used to save and restore the overflow itself, which breaks when two
 //   layers unmount in one commit: React runs the outer cleanup first, the inner
 //   one then "restores" the outer's `hidden`, and the page never scrolls again.
@@ -21,7 +21,7 @@ let layers: readonly LayerId[] = [];
 let nextLayerId: LayerId = 1;
 let inertDepth = 0;
 let scrollLocks = 0;
-let savedOverflow = '';
+const SCROLL_LOCK_CLASS = 'modal-scroll-lock';
 
 /** Register a newly opened layer on top of the stack. */
 export function pushLayer(): LayerId {
@@ -74,12 +74,11 @@ export function releaseRootInert(): void {
   }
 }
 
-/** Ref-counted `overflow: hidden` on <body>; the first lock saves the old value, the last unlock restores it. */
+/** Ref-counted body class: inline styles belong to their original owner and are never touched. */
 export function lockBodyScroll(): void {
   scrollLocks += 1;
   if (scrollLocks === 1) {
-    savedOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    document.body.classList.add(SCROLL_LOCK_CLASS);
   }
 }
 
@@ -89,19 +88,16 @@ export function unlockBodyScroll(): void {
   }
   scrollLocks -= 1;
   if (scrollLocks === 0) {
-    document.body.style.overflow = savedOverflow;
+    document.body.classList.remove(SCROLL_LOCK_CLASS);
   }
 }
 
-/** Tests only: empty the stack, zero the inert and scroll-lock counts, strip inert/aria-hidden from #root, restore body overflow. Idempotent. */
+/** Tests only: empty the stack and counts, strip root inert attributes and our body class. Idempotent. */
 export function resetModalStackForTests(): void {
   layers = [];
   inertDepth = 0;
-  if (scrollLocks > 0) {
-    document.body.style.overflow = savedOverflow;
-  }
+  document.body.classList.remove(SCROLL_LOCK_CLASS);
   scrollLocks = 0;
-  savedOverflow = '';
   const root = appRoot();
   root?.removeAttribute('inert');
   root?.removeAttribute('aria-hidden');

@@ -29,6 +29,8 @@ function makeRoot(): HTMLElement {
 // A #root left behind by a failed assertion must not make the next test's body inert.
 afterEach(() => {
   document.getElementById('root')?.remove();
+  document.body.style.overflow = '';
+  document.body.classList.remove('host-page');
 });
 
 describe('modalStack', () => {
@@ -63,17 +65,23 @@ describe('modalStack', () => {
     expect(root).not.toHaveAttribute('aria-hidden');
   });
 
-  it('ref-counts the body scroll lock and restores the value it found', () => {
+  it('ref-counts a body class without writing or restoring an existing inline overflow', () => {
     document.body.style.overflow = 'clip';
+    document.body.classList.add('host-page');
+    const originalStyle = document.body.getAttribute('style');
     lockBodyScroll();
     lockBodyScroll();
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.body).toHaveClass('modal-scroll-lock', 'host-page');
+    expect(document.body.getAttribute('style')).toBe(originalStyle);
     unlockBodyScroll();
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.body).toHaveClass('modal-scroll-lock');
+    // Another owner can update its own inline setting while the modal is open.
+    document.body.style.overflow = 'auto';
     unlockBodyScroll();
     unlockBodyScroll(); // an extra unlock is ignored
-    expect(document.body.style.overflow).toBe('clip');
-    document.body.style.overflow = '';
+    expect(document.body).not.toHaveClass('modal-scroll-lock');
+    expect(document.body).toHaveClass('host-page');
+    expect(document.body.style.overflow).toBe('auto');
   });
 
   it('reset empties the stack, zeroes the inert count and strips #root', () => {
@@ -89,6 +97,7 @@ describe('modalStack', () => {
     expect(root).not.toHaveAttribute('inert');
     expect(root).not.toHaveAttribute('aria-hidden');
     expect(document.body.style.overflow).toBe('');
+    expect(document.body).not.toHaveClass('modal-scroll-lock');
 
     // The count really is zero: one acquire + one release round-trips cleanly.
     acquireRootInert();
@@ -209,11 +218,22 @@ describe('Modal — nested layers', () => {
     const user = userEvent.setup();
     const { unmount } = render(<Nested />);
     await user.click(screen.getByRole('button', { name: '打开内层' }));
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.body).toHaveClass('modal-scroll-lock');
 
     // React runs the outer cleanup first; per-Modal save/restore left 'hidden' behind.
     unmount();
     expect(document.body.style.overflow).toBe('');
+    expect(document.body).not.toHaveClass('modal-scroll-lock');
+  });
+
+  it('keeps the class lock while an inner layer survives an outer unmount', () => {
+    const layers = (outer: boolean) => <>
+      {outer && <Modal key="outer" open onClose={() => {}} labelledBy="outer-removal"><h2 id="outer-removal">外层</h2></Modal>}
+      <Modal key="inner" open onClose={() => {}} labelledBy="inner-survivor"><h2 id="inner-survivor">内层</h2></Modal>
+    </>;
+    const view = render(layers(true));expect(document.body).toHaveClass('modal-scroll-lock');
+    view.rerender(layers(false));expect(document.body).toHaveClass('modal-scroll-lock');expect(layerCount()).toBe(1);
+    view.unmount();expect(document.body).not.toHaveClass('modal-scroll-lock');
   });
 
   it('keeps #root inert until the last layer closes', async () => {
@@ -245,6 +265,7 @@ describe('Modal — nested layers', () => {
     // Dev-mode effects ran twice; ids are never reused, so the re-run did not stack a ghost layer.
     expect(layerCount()).toBe(1);
     expect(root).toHaveAttribute('inert');
+    expect(document.body).toHaveClass('modal-scroll-lock');
 
     await user.click(screen.getByRole('button', { name: '打开内层' }));
     expect(layerCount()).toBe(2);
@@ -257,6 +278,7 @@ describe('Modal — nested layers', () => {
     expect(layerCount()).toBe(0);
     expect(root).not.toHaveAttribute('inert');
     expect(document.body.style.overflow).toBe('');
+    expect(document.body).not.toHaveClass('modal-scroll-lock');
   });
 });
 
@@ -412,6 +434,7 @@ describe('Modal — page variant', () => {
     expect(root).not.toHaveAttribute('aria-hidden');
     expect(layerCount()).toBe(0);
     expect(document.body.style.overflow).toBe('');
+    expect(document.body).not.toHaveClass('modal-scroll-lock');
   });
 
   it('focuses the heading on open, falling back to the section', () => {

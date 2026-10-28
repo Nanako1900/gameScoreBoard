@@ -48,6 +48,7 @@ export function SentencingScale({
               基准 <span className="tabular">{label(range.base)}</span>
               {lighter && <span className="scale__verb scale__verb--light">从轻</span>}
               {harsher && <span className="scale__verb scale__verb--heavy">从重</span>}
+              <strong className="scale__pin-value tabular">本次 {label(delta)}</strong>
             </>
           ) : (
             <>
@@ -67,18 +68,16 @@ export function SentencingScale({
             : `量刑区间 ${range.min} 到 ${range.max}，基准 ${range.base}`
         }
       >
-        <span className="scale__base" style={{ left: `${basePos}%` }} aria-hidden="true" />
-        {hasVerdict && (
-          <span
+        <svg className="scale__ruler" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <line className="scale__line" x1={0} x2={100} y1={12} y2={12} />
+          <line className="scale__base" x1={basePos} x2={basePos} y1={5} y2={19} />
+          {hasVerdict && <line
             className={`scale__pin${lighter ? ' scale__pin--light' : ''}${
               harsher ? ' scale__pin--heavy' : ''
             }`}
-            style={{ left: `${deltaPos}%` }}
-            aria-hidden="true"
-          >
-            <span className="scale__pin-value tabular">{label(delta)}</span>
-          </span>
-        )}
+            x1={deltaPos} x2={deltaPos} y1={1} y2={23}
+          />}
+        </svg>
       </div>
     </div>
   );

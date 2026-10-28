@@ -3,14 +3,18 @@ import type { Config, RecordItem, User } from '../types';
 import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
 import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE, SESSIONS_OFF, SESSIONS_OFF_DESCRIPTION } from '../lib/routeCopy';
-import { useCaseLookup, type PinnedCase } from '../lib/useCaseLookup';
+import { useCaseLookup, caseViewerScope, type PinnedCase } from '../lib/useCaseLookup';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
 import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
+import { ToolsPage } from './ToolsPage';
 import { AdminPage } from './AdminPage';
+import { CasesPage } from './CasesPage';
+import type { TodoItem } from '../lib/todo';
+import { SettingsPage } from './SettingsPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -27,24 +31,29 @@ interface RouteViewProps {
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
   board?: BoardData;
+  todoItems?: readonly TodoItem[] | null;
+  now?: number;
   discordRead?: DiscordLinkRead;
   onDiscordChanged?: (value: DiscordLinkValue) => void;
   onMeUpdated?: (user: User) => void;
   onWelcomeDone?: () => void;
   onBeforeWelcomeBind?: () => void;
   welcomeNotice?: React.ReactNode;
+  onRetryDiscord?: () => void;
+  /** App-level actor generation, valid across a role-keyed subtree unmount. */
+  isCurrentActor?: () => boolean;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
 const close = (): void => goBack();
 
-function PageShell({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="app__page">{children}</div>;
+function PageShell({ children, narrow = false }: { children: React.ReactNode; narrow?: boolean }): JSX.Element {
+  return <main className={`app__page${narrow ? ' app__page--detail' : ''}`}>{children}</main>;
 }
 
 /** Pages sit in the flow where the hidden lobby was; drawers portal out on their own. */
 function LayoutShell({ layout, children }: { layout: RouteLayout; children: React.ReactNode }): JSX.Element {
-  return layout === 'page' ? <PageShell>{children}</PageShell> : <>{children}</>;
+  return layout === 'page' ? <PageShell narrow>{children}</PageShell> : <>{children}</>;
 }
 
 function RouteNotice({ layout, title }: { layout: RouteLayout; title: string }): JSX.Element {
@@ -85,7 +94,8 @@ interface CaseRouteProps extends RouteViewProps {
  * component at the same place, so the lookup survives the alias' replace.
  */
 function CaseRoute(props: CaseRouteProps): JSX.Element | null {
-  const { caseId, userId, location, layout, pinned, onPinned } = props;
+  const { caseId, userId, location, pinned, onPinned } = props;
+  const layout: RouteLayout = 'page';
   const { status, record } = useCaseLookup(caseId, pinned);
   const subject = record?.subject.id ?? null;
 
@@ -117,6 +127,7 @@ function CaseRoute(props: CaseRouteProps): JSX.Element | null {
         onClose={close}
         onOpenStatement={props.onOpenStatement}
         onChanged={props.onChanged}
+        isCurrentActor={props.isCurrentActor}
       />
     </LayoutShell>
   );
@@ -124,7 +135,10 @@ function CaseRoute(props: CaseRouteProps): JSX.Element | null {
 
 /** What the address shows on top of (or instead of) the lobby (contract §4.9). */
 export function RouteView(props: RouteViewProps): JSX.Element | null {
-  const { location, layout } = props;
+  const { location } = props;
+  // A viewport hint is retained in the public props for older callers. Destinations
+  // themselves are pages on every screen; only true form dialogs use layers.
+  const layout: RouteLayout = 'page';
   const { route } = location;
   switch (route.name) {
     case 'home':
@@ -138,8 +152,21 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
     case 'admin':
-      return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
+      if (route.tab === 'voice') return <PageShell><AdminPage me={props.me} config={props.config} tab="voice" onChanged={props.onChanged} /></PageShell>;
+      return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
+        onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
+    case 'cases':
+      return <PageShell><CasesPage config={props.config} me={props.me} records={props.board?.records ?? []} items={props.todoItems ?? null} now={props.now ?? Date.now()} onOpenStatement={props.onOpenStatement} onOpenPlayer={props.board?.onSelectUser ?? (() => {})} /></PageShell>;
+    case 'settings':
+      return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}
+        onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
+        onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
+    case 'tools':
+      if (route.tab === 'filing' && (props.me?.is_judge || props.me?.is_admin)) return null;
+      return <PageShell><ToolsPage me={props.me} config={props.config} tab={route.tab} participants={props.board?.participants ?? []} onChanged={props.onChanged} /></PageShell>;
     case 'board':
+      if (route.tab === 'feed') return <PageShell><CasesPage initialTab="public" config={props.config} me={props.me} records={props.board?.records ?? []} items={props.todoItems ?? null} now={props.now ?? Date.now()} onOpenStatement={props.onOpenStatement} onOpenPlayer={props.board?.onSelectUser ?? (() => {})} /></PageShell>;
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':
       return <PageShell><NotFound title={SESSIONS_OFF} description={SESSIONS_OFF_DESCRIPTION}
@@ -157,12 +184,13 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
             onClose={close}
             onOpenStatement={props.onOpenStatement}
             onChanged={props.onChanged}
+            isCurrentActor={props.isCurrentActor}
           />
         </LayoutShell>
       );
     case 'playerCase':
-      return <CaseRoute {...props} caseId={route.caseId} userId={route.userId} />;
+      return <CaseRoute key={caseViewerScope(props.me)} {...props} caseId={route.caseId} userId={route.userId} />;
     case 'case':
-      return <CaseRoute {...props} caseId={route.caseId} userId={null} />;
+      return <CaseRoute key={caseViewerScope(props.me)} {...props} caseId={route.caseId} userId={null} />;
   }
 }

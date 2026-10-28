@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { APPEAL_MAX } from '@shared/scoring';
 import type { RecordItem } from '../types';
 import { ApiError, appealCase } from '../api';
@@ -19,6 +19,8 @@ interface AppealSheetProps {
   record: RecordItem;
   onClose: () => void;
   onAppealed: (record: RecordItem) => void;
+  /** The host revokes this lease before a different account or role renders. */
+  isCurrentActor?: () => boolean;
 }
 
 const TITLE_ID = 'appeal-sheet-title';
@@ -34,24 +36,32 @@ interface AppealSubmit {
   submit: () => void;
 }
 
-function useAppealSubmit(recordId: number, text: string, onAppealed: (record: RecordItem) => void): AppealSubmit {
+function useAppealSubmit(recordId: number, text: string, onAppealed: (record: RecordItem) => void,
+  isCurrent: () => boolean): AppealSubmit {
   const confirm = useInlineConfirm<HTMLButtonElement>();
   const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
 
   const submit = (): void => {
+    if (!isCurrent() || inFlight.current) return;
+    inFlight.current = true;
     const reason = text.trim();
     setSubmitting(true);
     setError(null);
     appealCase(recordId, reason.length > 0 ? reason : undefined)
       .then(({ record }) => {
+        if (!isCurrent()) return;
+        inFlight.current = false;
         confirm.close();
         setSubmitting(false);
         toast.show({ message: '申诉已提交，等管理员复核。', tone: 'ok' });
         onAppealed(record);
       })
       .catch((err: unknown) => {
+        if (!isCurrent()) return;
+        inFlight.current = false;
         setError(err instanceof ApiError ? err.message : '提交失败，请稍后重试');
         setSubmitting(false);
         confirm.dismiss();
@@ -73,13 +83,18 @@ function caseLine(record: RecordItem): string {
  * verdict, from StatementDialog). The reason is optional like the bot's
  * 「申诉理由（可不填）」, capped at the same APPEAL_MAX, and kept as a draft.
  */
-export function AppealSheet({ record, onClose, onAppealed }: AppealSheetProps): JSX.Element {
-  const draft = useDraft<string>('appeal', record.id, '', DRAFT_OPTIONS);
+export function AppealSheet({ record, onClose, onAppealed, isCurrentActor }: AppealSheetProps): JSX.Element {
+  const mounted = useRef(false);
+  const actor = useRef(isCurrentActor); actor.current = isCurrentActor;
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const canPersist = (): boolean => actor.current?.() !== false;
+  const isCurrent = (): boolean => mounted.current && canPersist();
+  const draft = useDraft<string>('appeal', record.id, '', { ...DRAFT_OPTIONS, canPersist });
   const guard = useLeaveGuard(draft.dirty, onClose);
   const submission = useAppealSubmit(record.id, draft.value, (appealed) => {
     draft.clear();
     onAppealed(appealed);
-  });
+  }, isCurrent);
 
   // Esc / ✕: back out of the confirm first; never mid-submit.
   const requestClose = (): void => {

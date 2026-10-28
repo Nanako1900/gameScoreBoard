@@ -74,7 +74,9 @@ describe('voice management page', () => {
     frozen(); if (desktop) useDesktopViewport();
     const calls = stubApp(); window.history.replaceState(null, '', '/admin'); const { container } = render(<App />);
     await screen.findByRole('link', { name: /甲/ });
-    expect(screen.getByRole('heading', { name: '管理' })).toHaveFocus();
+    expect(screen.getByRole('heading', { name: '语音记录', level: 2 })).toHaveFocus();
+    expect(screen.getByRole('link', { name: '返回裁判工具' })).toHaveAttribute('href', '/tools');
+    expect(screen.queryByRole('navigation', { name: '管理' })).not.toBeInTheDocument();
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByLabelText('日期')).toHaveValue(TODAY);
@@ -87,7 +89,7 @@ describe('voice management page', () => {
     expect(screen.getByText(VOICE_GAP_NOTICE)).toBeInTheDocument();
     expect(within(screen.getByRole('note', { name: '未覆盖时段' })).getByText('未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。')).toBeInTheDocument();
     expect(screen.getByText('10-28 04:15:00 – 10-28 04:15:20')).toBeInTheDocument();
-    expect(container.querySelector('.admin-page [style], .admin-page style')).toBeNull();
+    expect(container.querySelector('.tools-page [style], .tools-page style')).toBeNull();
   });
   it('pushes a selected person into the URL and fetches their default seven-day history', async () => {
     frozen(); const calls = stubApp(); window.history.replaceState(null, '', '/admin/voice'); render(<App />);
@@ -128,7 +130,7 @@ describe('voice management page', () => {
     expect(await screen.findByText('尚未记录离开')).toBeInTheDocument();
     expect(screen.getByText('时长按查询时刻估算')).toBeInTheDocument();
     expect(screen.queryByText('在语音里')).not.toBeInTheDocument();
-    expect(screen.getByText(name)).toBeInTheDocument(); expect(document.querySelector('.admin-page img')).toBeNull();
+    expect(screen.getByText(name)).toBeInTheDocument(); expect(document.querySelector('.tools-page img')).toBeNull();
   });
   it.each(['/admin/voice', '/admin/voice?user=a%2Fb'])('silently replaces unsupported reads with NotFound: %s', async (path) => {
     frozen(); stubApp(JUDGE, () => json(404, { error: 'Not found' })); window.history.replaceState(null, '', path); render(<App />);
@@ -194,5 +196,26 @@ describe('voice evidence response isolation', () => {
     expect(screen.queryByText('开黑一号')).not.toBeInTheDocument();
     expect(screen.queryByText(VOICE_GAP_NOTICE)).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('正在读取语音记录');
+  });
+});
+
+describe('embedded voice unavailable content', () => {
+  it('uses a caller-supplied local notice for an unsupported 404 without inventing empty evidence', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: 'Not found' })));
+    render(<VoiceLog ownerId="self" userId="self" offsetHours={8} missingContent={<p>语音记录暂不可用。</p>} />);
+    expect(await screen.findByText('语音记录暂不可用。')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '这页不存在' })).not.toBeInTheDocument();
+    expect(screen.queryByText('没有保存的语音记录，不代表没来')).not.toBeInTheDocument();
+    expect(screen.queryByText('已覆盖')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+  it('keeps ordinary read errors retryable even when a local missing notice is provided', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(503, { error: '暂时无法读取' })));
+    render(<VoiceLog ownerId="self" userId="self" offsetHours={8} missingContent={<p>语音记录暂不可用。</p>} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取');
+    expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument();
+    expect(screen.queryByText('语音记录暂不可用。')).not.toBeInTheDocument();
+    expect(screen.queryByText('没有保存的语音记录，不代表没来')).not.toBeInTheDocument();
+    expect(screen.queryByText('已覆盖')).not.toBeInTheDocument();
   });
 });

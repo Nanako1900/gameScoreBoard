@@ -6,12 +6,13 @@ import { ScoreGauge } from '../../src/components/ScoreGauge';
 // neither in the ring's colour nor in what a screen reader hears.
 
 describe('ScoreGauge', () => {
-  it('keeps today’s tier colour and label by default', () => {
+  it('keeps the self-only tier label with a neutral visual treatment', () => {
     render(<ScoreGauge score={96} />);
     const gauge = screen.getByRole('img');
     expect(gauge).toHaveAttribute('aria-label', '信誉分 96 分，段位 誓约之光');
     expect(gauge.className).toBe('gauge');
-    expect(gauge.style.getPropertyValue('--tier')).not.toBe('');
+    expect(gauge).not.toHaveAttribute('style');
+    expect(gauge.querySelector('[style]')).toBeNull();
   });
 
   it('neutral: the label is only the score, and no tier colour is set', () => {

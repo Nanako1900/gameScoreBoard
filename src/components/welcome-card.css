@@ -76,3 +76,19 @@
     text-underline-offset: 3px;
   }
 }
+
+.welcome--compact {
+  gap: 0.65rem;
+  padding: 1.5rem;
+}
+
+.welcome--compact .welcome__title {
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+
+.welcome--compact .welcome__line {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+}

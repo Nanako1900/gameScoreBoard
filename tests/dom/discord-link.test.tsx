@@ -230,7 +230,7 @@ describe('App — ?linked=discord', () => {
     mockFetch(appRoutes);
     render(<App />);
 
-    await screen.findByRole('heading', { name: '最近案件' });
+    await screen.findByRole('heading', { name: '最近判决' });
     expect(screen.queryByText('Discord 绑定成功')).not.toBeInTheDocument();
   });
 

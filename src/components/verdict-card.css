@@ -7,25 +7,25 @@
   border: 1px solid var(--border);
   border-left: 3px solid var(--border-strong);
   border-radius: var(--r-md);
-  background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
+  background: var(--panel);
 }
 
 .vc--awaiting_statement {
-  border-left-color: var(--gold);
+  border-left-color: var(--attn);
 }
 
 .vc--judging {
-  border-left-color: var(--blue);
+  border-left-color: var(--info);
 }
 
 .vc--appealed {
-  border-left-color: var(--blue);
+  border-left-color: var(--info);
 }
 
 .vc--revoked,
 .vc--withdrawn {
   border-left-color: var(--faint);
-  opacity: 0.72;
+  opacity: 1;
 }
 
 /* --- header --------------------------------------------------------------- */
@@ -53,7 +53,7 @@
 }
 
 .vc__meta {
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
   color: var(--faint);
 }
 
@@ -84,29 +84,29 @@
   gap: 0.2rem;
   padding: 0.55rem 0.75rem;
   border-radius: var(--r-sm);
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--panel-2);
   border-left: 2px solid var(--border-strong);
 }
 
 .vc__quote--statement {
-  border-left-color: var(--blue);
+  border-left-color: var(--info);
 }
 
 .vc__quote--appeal {
-  border-left-color: var(--gold);
+  border-left-color: var(--attn);
 }
 
 .vc__quote-who {
-  font-size: 0.68rem;
+  font-size: var(--text-sm);
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: normal;
   text-transform: uppercase;
   color: var(--faint);
 }
 
 .vc__quote p {
-  font-size: var(--text-sm);
-  line-height: 1.6;
+  font-size: var(--fs-md);
+  line-height: 1.8;
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -121,7 +121,7 @@
 
 /* The case a link from Discord pointed at. */
 .vc--focus {
-  outline: 2px solid color-mix(in oklab, var(--gold) 70%, transparent);
+  outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 
@@ -137,17 +137,17 @@
   gap: 0.4em;
   padding: 0.5rem 0.7rem;
   border-radius: var(--r-sm);
-  color: var(--gold);
-  background: rgba(245, 197, 66, 0.09);
+  color: var(--attn);
+  background: color-mix(in oklab, var(--attn) 9%, var(--panel));
 }
 
 .vc__pending--urgent {
   color: var(--down);
-  background: rgba(229, 72, 77, 0.11);
+  background: color-mix(in oklab, var(--danger) 11%, var(--panel));
 }
 
 .vc__flag--appealed {
-  color: var(--blue);
+  color: var(--info);
 }
 
 /* --- verdict -------------------------------------------------------------- */
@@ -170,7 +170,7 @@
   flex: 1;
   min-width: 12ch;
   font-size: 1.12rem;
-  color: var(--gold);
+  color: var(--text);
   letter-spacing: 0.01em;
 }
 
@@ -178,7 +178,7 @@
   flex: none;
   padding: 0.15em 0.6em;
   border-radius: var(--r-pill);
-  font-size: 0.68rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.05em;
   color: var(--muted);
@@ -186,27 +186,27 @@
 }
 
 .vc__source--ai {
-  color: var(--blue);
-  border-color: rgba(74, 163, 255, 0.45);
-  background: rgba(74, 163, 255, 0.1);
+  color: var(--info);
+  border-color: color-mix(in oklab, var(--info) 45%, var(--panel));
+  background: color-mix(in oklab, var(--info) 10%, var(--panel));
 }
 
 /* Fallback must be unmistakable — never let it read as an AI judgment. */
 .vc__source--fallback {
-  color: var(--gold);
-  border-color: rgba(245, 197, 66, 0.45);
-  background: rgba(245, 197, 66, 0.1);
+  color: var(--attn);
+  border-color: color-mix(in oklab, var(--attn) 45%, var(--panel));
+  background: color-mix(in oklab, var(--attn) 10%, var(--panel));
 }
 
 .vc__source--override {
   color: var(--danger-text);
-  border-color: rgba(229, 72, 77, 0.45);
-  background: rgba(229, 72, 77, 0.1);
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--panel));
+  background: color-mix(in oklab, var(--danger) 10%, var(--panel));
 }
 
 .vc__reason {
-  font-size: var(--text-sm);
-  line-height: 1.7;
+  font-size: var(--fs-md);
+  line-height: 1.8;
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -223,20 +223,20 @@
 .vc__factor {
   padding: 0.18em 0.6em;
   border-radius: var(--r-pill);
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
   border: 1px solid transparent;
 }
 
 .vc__factor--mitigating {
   color: var(--up);
-  border-color: rgba(61, 220, 132, 0.35);
-  background: rgba(61, 220, 132, 0.1);
+  border-color: color-mix(in oklab, var(--ok) 35%, var(--panel));
+  background: color-mix(in oklab, var(--ok) 10%, var(--panel));
 }
 
 .vc__factor--aggravating {
   color: var(--down);
-  border-color: rgba(229, 72, 77, 0.35);
-  background: rgba(229, 72, 77, 0.1);
+  border-color: color-mix(in oklab, var(--danger) 35%, var(--panel));
+  background: color-mix(in oklab, var(--danger) 10%, var(--panel));
 }
 
 .vc__actions {
@@ -257,18 +257,18 @@
   margin-left: 0.4em;
   padding: 0.05em 0.4em;
   border-radius: var(--r-pill);
-  font-size: 0.64rem;
-  color: var(--blue);
-  background: rgba(74, 163, 255, 0.12);
+  font-size: var(--fs-sm);
+  color: var(--info);
+  background: color-mix(in oklab, var(--info) 12%, var(--panel));
 }
 
 .vc__escalate {
   display: grid;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem;
-  border: 1px solid rgba(229, 72, 77, 0.4);
+  border: 1px solid color-mix(in oklab, var(--danger) 40%, var(--panel));
   border-radius: var(--r-sm);
-  background: rgba(229, 72, 77, 0.07);
+  background: color-mix(in oklab, var(--danger) 7%, var(--panel));
 }
 
 .vc__escalate-text {

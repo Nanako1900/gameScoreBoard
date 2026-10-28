@@ -30,6 +30,8 @@ function errorMessage(err: unknown, fallback: string): string {
  * behind an inline confirm.
  */
 interface DiscordLinkCardProps {
+  /** Remount private state when the signed-in account changes. */
+  ownerId?: string;
   /**
    * Called as the 绑定 Discord link is followed (spec §4.4 #2): the host keeps
    * its unsaved choice. It must not block the navigation, nor fetch anything.
@@ -40,7 +42,11 @@ interface DiscordLinkCardProps {
   onChanged?: (value: DiscordLinkValue) => void;
 }
 
-export function DiscordLinkCard({ onBeforeBind, linkState, onChanged }: DiscordLinkCardProps): JSX.Element | null {
+export function DiscordLinkCard(props: DiscordLinkCardProps): JSX.Element | null {
+  return <DiscordLinkBody key={props.ownerId ?? 'self'} {...props} />;
+}
+
+function DiscordLinkBody({ onBeforeBind, linkState, onChanged }: DiscordLinkCardProps): JSX.Element | null {
   const titleId = useId();
   const [localState, setState] = useState<CardState>({ status: 'loading' });
   const controlled = linkState !== undefined;
@@ -51,6 +57,11 @@ export function DiscordLinkCard({ onBeforeBind, linkState, onChanged }: DiscordL
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const active = useRef(false);
+  const scope = state.status === 'bound' ? JSON.stringify([state.link.linked_at, state.link.discord_username]) : state.status;
+  const currentScope = useRef(scope); currentScope.current = scope;
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => { setBusy(false); setConfirming(false); setError(null); }, [scope]);
 
   // Swapping 解绑 ⇄ confirm ⇄ 绑定 unmounts the focused control; without this a
   // keyboard user is dropped back at the top of the dialog.
@@ -101,19 +112,22 @@ export function DiscordLinkCard({ onBeforeBind, linkState, onChanged }: DiscordL
   };
 
   const handleUnlink = async (): Promise<void> => {
+    const mine = scope;
+    const current = (): boolean => active.current && currentScope.current === mine;
     setBusy(true);
     setError(null);
     try {
       await unlinkDiscord();
+      if (!current()) return;
       focusNext.current = 'bind';
       setState({ status: 'unbound' });
       onChanged?.(null);
     } catch (err) {
+      if (!current()) return;
       focusNext.current = 'unlink';
       setError(errorMessage(err, '解绑失败，请稍后重试'));
     } finally {
-      setConfirming(false);
-      setBusy(false);
+      if (current()) { setConfirming(false); setBusy(false); }
     }
   };
 

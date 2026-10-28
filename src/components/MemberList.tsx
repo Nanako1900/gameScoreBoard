@@ -5,6 +5,7 @@ import type { AdminUserRow, AdminUsersResponse } from '../types';
 import { NOT_FOUND_TITLE } from '../lib/routeCopy';
 import { parseTimestamp } from '../lib/time';
 import { AdminScoreForm } from './AdminScoreForm';
+import { Link } from './Link';
 import { NotFound } from './NotFound';
 import { useToast } from './Toast';
 import './member-list.css';
@@ -14,6 +15,8 @@ interface MemberListProps {
   offsetHours?: number;
   onChanged?: () => void;
   onUnavailable?: () => void;
+  /** A shared tool destination; omitted callers retain the existing inline form. */
+  scoreTo?: (id: string) => string;
 }
 type ReadState = { status: 'loading' | 'missing' } | { status: 'error'; message: string }
   | { status: 'ready'; data: AdminUsersResponse };
@@ -42,8 +45,9 @@ interface MemberRowProps {
   onExpand: () => void;
   onJudge: () => void;
   onScore: (score: number) => void;
+  scoreTo?: string;
 }
-function MemberRow({ person, self, busy, expanded, offsetHours, onExpand, onJudge, onScore }: MemberRowProps): JSX.Element {
+function MemberRow({ person, self, busy, expanded, offsetHours, onExpand, onJudge, onScore, scoreTo }: MemberRowProps): JSX.Element {
   const formId = useId();
   return <li className="member-list__row" aria-label={`${person.username}的账号`}>
     <div className="member-list__identity">
@@ -61,15 +65,15 @@ function MemberRow({ person, self, busy, expanded, offsetHours, onExpand, onJudg
     <div className="member-list__actions">
       {!(self && person.is_judge) && <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onJudge}>
         {person.is_judge ? '取消裁判资格' : '设为裁判'}</button>}
-      <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onExpand}
-        aria-expanded={expanded} aria-controls={formId}>调整分数</button>
+      {scoreTo ? <Link className="btn btn--ghost btn--sm" to={scoreTo}>调整分数</Link> : <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={onExpand}
+        aria-expanded={expanded} aria-controls={formId}>调整分数</button>}
     </div>
     {expanded && <div id={formId}><AdminScoreForm key={person.score} username={person.username} score={person.score}
       busy={busy} onSubmit={onScore} /></div>}
   </li>;
 }
 
-function MemberContent({ ownerId, offsetHours = 8, onChanged, onUnavailable }: MemberListProps): JSX.Element {
+function MemberContent({ ownerId, offsetHours = 8, onChanged, onUnavailable, scoreTo }: MemberListProps): JSX.Element {
   const titleId = useId(); const searchId = useId(); const toast = useToast();
   const [read, setRead] = useState<ReadState>({ status: 'loading' });
   const [query, setQuery] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
@@ -134,7 +138,7 @@ function MemberContent({ ownerId, offsetHours = 8, onChanged, onUnavailable }: M
       {writeError && <p className="member-list__error" role="alert">{writeError}</p>}
       {people.length === 0 ? <p className="member-list__hint">{read.data.users.length ? '没有匹配的账号' : '还没有账号'}</p>
         : <ul className="member-list__people">{people.map(person => <MemberRow key={person.id} person={person} self={person.id === ownerId}
-          busy={busy} expanded={expanded === person.id} offsetHours={offsetHours}
+          busy={busy} expanded={expanded === person.id} offsetHours={offsetHours} scoreTo={scoreTo?.(person.id)}
           onExpand={() => setExpanded(value => value === person.id ? null : person.id)}
           onJudge={() => void run(() => setJudge(person.id, !person.is_judge), person.is_judge ? '已取消裁判资格' : '已设为裁判')}
           onScore={score => void run(() => setScore(person.id, score), '已调整分数')} />)}</ul>}

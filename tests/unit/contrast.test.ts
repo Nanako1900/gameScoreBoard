@@ -68,7 +68,7 @@ describe('contrast()', () => {
   });
 
   it('would have caught the pre-v5 --faint (#5c6675 on --panel-2 ≈ 2.8)', () => {
-    expect(contrast('#5c6675', hex('--panel-2'))).toBeLessThan(TEXT_MIN_RATIO);
+    expect(contrast('#5c6675', '#182030')).toBeLessThan(TEXT_MIN_RATIO);
   });
 });
 

@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
-import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
+import { ApiError, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
-import { bootRouter, navigate, useLocation } from './lib/router';
+import { bootRouter, currentPath, goBack, navigate, requestNavigation, useLocation } from './lib/router';
 import { HOME_PATH, WELCOME_PATH, parseRoute, playerPath, routeCoversHome } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
 import { withoutParams } from './lib/deepLink';
-import type { PinnedCase } from './lib/useCaseLookup';
+import { caseViewerScope, type PinnedCase } from './lib/useCaseLookup';
+import { recordForViewer } from './lib/recordViewer';
 import { computeCounts, computeTrends } from './lib/feedStats';
-import { DISCORD_INVITE_URL } from './lib/env';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -24,26 +24,20 @@ import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
-import { WelcomeCard } from './components/WelcomeCard';
+import { HomeOverview } from './components/HomeOverview';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
-import { MyScoreLine } from './components/MyScoreLine';
-import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import { RouteView } from './components/RouteView';
 import type { BoardData } from './components/BoardPage';
 import { boardPath } from './lib/routes';
-import { COUNTDOWN_TICK_MS, BOARD_MINI_ROWS_PHONE, BOARD_MINI_ROWS_DESKTOP } from './lib/constants';
+import { COUNTDOWN_TICK_MS } from './lib/constants';
 import { buildTodo, meNeedsAttention, todoBadgeCount } from './lib/todo';
 import { readOnboardingDismissed, dismissOnboarding, clearTodoMarks } from './lib/todoMarks';
 import { useTodoSources } from './lib/useTodoSources';
 import { useNow } from './lib/useNow';
-import { TodoInbox } from './components/TodoInbox';
-import { BoardMini } from './components/BoardMini';
-import { BottomTabs } from './components/BottomTabs';
 import { Skeleton } from './components/Skeleton';
-import { RecordsFeed } from './components/RecordsFeed';
 import { Link } from './components/Link';
 import './app.css';
 
@@ -63,7 +57,6 @@ function AppMain(): JSX.Element {
   const layout = useRouteLayout();
   const { state, refresh, setMe } = useCoreData();
   const toast = useToast();
-  const [caseOpen, setCaseOpen] = useState(false);
   const [welcomeEntry] = useState(() => {
     const { pathname, search } = window.location;
     const params = new URLSearchParams(search);
@@ -84,7 +77,7 @@ function AppMain(): JSX.Element {
   });
   const [welcomePending, setWelcomePending] = useState(welcomeEntry.requested);
   const welcomeRedirected = useRef(false);
-  const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
+  const [statementState, setStatementState] = useState<{ scope: string; record: RecordItem } | null>(null);
   const [todoRefreshKey, setTodoRefreshKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(readOnboardingDismissed);
@@ -94,11 +87,29 @@ function AppMain(): JSX.Element {
     () => new URLSearchParams(window.location.search).get('linked') === 'discord',
   );
   // The case an old ?case= link or /cases/:id resolved: its page shows it without a second GET.
-  const [pinned, setPinned] = useState<PinnedCase | null>(null);
+  const [pinnedState, setPinnedState] = useState<{ scope: string; value: PinnedCase } | null>(null);
   // Bumped when a statement is judged: the player page behind the dialog reloads its cases.
   const [playerRefreshKey, setPlayerRefreshKey] = useState(0);
 
   const ready = state.status === 'ready' ? state.data : null;
+  const visibleRecords = useMemo(() => ready?.records.map(record => recordForViewer(record, ready.me)) ?? [], [ready?.records, ready?.me]);
+  const viewerScope = caseViewerScope(ready?.me ?? null);
+  const viewerLease = useRef({ scope: viewerScope, generation: 0 });
+  if (viewerLease.current.scope !== viewerScope) viewerLease.current = { scope: viewerScope, generation: viewerLease.current.generation + 1 };
+  // A role returning to its old value does not revive a formerly privileged seed.
+  const seedScope = JSON.stringify([viewerScope, viewerLease.current.generation]);
+  const liveSeedScope = useRef(seedScope); liveSeedScope.current = seedScope;
+  const isCurrentActor = useCallback((): boolean => liveSeedScope.current === seedScope, [seedScope]);
+  const statementCase = statementState?.scope === seedScope ? statementState.record : null;
+  const setStatementCase = useCallback((record: RecordItem | null): void => {
+    if (!isCurrentActor()) return;
+    if (record === null) setStatementState(null);
+    else if (ready?.me?.id === record.subject.id) setStatementState({ scope: seedScope, record });
+  }, [isCurrentActor, ready?.me?.id, seedScope]);
+  const pinned = pinnedState?.scope === seedScope ? pinnedState.value : null;
+  const setPinned = useCallback((value: PinnedCase): void => {
+    if (liveSeedScope.current === seedScope) setPinnedState({ scope: seedScope, value });
+  }, [seedScope]);
   useEffect(() => {
     if (ready === null || !welcomeEntry.requested || welcomeRedirected.current) return;
     welcomeRedirected.current = true;
@@ -114,18 +125,19 @@ function AppMain(): JSX.Element {
     welcomeReturnTo: welcomeEntry.requested ? welcomeEntry.returnTo : undefined,
   });
   const rememberWelcomeReturn = useCallback((): void => {
-    saveWelcomeReturn(welcomePending ? welcomeEntry.entryPath : null);
-  }, [welcomePending, welcomeEntry]);
+    saveWelcomeReturn(welcomePending ? welcomeEntry.entryPath
+      : location.route.name === 'settings' ? location.pathname + location.search : null);
+  }, [welcomePending, welcomeEntry, location]);
   const finishWelcome = useCallback((): void => {
     clearWelcomeReturn();
     navigate(HOME_PATH);
     setWelcomePending(false);
   }, []);
 
-  // Opening a view is navigating to its address; a desktop drawer keeps the lobby's scroll.
+  // Every destination uses its own address and an ordinary full page.
   const openRoute = useCallback(
-    (path: string): void => navigate(path, { keepScroll: layout === 'drawer' }),
-    [layout],
+    (path: string): void => navigate(path),
+    [],
   );
   const openPlayer = useCallback((id: string): void => openRoute(playerPath(id)), [openRoute]);
 
@@ -200,17 +212,17 @@ function AppMain(): JSX.Element {
   const board = useMemo<BoardData | undefined>(() => {
     if (!ready) return undefined;
     const lastWeek = lastWeekStartOf(ready.config.nextResetAt);
-    return { participants: ready.participants, records: ready.records, report: ready.report, trends, counts,
+    return { participants: ready.participants, records: visibleRecords, report: ready.report, trends, counts,
       reportStale: lastWeek !== null && ready.report !== null && ready.report.week_start < lastWeek,
       regenerating, onSelectUser: openPlayer,
       onRegenerate: ready.me?.is_admin && ready.report ? () => handleRegenerate(ready.report!.week_start) : undefined };
-  }, [ready, trends, counts, regenerating, openPlayer, handleRegenerate]);
+  }, [ready, visibleRecords, trends, counts, regenerating, openPlayer, handleRegenerate]);
 
   const now = useNow(COUNTDOWN_TICK_MS);
   const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: todoRefreshKey });
   const items = useMemo(() => ready?.me ? buildTodo({ me: ready.me, now, pending: ready.pending, myPending: ready.myPending,
-    feed: ready.records, appealed: extra.appealed, discord: extra.discord,
-    onboardingDismissed }) : [], [ready, now, extra.appealed, extra.discord, onboardingDismissed]);
+    feed: visibleRecords, appealed: extra.appealed, discord: extra.discord,
+    onboardingDismissed }) : [], [ready, visibleRecords, now, extra.appealed, extra.discord, onboardingDismissed]);
   useTabTitle(todoBadgeCount(items));
   if (state.status === 'loading') {
     return <div className="app"><Header pending config={null} me={null} onLogout={() => {}} onOpenOnboarding={() => {}} />
@@ -233,63 +245,51 @@ function AppMain(): JSX.Element {
     );
   }
 
-  const { config, participants, records, me, report } = state.data;
+  const { config, participants, me, report } = state.data;
   // A page (phone) or NotFound replaces the lobby; it stays mounted, only hidden (contract §8 #6).
   const covered = routeCoversHome(location.route, layout);
   const canRecord = me?.is_judge === true || me?.is_admin === true;
+  const filing = location.route.name === 'tools' && location.route.tab === 'filing';
   // MyScoreLine's 第 N 名: the board's own competition ranking (P0-4's rank.ts).
   const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
 
-  const tabs = layout === 'page';
   const myPath = me ? playerPath(me.id) : '/';
-  const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
-    onOpenStatement={setStatementCase} onOpenNotify={() => navigate(WELCOME_PATH)}
-    onDismissUnbound={() => {}} onDismissOnboarding={() => {
-      const item = items.find((item) => item.kind === 'onboarding');
-      if (item?.kind === 'onboarding') setOnboardingDismissed(dismissOnboarding(me.id, item.missing, now));
-    }} />
-    : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
-      rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
-  const score = me?.is_participant ? <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} /> : null;
-  const mini = <BoardMini participants={participants} trends={trends} counts={counts} records={records} nextResetAt={config.nextResetAt}
-    meId={me?.id} rows={layout === 'page' ? BOARD_MINI_ROWS_PHONE : BOARD_MINI_ROWS_DESKTOP} onSelect={openPlayer} />;
-  const weekly = report && <WeeklyReportCard report={report} compact moreTo={boardPath('report')} stale={board?.reportStale}
-    regenerating={regenerating} onRegenerate={board?.onRegenerate} />;
-  const recent = <div className="app__recent"><RecordsFeed records={records} title="最近案件" previewCount={5} onSelectUser={openPlayer} />
-    <Link to={boardPath('feed')} className="app__all-activity">全部动态</Link></div>;
+  const dismissHomeOnboarding = (): void => {
+    const item = items.find((item) => item.kind === 'onboarding');
+    if (me && item?.kind === 'onboarding') setOnboardingDismissed(dismissOnboarding(me.id, item.missing, now));
+  };
   return (
-    <div className={`app${tabs ? ' app--tabs' : ''}`}>
+    <div className="app">
 
       <Header
-        layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)}
-        onRecord={canRecord ? () => setCaseOpen(true) : undefined}
+        layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)} todoCount={todoBadgeCount(items)}
         config={config}
         me={me}
-        onLogout={() => void handleLogout()}
+        onLogout={() => requestNavigation(() => { void handleLogout(); })}
         onOpenOnboarding={() => navigate(WELCOME_PATH)}
       />
 
-      <main className="app__main" hidden={covered}>
-        <h1 className="visually-hidden">EDG 信誉分</h1>
+      <div className="app__notices">
         {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
-        <div className={`app__home${layout === 'drawer' ? ' app__home--desktop' : ''}${score === null ? ' app__home--without-score' : ''}`}>
-          <div className="app__primary">{primary}</div>
-          {score && <div className="app__score">{score}</div>}
-          <div className="app__board">{mini}</div>
-          {recent}
-          {weekly}
-        </div>
+      </div>
+      <main className="app__main" hidden={covered}>
+        <HomeOverview me={me} config={config} rank={myRank} items={extra.settled ? items : null}
+          records={visibleRecords} report={report} onOpenPlayer={openPlayer} now={now}
+          reportStale={board?.reportStale} onDismissOnboarding={dismissHomeOnboarding} />
       </main>
 
       <RouteView
         board={board}
+        todoItems={extra.settled ? items : null}
+        now={now}
         discordRead={extra.discordRead}
         onDiscordChanged={extra.setDiscord}
         onMeUpdated={handleMeUpdated}
         onWelcomeDone={finishWelcome}
         onBeforeWelcomeBind={rememberWelcomeReturn}
+        onRetryDiscord={() => setTodoRefreshKey((n) => n + 1)}
         welcomeNotice={discordLinked ? <DiscordLinkedNotice onDismiss={() => setDiscordLinked(false)} /> : null}
         location={location}
         layout={layout}
@@ -300,21 +300,27 @@ function AppMain(): JSX.Element {
         onPinned={setPinned}
         onChanged={handleChanged}
         onOpenStatement={setStatementCase}
+        isCurrentActor={isCurrentActor}
       />
 
-      <footer className="app__footer" hidden={covered}>
-        <p>EDG 信誉分 · 开黑守约，从不放鸽开始</p>
+      <footer className="app__footer">
+        <nav aria-label="帮助"><Link to={boardPath('rules')}>计分规则</Link><Link to="/guide">机器人指南</Link><Link to={WELCOME_PATH}>入户向导</Link></nav>
+        <p>EDG 信誉分 · 守约，让开黑更简单。</p>
       </footer>
 
       {canRecord && me && (
+        <main className="app__page app__filing" hidden={!filing}>
         <CaseDialog
-          open={caseOpen}
-          onClose={() => setCaseOpen(false)}
+          key={me.id}
+          open={filing}
+          variant="page"
+          onClose={() => { if (currentPath().split('?')[0] === '/tools/filing') goBack(); }}
           participants={participants}
           selfId={me.id}
           config={config}
           onCreated={handleChanged}
         />
+        </main>
       )}
 
       {statementCase && (
@@ -325,14 +331,15 @@ function AppMain(): JSX.Element {
           config={config}
           score={me?.score}
           onClose={() => setStatementCase(null)}
+          isCurrentActor={isCurrentActor}
           onDecided={() => {
+            if (!isCurrentActor()) return;
             handleChanged();
             setPlayerRefreshKey((n) => n + 1);
           }}
         />
       )}
 
-      {tabs && <BottomTabs me={me} route={location.route} todoCount={todoBadgeCount(items)} meDot={meNeedsAttention(items)} myPath={myPath} />}
     </div>
   );
 }

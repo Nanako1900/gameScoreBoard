@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { CASE_STATUS_LABEL } from '@shared/scoring';
 import type { RecordItem } from '../types';
-import { isPendingHidden, violationDef, violationLabel } from '../lib/recordView';
+import { isPendingHidden, PENDING_HIDDEN_LABEL, violationDef, violationLabel } from '../lib/recordView';
 import { relativeTime } from '../lib/time';
 import { Avatar } from './Avatar';
 import './records-feed.css';
@@ -11,6 +11,9 @@ interface RecordsFeedProps {
   records: RecordItem[];
   title?: string;
   onSelectUser?: (id: string) => void;
+  /** A case destination replaces the former player destination with one row entry. */
+  onSelectRecord?: (record: RecordItem) => void;
+  headerActions?: ReactNode;
   compact?: boolean;
   emptyHint?: string;
   /** Show only the first N rows, then a 看更多 button that reveals the rest of what is loaded. */
@@ -52,6 +55,8 @@ export function RecordsFeed({
   records,
   title = '动态',
   onSelectUser,
+  onSelectRecord,
+  headerActions,
   compact = false,
   emptyHint = '还没有任何记录。',
   previewCount,
@@ -65,11 +70,12 @@ export function RecordsFeed({
       aria-labelledby={hasTitle ? headingId : undefined}
       aria-label={hasTitle ? undefined : '记录'}
     >
-      {hasTitle && (
+      {(hasTitle || headerActions != null) && (
         <header className="feed__head">
-          <h2 id={headingId} className="feed__title">
+          {hasTitle && <h2 id={headingId} className="feed__title">
             {title}
-          </h2>
+          </h2>}
+          {headerActions != null && <div className="feed__actions">{headerActions}</div>}
         </header>
       )}
 
@@ -78,7 +84,7 @@ export function RecordsFeed({
       ) : (
         <ul className="feed__list">
           {shown.map((r, i) => (
-            <RecordRow key={r.id} record={r} onSelectUser={onSelectUser} rowRef={refFor(i)} />
+            <RecordRow key={r.id} record={r} onSelectUser={onSelectUser} onSelectRecord={onSelectRecord} rowRef={refFor(i)} />
           ))}
         </ul>
       )}
@@ -95,39 +101,44 @@ export function RecordsFeed({
 interface RecordRowProps {
   record: RecordItem;
   onSelectUser?: (id: string) => void;
+  onSelectRecord?: (record: RecordItem) => void;
   /** Set on the first row 看更多 revealed: it takes focus (and so needs tabIndex -1). */
   rowRef?: RefObject<HTMLLIElement>;
 }
 
-function RecordRow({ record, onSelectUser, rowRef }: RecordRowProps): JSX.Element {
-  const emoji = violationDef(record.type)?.emoji ?? '•';
+function RecordRow({ record, onSelectUser, onSelectRecord, rowRef }: RecordRowProps): JSX.Element {
+  const hidden = isPendingHidden(record);
+  const emoji = hidden ? '•' : violationDef(record.type)?.emoji ?? '•';
+  const Main = onSelectRecord ? 'span' : 'div';
+  const content = <>
+    <span className="feed-row__emoji" aria-hidden="true">{emoji}</span>
+    <Main className="feed-row__main">
+      <RecordLine record={record} onSelectUser={onSelectRecord ? undefined : onSelectUser} inline={!!onSelectRecord} />
+      <RecordMeta record={record} inline={!!onSelectRecord} />
+    </Main>
+    <RecordDelta record={record} />
+  </>;
   return (
     <li
       ref={rowRef}
       tabIndex={rowRef ? -1 : undefined}
-      className={`feed-row feed-row--${record.status}`}
+      className={`feed-row feed-row--${record.status}${onSelectRecord ? ' feed-row--case-entry' : ''}`}
     >
-      <span className="feed-row__emoji" aria-hidden="true">
-        {emoji}
-      </span>
-
-      <div className="feed-row__main">
-        <RecordLine record={record} onSelectUser={onSelectUser} />
-        <RecordMeta record={record} />
-      </div>
-
-      <RecordDelta record={record} />
+      {onSelectRecord ? <button type="button" className="feed-row__record"
+        aria-label={`查看案件 #${record.id}：${record.subject.username}，${hidden ? PENDING_HIDDEN_LABEL : violationLabel(record.type)}`}
+        onClick={() => onSelectRecord(record)}>{content}</button> : content}
     </li>
   );
 }
 
-function RecordLine({ record, onSelectUser }: Omit<RecordRowProps, 'rowRef'>): JSX.Element {
+function RecordLine({ record, onSelectUser, inline = false }: Omit<RecordRowProps, 'rowRef'> & { inline?: boolean }): JSX.Element {
   // B1-1: a case the API hid before its verdict is only a name and 「处理中」 — no status chip, no escalation chip.
   const hidden = isPendingHidden(record);
-  const label = violationLabel(record.type);
+  const label = hidden ? PENDING_HIDDEN_LABEL : violationLabel(record.type);
   const statusLabel = hidden ? '' : CASE_STATUS_LABEL[record.status];
+  const Line = inline ? 'span' : 'p';
   return (
-    <p className="feed-row__line">
+    <Line className="feed-row__line">
       <NameLink
         id={record.subject.id}
         name={record.subject.username}
@@ -148,13 +159,15 @@ function RecordLine({ record, onSelectUser }: Omit<RecordRowProps, 'rowRef'>): J
           待确认升级
         </span>
       )}
-    </p>
+    </Line>
   );
 }
 
-function RecordMeta({ record }: { record: RecordItem }): JSX.Element {
+function RecordMeta({ record, inline = false }: { record: RecordItem; inline?: boolean }): JSX.Element {
+  const hidden = isPendingHidden(record) || record.redacted === true;
+  const Meta = inline ? 'span' : 'p';
   return (
-    <p className="feed-row__meta">
+    <Meta className="feed-row__meta">
       <span className="feed-row__reporter">裁判 {record.reporter.username}</span>
       <span className="feed-row__dot" aria-hidden="true">
         ·
@@ -162,15 +175,15 @@ function RecordMeta({ record }: { record: RecordItem }): JSX.Element {
       <time dateTime={record.created_at}>{relativeTime(record.created_at)}</time>
       {/* Pre-verdict there is no headline yet, so show the AI's summary of the
           accusation instead — otherwise an open case reads as contentless. */}
-      {record.verdict?.headline ? (
+      {!hidden && record.verdict?.headline ? (
         <span className="feed-row__note">“{record.verdict.headline}”</span>
       ) : (
-        !isPendingHidden(record) &&
+        !hidden &&
         record.claim_summary && (
           <span className="feed-row__note">“{record.claim_summary}”</span>
         )
       )}
-    </p>
+    </Meta>
   );
 }
 
@@ -178,7 +191,7 @@ function RecordDelta({ record }: { record: RecordItem }): JSX.Element {
   const positive = record.delta > 0;
   // Pre-verdict the delta is still 0 — show the pending range instead of a
   // misleading "0", so nobody reads an open case as a zero-point outcome.
-  const undecided = record.status === 'awaiting_statement' || record.status === 'judging';
+  const undecided = isPendingHidden(record) || record.status === 'awaiting_statement' || record.status === 'judging';
   const deltaText = undecided ? '?' : positive ? `+${record.delta}` : String(record.delta);
   const tone = undecided
     ? 'feed-row__delta--pending'
