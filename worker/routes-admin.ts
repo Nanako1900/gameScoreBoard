@@ -4,7 +4,7 @@
 
 import type { Hono } from 'hono';
 import { VIOLATION_MAP } from '../shared/scoring';
-import type { AppEnv } from './types';
+import type { AppEnv, UserRow } from './types';
 import { ApiError } from './errors';
 import { adminUpdateUser } from './db';
 import { overrideCase, redactRecord } from './cases';
@@ -33,6 +33,23 @@ import {
 
 export function registerAdminRoutes(app: Hono<AppEnv>): void {
   // --- Admin ---------------------------------------------------------------
+  app.get('/api/admin/users', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    requireAdmin(c.get('user'));
+    type Row = Pick<UserRow, 'id' | 'username' | 'avatar_url' | 'is_participant' | 'is_judge' | 'is_admin' | 'score' | 'created_at'>;
+    // One extra row distinguishes an exact 500 from a truncated response.
+    // Explicit fields keep email, OAuth account details and Discord data out.
+    const rows = await c.env.DB.prepare(`SELECT id, COALESCE(display_name, username) AS username,
+      avatar_url, is_participant, is_judge, is_admin, score, created_at
+      FROM users ORDER BY created_at DESC, id ASC LIMIT 501`).all<Row>();
+    const users = rows.results.slice(0, 500).map((row) => ({
+      id: row.id, username: row.username, avatar_url: row.avatar_url,
+      is_participant: row.is_participant === 1, is_judge: row.is_judge === 1, is_admin: row.is_admin === 1,
+      score: row.score, created_at: row.created_at,
+    }));
+    return c.json({ users, truncated: rows.results.length > 500 });
+  });
+
   app.post('/api/admin/report/:week/regenerate', async (c) => {
     requireAdmin(c.get('user'));
     const report = await regenerateReport(

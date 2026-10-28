@@ -26,6 +26,19 @@ export interface User {
   created_at: string;
 }
 
+/** Administrator-only account list; never includes email, OAuth or Discord details. */
+export interface AdminUserRow {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  is_participant: boolean;
+  is_judge: boolean;
+  is_admin: boolean;
+  score: number;
+  created_at: string;
+}
+export interface AdminUsersResponse { users: AdminUserRow[]; truncated: boolean }
+
 /** Public user — leaderboard, records, profiles. No email. */
 export interface PublicUser {
   id: string;

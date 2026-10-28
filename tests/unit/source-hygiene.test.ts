@@ -230,7 +230,9 @@ describe('voice evidence documentation', () => {
     expect(contract).toContain('`worker/voice.ts`');
     expect(contract).toContain('atomically withdraws coverage');
     expect(contract).toMatch(/\| `\/admin`, `\/admin\/voice` \|[^\n]*full page[^\n]*same full page/);
-    expect(contract).toContain('`/admin/ai` and `/admin/members` still render NotFound');
+    for (const route of ['/admin/ai', '/admin/members']) {
+      expect(contract).toMatch(new RegExp('\\| `' + route + '` \\|[^\\n]*full page[^\\n]*same full page'));
+    }
     expect(contract).toContain('`target="_blank" rel="noopener"`');
     expect(contract).toContain('`voiceNotice()`');
     expect(contract).not.toContain('S2 does not yet add voice recording');
@@ -296,5 +298,42 @@ describe('information board documentation', () => {
     const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
     expect(readme).toContain('S4'); expect(readme).toContain('`DISCORD_BOARD_CHANNEL_ID`');
     expect(readme).not.toContain('后续信息板与 AI / 成员管理路由');
+  });
+});
+
+
+// S5: privileged management pages and their bounded private DTO are now available.
+describe('admin management documentation', () => {
+  it('documents the private account DTO, authorization and exact truncation boundary', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const admin = contract.split('### Admin (is_admin)')[1]?.split('\n## ')[0] ?? '';
+    expect(admin).toContain('`GET /api/admin/users`');
+    expect(admin).toContain('{ users: AdminUserRow[], truncated: boolean }');
+    for (const field of ['id', 'username', 'avatar_url', 'is_participant', 'is_judge', 'is_admin', 'score', 'created_at']) {
+      expect(admin).toContain('`' + field + '`');
+    }
+    for (const text of ['500', '501', 'created_at DESC, id ASC', 'private, no-store', '401', '403', 'unlisted accounts', 'no email, OAuth username or Discord fields']) expect(admin).toContain(text);
+  });
+
+  it('describes the three admin tabs, client-side member search and limited UI actions', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    for (const text of ['「语音记录」「AI 设置」「成员」', 'client-side name search', 'self-dismissal', 'no delete, admin-grant or participant-toggle controls', '`/api/records?limit=50`']) expect(contract).toContain(text);
+    expect(contract).not.toContain('still render NotFound until S5');
+    expect(contract).not.toContain('AI dialog as 「AI 设置」 until S5');
+    for (const route of ['/admin/ai', '/admin/members']) expect(readme).toContain('| `' + route + '` | 手机、桌面均为整页 |');
+    expect(readme).toContain('管理 → AI 设置');
+    expect(readme).not.toContain('后续 AI / 成员管理路由');
+    expect(readme).not.toContain('**管理员 → AI 裁判配置**');
+  });
+
+  it('aligns both filing request shapes with judge-or-admin permissions', () => {
+    const contract = readFileSync(path.join(ROOT, 'docs/CONTRACT.md'), 'utf8');
+    const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    expect(contract).toContain('two shapes, both requiring `is_judge || is_admin`');
+    expect(contract).not.toContain('two shapes, both requiring `is_judge`:');
+    const adminRole = readme.split('\n').find(line => line.startsWith('| 管理员 (`is_admin`)'));
+    expect(adminRole).toContain('立案');
+    expect(readme).toContain('「管理 → 成员」');
   });
 });

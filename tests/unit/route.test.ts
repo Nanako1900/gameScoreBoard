@@ -42,8 +42,7 @@ describe('parseRoute', () => {
       '/me',
       '/me/notify',
       '/review',
-      '/admin/ai',
-      '/admin/members',
+      '/admin/members/more',
       '/join',
       '/cases/new',
       '/cases/7/statement',
@@ -263,7 +262,25 @@ describe('voice administration routes', () => {
     expect(formatRoute(route)).toBe('/admin/voice');
     for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
   });
-  it.each(['/admin/ai', '/admin/members', '/admin/voice/more', '/admin//'])('does not introduce later admin routes: %s', (path) => {
+  it.each(['/admin/members/more', '/admin/voice/more', '/admin//'])('does not introduce later admin routes: %s', (path) => {
     expect(parseRoute(path)).toEqual(NOT_FOUND);
+  });
+});
+
+
+describe('AI administration route', () => {
+  it.each(['/admin/ai', '/admin/ai/'])('parses and formats %s as a full page', (path) => {
+    const route = { name: 'admin', tab: 'ai' } as const;
+    expect(parseRoute(path)).toEqual(route); expect(formatRoute(route)).toBe('/admin/ai');
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
+  });
+});
+
+
+describe('members administration route', () => {
+  it.each(['/admin/members', '/admin/members/'])('parses and formats %s as a full page', (path) => {
+    const route = { name: 'admin', tab: 'members' } as const;
+    expect(parseRoute(path)).toEqual(route); expect(formatRoute(route)).toBe('/admin/members');
+    for (const layout of ['page', 'drawer'] as const) expect(routeCoversHome(route, layout)).toBe(true);
   });
 });

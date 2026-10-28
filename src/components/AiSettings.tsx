@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiConfigPatch, AiConfigResponse, AiTestResponse } from '../types';
 import { ApiError, getAiConfig, testAiConfig, updateAiConfig } from '../api';
-import { Modal } from './Modal';
+import { NOT_FOUND_TITLE } from '../lib/routeCopy';
+import { NotFound } from './NotFound';
 import './admin-ai.css';
 
-interface AdminAiPanelProps {
-  open: boolean;
-  onClose: () => void;
-}
+interface AiSettingsProps { onUnavailable?: () => void }
 
 type PromptTab = 'sentence' | 'classify' | 'report';
 
@@ -33,11 +31,17 @@ function percent(n: number): string {
  *
  * The prompt lives here rather than in an env var on purpose: sentencing style
  * needs iterating, and iterating should not require a redeploy. The API key is
- * the deliberate exception — it stays a Worker secret and is never round-tripped
+ * the deliberate exception — it stays a backend secret and is never round-tripped
  * through this panel.
  */
-export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element {
+export function AiSettings({ onUnavailable }: AiSettingsProps): JSX.Element {
   const [cfg, setCfg] = useState<AiConfigResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
+  const active = useRef(false);
+  const readVersion = useRef(0);
+  const unavailableCallback = useRef(onUnavailable);
+  unavailableCallback.current = onUnavailable;
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState('0.2');
@@ -51,9 +55,22 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
   const [busy, setBusy] = useState(false);
   const [test, setTest] = useState<AiTestResponse | null>(null);
 
-  const load = useCallback(async (): Promise<void> => {
+  const showError = useCallback((err: unknown, fallback: string): void => {
+    if (!active.current) return;
+    if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+      setUnavailable(true);
+      unavailableCallback.current?.();
+      return;
+    }
+    setError(err instanceof ApiError ? err.message : fallback);
+  }, []);
+
+  const load = useCallback(async (): Promise<boolean> => {
+    const version = ++readVersion.current;
+    setLoading(true);
     try {
       const res = await getAiConfig();
+      if (!active.current || readVersion.current !== version) return false;
       setCfg(res);
       setBaseUrl(res.base_url);
       setModel(res.model);
@@ -63,14 +80,20 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
       setReportPrompt(res.report_prompt);
       setEnabled(res.enabled);
       setError(null);
+      return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '加载配置失败');
+      if (readVersion.current === version) showError(err, '加载配置失败');
+      return false;
+    } finally {
+      if (active.current && readVersion.current === version) setLoading(false);
     }
-  }, []);
+  }, [showError]);
 
   useEffect(() => {
-    if (open) void load();
-  }, [open, load]);
+    active.current = true;
+    void load();
+    return () => { active.current = false; readVersion.current += 1; };
+  }, [load]);
 
   const handleSave = async (): Promise<void> => {
     setBusy(true);
@@ -89,13 +112,13 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
       if (model.trim().length > 0) patch.model = model.trim();
       if (Number.isFinite(Number(temperature))) patch.temperature = Number(temperature);
       await updateAiConfig(patch);
-      await load();
+      if (!active.current || !await load() || !active.current) return;
       setStatus('已保存');
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '保存失败');
+      showError(err, '保存失败');
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   };
 
@@ -105,20 +128,23 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
     setTest(null);
     try {
       const res = await testAiConfig({});
+      if (!active.current) return;
       setTest(res);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '试跑失败');
+      showError(err, '试跑失败');
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   };
 
+  if (unavailable) return <NotFound title={NOT_FOUND_TITLE} />;
+
   return (
-    <Modal open={open} onClose={onClose} labelledBy="admin-ai-title" size="lg" historyKey="admin-ai">
-      <h2 id="admin-ai-title" className="aai__title">
+    <section aria-labelledby="admin-ai-title">
+      <h3 id="admin-ai-title" className="aai__title">
         AI 裁判配置
-      </h2>
+      </h3>
       <p className="aai__subtitle">
         任何 OpenAI 兼容端点都可以（OpenAI / DeepSeek / 硅基流动 / OpenRouter / 自建）。
       </p>
@@ -128,7 +154,9 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
           {error}
         </p>
       )}
-      {status && <p className="aai__ok">{status}</p>}
+      {error && <button type="button" className="btn btn--ghost" disabled={busy || loading} onClick={() => void load()}>重试</button>}
+      {loading && !cfg && <p role="status">正在读取 AI 配置…</p>}
+      {status && <p className="aai__ok" role="status">{status}</p>}
 
       {cfg && (
         <>
@@ -154,8 +182,7 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
           )}
           {!cfg.has_api_key && (
             <p className="aai__warn">
-              API Key 未设置。它不存数据库，请执行：
-              <code className="aai__code">wrangler secret put AI_API_KEY</code>
+              API Key 不在网页或数据库保存，请由机主在后端环境变量中配置 AI_API_KEY
             </p>
           )}
 
@@ -283,7 +310,7 @@ export function AdminAiPanel({ open, onClose }: AdminAiPanelProps): JSX.Element 
           )}
         </>
       )}
-    </Modal>
+    </section>
   );
 }
 

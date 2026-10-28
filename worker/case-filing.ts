@@ -37,6 +37,10 @@ import {
 } from './ai/classify';
 import { sqlNowPlusHours } from './time';
 
+function canFile(reporter: User): boolean {
+  return reporter.is_judge || reporter.is_admin;
+}
+
 // --- Filing ------------------------------------------------------------------
 
 export interface FileCaseInput {
@@ -72,8 +76,8 @@ export async function fileCase(
   opts: FileCaseOptions,
   env: Env,
 ): Promise<RecordItem> {
-  if (!reporter.is_judge) {
-    throw new ApiError(403, '需要裁判权限');
+  if (!canFile(reporter)) {
+    throw new ApiError(403, '需要裁判或管理员权限');
   }
   // v3: `type` is optional. Omitted means "let the AI read the facts and decide",
   // which is the default path from the 记一笔 dialog. Supplied means the caller
@@ -272,8 +276,8 @@ export async function fileCases(
   // Check the role ONCE, up front. Letting it fail per-subject would answer 200
   // with an all-failed list, which reads as "some names were bad" rather than
   // "you are not allowed to do this at all".
-  if (!reporter.is_judge) {
-    throw new ApiError(403, '需要裁判权限');
+  if (!canFile(reporter)) {
+    throw new ApiError(403, '需要裁判或管理员权限');
   }
   // Same for the shared narrative: it is one input, so reject it once rather than
   // reporting the identical error N times.

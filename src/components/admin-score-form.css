@@ -1,0 +1,31 @@
+/* Admin only: setting a score by hand, in two steps. */
+.pd__score-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.pd__score-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.pd__score-input {
+  width: 4.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.pd__score-confirm {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  color: var(--text);
+}

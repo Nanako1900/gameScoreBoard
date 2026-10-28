@@ -1,6 +1,7 @@
 // Typed same-origin fetch client for every /api and /auth endpoint.
 // Throws ApiError (with the parsed { error } message) on any non-2xx response.
 import type {
+  AdminUsersResponse,
   AiConfigPatch,
   AiConfigResponse,
   AiTestResponse,
@@ -336,4 +337,10 @@ export function getVoiceHistory(userId: string, from?: string, to?: string): Pro
   if (from !== undefined) params.set('from', from);
   if (to !== undefined) params.set('to', to);
   return request<VoiceHistoryResponse>(`/api/voice?${params.toString()}`);
+}
+
+
+/** Private, bounded account list for the administrator members page. */
+export function getAdminUsers(): Promise<AdminUsersResponse> {
+  return request<AdminUsersResponse>('/api/admin/users');
 }

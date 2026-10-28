@@ -138,7 +138,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
     case 'admin':
-      return <PageShell><AdminPage me={props.me} config={props.config} /></PageShell>;
+      return <PageShell><AdminPage me={props.me} config={props.config} tab={route.tab} onChanged={props.onChanged} /></PageShell>;
     case 'board':
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':
