@@ -110,7 +110,7 @@ describe('App — links into the app', () => {
       const calls = mockFetch(appRoutes);
       window.history.replaceState(null, '', `/?case=${bad}`);
       const { unmount } = render(<App />);
-      await screen.findByRole('heading', { name: '信誉榜' });
+      await screen.findByRole('heading', { level: 1, name: 'EDG 信誉分' });
       await settle();
       expect(calls.some((c) => c.path.startsWith('/api/records/')), bad).toBe(false);
       expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();

@@ -362,7 +362,7 @@ async function settle(): Promise<void> {
   });
 }
 
-describe('App — the board on the home page', () => {
+describe('App — separated overview and board', () => {
   const ME: User = { ...TIED[2], oauth_username: 'c', is_admin: false };
   const REPORT = {
     week_start: '2026-10-19',
@@ -392,24 +392,24 @@ describe('App — the board on the home page', () => {
     'GET /api/report/latest': () => json(200, { report: REPORT }),
   });
 
-  it('signed out: welcome card first, recent cases and stars in the board, no 鸽王 anywhere', async () => {
+  it('signed out: compact welcome and recent verdicts, no duplicated board or awards', async () => {
     mockFetch(routes(null));
     render(<App />);
-    expect(await screen.findByRole('heading', { name: '最近案件' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '开黑小队的守约记分板。' })).toBeInTheDocument();
-    expect(screen.getByText('⭐', { exact: false }).closest('.lb')).not.toBeNull();
+    expect(await screen.findByRole('heading', { name: '最近判决' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '在这里查看信誉记录' })).toBeInTheDocument();
+    expect(document.querySelector('.lb')).toBeNull();
     expect(document.body.textContent).not.toContain('鸽王');
     expect(document.querySelector('.wr-award')).toBeNull();
     expect(document.querySelector('.tier-badge')).toBeNull();
   });
 
-  it('30 秒看懂 opens the rules destination and focuses its title', async () => {
+  it('了解规则 opens the rules destination and focuses its title', async () => {
     mockFetch(routes(null));
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole('link', { name: '30 秒看懂' }));
+    await user.click(await screen.findByRole('link', { name: '了解规则' }));
     expect(window.location.pathname).toBe('/board/rules');
-    await waitFor(() => expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('heading', { name: '规则与指南' })).toHaveFocus());
     for (const title of ['守约', '分数与回血', '出事了怎么办', '计分规则']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
@@ -419,7 +419,9 @@ describe('App — the board on the home page', () => {
   it('signed in: no welcome card, and the 段位 only on my own row', async () => {
     mockFetch(routes(ME));
     render(<App />);
-    await screen.findByRole('heading', { name: '最近案件' });
+    await screen.findByRole('heading', { name: '最近判决' });
+    await userEvent.setup().click(screen.getByRole('link', { name: '信誉榜' }));
+    await screen.findByRole('heading', { name: '全部上榜成员' });
     await settle();
     expect(screen.queryByRole('heading', { name: '开黑小队的守约记分板。' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.lb .tier-badge')).toHaveLength(1);

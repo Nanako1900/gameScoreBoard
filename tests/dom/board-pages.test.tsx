@@ -33,24 +33,20 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('the board destination', () => {
   it.each([
-    ['list', '全部选手', '榜单'], ['feed', '最新动态', '动态'],
+    ['list', '全部上榜成员', '信誉榜'], ['feed', '最新动态', '动态'],
     ['report', /上周战报/, '战报'], ['rules', '30 秒看懂', '规则'],
   ] as const)('shows %s as an ordinary page with navigation links', (tab, heading, current) => {
     render(<BoardPage tab={tab} config={CONFIG} me={null} data={DATA} />);
     expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
-    const nav = screen.getByRole('navigation', { name: '信誉榜' });
-    expect(nav.querySelectorAll('a')).toHaveLength(4);
-    expect(screen.getByRole('link', { name: current })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('navigation', { name: '信誉榜' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '返回' })).not.toBeInTheDocument();
   });
-  it('focuses the title on entry, but leaves focus on the clicked subpage link', async () => {
-    const { rerender } = render(<BoardPage tab="list" config={CONFIG} me={null} data={DATA} />);
+  it('focuses the destination title on entry and exposes rules as a secondary link', () => {
+    render(<BoardPage tab="list" config={CONFIG} me={null} data={DATA} />);
     expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus();
-    const link = screen.getByRole('link', { name: '动态' });
-    await userEvent.setup().click(link);
-    rerender(<BoardPage tab="feed" config={CONFIG} me={null} data={DATA} />);
-    expect(link).toHaveFocus(); expect(link).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: '计分规则' })).toHaveAttribute('href', '/board/rules');
+    expect(screen.queryByRole('link', { name: '动态' })).not.toBeInTheDocument();
   });
   it('shows the full report even after home dismissal, with no pigeon award or dismiss action', () => {
     window.localStorage.setItem('edg.report.dismissed', REPORT.week_start);
@@ -79,7 +75,7 @@ describe('the board destination', () => {
   it.each(['list', 'feed', 'report'] as BoardTab[])('has an empty state without data: %s', (tab) => {
     render(<BoardPage tab={tab} config={CONFIG} me={null} />);
     if (tab === 'report') expect(screen.getByText('还没有战报。每周一 10:30 之后发布上周的。')).toBeInTheDocument();
-    else expect(screen.getByRole('heading', { name: tab === 'list' ? '全部选手' : '最新动态' })).toBeInTheDocument();
+    else expect(screen.getByRole('heading', { name: tab === 'list' ? '全部上榜成员' : '最新动态' })).toBeInTheDocument();
   });
 });
 
@@ -87,19 +83,19 @@ describe('board route integration', () => {
   it.each([false, true])('opens a board page over the hidden hall, desktop=%s', async (desktop) => {
     if (desktop) useDesktopViewport();
     window.history.replaceState(null, '', '/board/feed'); mockApp(); render(<App />);
-    expect(await screen.findByRole('heading', { name: '最新动态' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '当前读取的记录' })).toBeInTheDocument();
     expect(document.querySelector('.app__main')).toHaveAttribute('hidden');
-    expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus();
+    expect(screen.getByRole('heading', { name: '案件', level: 2 })).toHaveFocus();
   });
   it('links home to the full report and all recent activity', async () => {
     mockApp(); render(<App />);
-    expect(await screen.findByRole('link', { name: '读全文' })).toHaveAttribute('href', '/board/report');
-    expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
+    expect(await screen.findByRole('link', { name: '阅读战报' })).toHaveAttribute('href', '/board/report');
+    expect(screen.getByRole('link', { name: '全部案件' })).toHaveAttribute('href', '/cases?view=public');
   });
   it.each(['/board', '/board/report', '/board/rules'])('keeps block labels unique over the hidden hall: %s', async (path) => {
     window.history.replaceState(null, '', path); mockApp(); render(<App />);
-    await screen.findByRole('heading', { name: '信誉榜' });
-    if (path === '/board') expect(screen.getByRole('region', { name: '全部选手' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: path === '/board' ? '信誉榜' : path === '/board/report' ? '每周战报' : '规则与指南' });
+    if (path === '/board') expect(screen.getByRole('region', { name: '全部上榜成员' })).toBeInTheDocument();
     const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
     expect(new Set(ids).size).toBe(ids.length);
   });

@@ -109,6 +109,7 @@ function leaveAndReturn(): void {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/board');
   visibility = 'visible';
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
 });
@@ -212,6 +213,7 @@ describe('App — after an admin write', () => {
 });
 
 describe('App — the admin re-rolls the weekly report', () => {
+  beforeEach(() => window.history.replaceState(null, '', '/board/report'));
   it('换个说法 refetches the report only', async () => {
     const calls = mockFetch(adminRoutes({ [REGENERATE]: () => json(200, { report: REPORT }) }));
     const user = userEvent.setup();
@@ -312,6 +314,7 @@ describe('App — a refresh that fails', () => {
   });
 
   it('stays up while what failed is still old, even when another part refreshes fine', async () => {
+    window.history.replaceState(null, '', '/board/report');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(START);
     let failing = false;
@@ -323,7 +326,7 @@ describe('App — a refresh that fails', () => {
       }),
     );
     render(<App />);
-    await screen.findByRole('button', { name: ROW });
+    await screen.findByRole('button', { name: '换个说法' });
     failing = true;
     vi.setSystemTime(START + MINUTE + 1_000);
     leaveAndReturn();

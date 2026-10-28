@@ -13,6 +13,8 @@ interface WelcomeCardProps {
   /** config.weeklyHeal — never a literal 15 (test configs use 5). */
   weeklyHeal: number;
   rulesTo?: string;
+  /** Small, persistent start entry used by the overview. The older long card keeps its dismissal. */
+  compact?: boolean;
 }
 
 const DISMISS_KEY = 'edg.welcome.dismissed';
@@ -44,8 +46,17 @@ export function WelcomeCard({
   onShowRules,
   weeklyHeal,
   rulesTo,
+  compact = false,
 }: WelcomeCardProps): JSX.Element | null {
   const [hidden, setHidden] = useState(isDismissed);
+  if (compact) return <section className="welcome welcome--compact panel" aria-labelledby="welcome-compact-title">
+    <h2 id="welcome-compact-title" className="welcome__title">在这里查看信誉记录</h2>
+    <p className="welcome__line">日常交流在 Discord。登录后查看自己的分数、待办和通知。</p>
+    <div className="welcome__actions"><Link className="btn btn--gold" to={WELCOME_PATH}>开始</Link>
+      {rulesTo ? <Link to={rulesTo} className="welcome__rules">了解规则</Link>
+        : <button type="button" className="welcome__rules" onClick={onShowRules}>了解规则</button>}
+    </div>
+  </section>;
   if (hidden) return null;
 
   const dismiss = (): void => {

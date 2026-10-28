@@ -42,8 +42,6 @@ export const LOGIN_RETURN_TTL_MS = 30 * 60 * 1000;
 /** edg.return.path upper bound. */
 export const RETURN_PATH_MAX = 512;
 export const INBOX_APPEALS_LIMIT = 50;
-export const BOARD_MINI_ROWS_PHONE = 5;
-export const BOARD_MINI_ROWS_DESKTOP = 9;
 export const SKELETON_DEFAULT_LINES = 3;
 export const TODO_RANKS = {
   onboarding: 0, 'urgent-statement': 2, statement: 5, escalation: 8, appeals: 9,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
-import { ApiError, AUTH_LOGIN_URL, logout as apiLogout, regenerateReport } from './api';
+import { ApiError, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
 import { bootRouter, navigate, requestNavigation, useLocation } from './lib/router';
 import { HOME_PATH, WELCOME_PATH, parseRoute, playerPath, routeCoversHome } from './lib/routes';
@@ -9,7 +9,6 @@ import { useEntryTarget } from './lib/useEntryTarget';
 import { withoutParams } from './lib/deepLink';
 import type { PinnedCase } from './lib/useCaseLookup';
 import { computeCounts, computeTrends } from './lib/feedStats';
-import { DISCORD_INVITE_URL } from './lib/env';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
 import { visibleRefreshKeys } from './lib/refreshPolicy';
@@ -24,25 +23,20 @@ import { competitionRanks } from './lib/rank';
 import { ToastProvider, useToast } from './components/Toast';
 import { StaleNotice } from './components/StaleNotice';
 import { Header } from './components/Header';
-import { WelcomeCard } from './components/WelcomeCard';
+import { HomeOverview } from './components/HomeOverview';
 import { CaseDialog } from './components/CaseDialog';
 import { StatementDialog } from './components/StatementDialog';
-import { MyScoreLine } from './components/MyScoreLine';
-import { WeeklyReportCard } from './components/WeeklyReportCard';
 import { DiscordLinkedNotice } from './components/DiscordLinkCard';
 import { LinkMissingNotice } from './components/LinkMissingNotice';
 import { RouteView } from './components/RouteView';
 import type { BoardData } from './components/BoardPage';
 import { boardPath } from './lib/routes';
-import { COUNTDOWN_TICK_MS, BOARD_MINI_ROWS_PHONE, BOARD_MINI_ROWS_DESKTOP } from './lib/constants';
+import { COUNTDOWN_TICK_MS } from './lib/constants';
 import { buildTodo, meNeedsAttention, todoBadgeCount } from './lib/todo';
 import { readOnboardingDismissed, dismissOnboarding, clearTodoMarks } from './lib/todoMarks';
 import { useTodoSources } from './lib/useTodoSources';
 import { useNow } from './lib/useNow';
-import { TodoInbox } from './components/TodoInbox';
-import { BoardMini } from './components/BoardMini';
 import { Skeleton } from './components/Skeleton';
-import { RecordsFeed } from './components/RecordsFeed';
 import { Link } from './components/Link';
 import './app.css';
 
@@ -122,7 +116,7 @@ function AppMain(): JSX.Element {
     setWelcomePending(false);
   }, []);
 
-  // Opening a view is navigating to its address; a desktop drawer keeps the lobby's scroll.
+  // Every destination uses its own address and an ordinary full page.
   const openRoute = useCallback(
     (path: string): void => navigate(path),
     [],
@@ -242,21 +236,10 @@ function AppMain(): JSX.Element {
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
 
   const myPath = me ? playerPath(me.id) : '/';
-  const primary = me ? <TodoInbox items={!extra.settled ? null : items} now={now} boardTzOffsetHours={config.boardTzOffsetHours}
-    onOpenStatement={setStatementCase} onOpenNotify={() => navigate(WELCOME_PATH)}
-    onDismissUnbound={() => {}} onDismissOnboarding={() => {
-      const item = items.find((item) => item.kind === 'onboarding');
-      if (item?.kind === 'onboarding') setOnboardingDismissed(dismissOnboarding(me.id, item.missing, now));
-    }} />
-    : <WelcomeCard loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL} onShowRules={() => navigate(boardPath('rules'))}
-      rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />;
-  const score = me?.is_participant ? <MyScoreLine me={me} rank={myRank} config={config} variant={layout === 'drawer' ? 'card' : 'line'} onOpen={() => openPlayer(me.id)} /> : null;
-  const mini = <BoardMini participants={participants} trends={trends} counts={counts} records={records} nextResetAt={config.nextResetAt}
-    meId={me?.id} rows={layout === 'page' ? BOARD_MINI_ROWS_PHONE : BOARD_MINI_ROWS_DESKTOP} onSelect={openPlayer} />;
-  const weekly = report && <WeeklyReportCard report={report} compact moreTo={boardPath('report')} stale={board?.reportStale}
-    regenerating={regenerating} onRegenerate={board?.onRegenerate} />;
-  const recent = <div className="app__recent"><RecordsFeed records={records} title="最近案件" previewCount={5} onSelectUser={openPlayer} />
-    <Link to={boardPath('feed')} className="app__all-activity">全部动态</Link></div>;
+  const dismissHomeOnboarding = (): void => {
+    const item = items.find((item) => item.kind === 'onboarding');
+    if (me && item?.kind === 'onboarding') setOnboardingDismissed(dismissOnboarding(me.id, item.missing, now));
+  };
   return (
     <div className="app">
 
@@ -269,21 +252,20 @@ function AppMain(): JSX.Element {
         onOpenOnboarding={() => navigate(WELCOME_PATH)}
       />
 
-      <main className="app__main" hidden={covered}>
-        <h1 className="visually-hidden">EDG 信誉分</h1>
+      <div className="app__notices">
         {state.stale && <StaleNotice message={state.stale.message} onRetry={() => void refresh(visibleRefreshKeys(config.nextResetAt, Date.now()))} />}
         {linkMissing && <LinkMissingNotice message={linkMissing} onDismiss={dismissLinkMissing} />}
-        <div className={`app__home${layout === 'drawer' ? ' app__home--desktop' : ''}${score === null ? ' app__home--without-score' : ''}`}>
-          <div className="app__primary">{primary}</div>
-          {score && <div className="app__score">{score}</div>}
-          <div className="app__board">{mini}</div>
-          {recent}
-          {weekly}
-        </div>
+      </div>
+      <main className="app__main" hidden={covered}>
+        <HomeOverview me={me} config={config} rank={myRank} items={extra.settled ? items : null}
+          records={records} report={report} onOpenPlayer={openPlayer} now={now}
+          reportStale={board?.reportStale} onDismissOnboarding={dismissHomeOnboarding} />
       </main>
 
       <RouteView
         board={board}
+        todoItems={extra.settled ? items : null}
+        now={now}
         discordRead={extra.discordRead}
         onDiscordChanged={extra.setDiscord}
         onMeUpdated={handleMeUpdated}
@@ -302,8 +284,9 @@ function AppMain(): JSX.Element {
         onOpenStatement={setStatementCase}
       />
 
-      <footer className="app__footer" hidden={covered}>
-        <p>EDG 信誉分 · 开黑守约，从不放鸽开始</p>
+      <footer className="app__footer">
+        <nav aria-label="帮助"><Link to={boardPath('rules')}>计分规则</Link><Link to="/guide">机器人指南</Link><Link to={WELCOME_PATH}>入户向导</Link></nav>
+        <p>EDG 信誉分 · 守约，让开黑更简单。</p>
       </footer>
 
       {canRecord && me && (

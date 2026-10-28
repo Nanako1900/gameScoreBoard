@@ -138,37 +138,35 @@ function homeFetch(signedIn = true): void {
 }
 afterEach(() => { vi.unstubAllGlobals(); });
 describe('home layout integration', () => {
-  it.each([false, true])('orders signed-in home blocks consistently, desktop=%s', async (desktop) => {
+  it.each([false, true])('keeps a compact signed-in overview in reading order, desktop=%s', async (desktop) => {
     if (desktop) useDesktopViewport();
-    homeFetch(); render(<App />); await screen.findByText('没有待办，清清爽爽 ✨');
+    homeFetch(); render(<App />); await screen.findByText('当前没有待办。');
     const main = document.querySelector('.app__main')!;
-    const blocks = [...main.querySelectorAll('.todo, .msl, .lb, .app__recent, .wr')];
-    expect(blocks.map((el) => el.classList[0])).toEqual(['todo', 'msl', 'lb', 'app__recent', 'wr']);
-    expect(screen.queryByRole('link', { name: '组一局' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '组一局' })).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: '最近案件' })).getAllByRole('listitem')).toHaveLength(5);
-    const rows = main.querySelectorAll('.lb-row');
-    expect(rows).toHaveLength(desktop ? 10 : 6);
-    expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
-    const nav = screen.getByRole('navigation', { name: '主导航' });
-    expect(within(nav).getAllByRole('link')).toHaveLength(4);
+    const score = within(main as HTMLElement).getByRole('region', { name: '我的分数' });
+    const recent = within(main as HTMLElement).getByRole('region', { name: '最近判决' });
+    expect(score.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(main.querySelector('.lb')).toBeNull();
+    expect(within(recent).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(recent).queryByRole('button', { name: '看更多' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '全部案件' })).toHaveAttribute('href', '/cases?view=public');
+    expect(screen.getByRole('link', { name: '阅读战报' })).toHaveAttribute('href', '/board/report');
+    expect(screen.queryByText('大家继续守约。')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '计分规则' })).toHaveAttribute('href', '/board/rules');
+    expect(screen.getByRole('link', { name: '机器人指南' })).toHaveAttribute('href', '/guide');
     expect(document.querySelector('.btabs')).toBeNull();
   });
-  it.each([false, true])('orders visitor home blocks and starts with five recent cases, desktop=%s', async (desktop) => {
+  it.each([false, true])('gives visitors a compact welcome and three verdicts, desktop=%s', async (desktop) => {
     if (desktop) useDesktopViewport();
     homeFetch(false); render(<App />);
-    await screen.findByRole('heading', { name: '最近案件' });
+    await screen.findByRole('heading', { name: '最近判决' });
     const main = document.querySelector('.app__main')!;
-    expect([...main.querySelectorAll('.welcome, .msl, .lb, .app__recent, .wr')].map((el) => el.classList[0]))
-      .toEqual(['welcome', 'lb', 'app__recent', 'wr']);
-    const recent = screen.getByRole('region', { name: '最近案件' });
-    expect(within(recent).getAllByRole('listitem')).toHaveLength(5);
-    expect(within(recent).getByRole('button', { name: '看更多' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '全部动态' })).toHaveAttribute('href', '/board/feed');
-    expect(screen.queryByRole('link', { name: '组一局' })).not.toBeInTheDocument();
-    const nav = screen.getByRole('navigation', { name: '主导航' });
-    expect(within(nav).getAllByRole('link')).toHaveLength(4);
-    expect(within(nav).getByRole('link', { name: '设置' })).toHaveAttribute('href', '/settings/profile');
+    expect(main.querySelector('.lb')).toBeNull();
+    expect(within(screen.getByRole('region', { name: '最近判决' })).getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.queryByRole('region', { name: '我的分数' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '看更多' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '全部案件' })).toHaveAttribute('href', '/cases?view=public');
+    expect(screen.getByRole('link', { name: '阅读战报' })).toHaveAttribute('href', '/board/report');
+    expect(screen.getByRole('navigation', { name: '主导航' }).querySelectorAll('a')).toHaveLength(4);
     expect(document.querySelector('.btabs')).toBeNull();
   });
   it('first load has a header and three busy skeletons, with no headings or navigation', () => {

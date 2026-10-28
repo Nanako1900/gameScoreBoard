@@ -11,6 +11,8 @@ import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
 import { AdminPage } from './AdminPage';
+import { CasesPage } from './CasesPage';
+import type { TodoItem } from '../lib/todo';
 import { SettingsPage } from './SettingsPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
@@ -28,6 +30,8 @@ interface RouteViewProps {
   onChanged: () => void;
   onOpenStatement: (record: RecordItem) => void;
   board?: BoardData;
+  todoItems?: readonly TodoItem[] | null;
+  now?: number;
   discordRead?: DiscordLinkRead;
   onDiscordChanged?: (value: DiscordLinkValue) => void;
   onMeUpdated?: (user: User) => void;
@@ -149,7 +153,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
         onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
     case 'cases':
-      return <PageShell><BoardPage tab="feed" config={props.config} me={props.me} data={props.board} /></PageShell>;
+      return <PageShell><CasesPage config={props.config} me={props.me} records={props.board?.records ?? []} items={props.todoItems ?? null} now={props.now ?? Date.now()} onOpenStatement={props.onOpenStatement} onOpenPlayer={props.board?.onSelectUser ?? (() => {})} /></PageShell>;
     case 'settings':
       return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}
         onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
@@ -157,6 +161,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
     case 'tools':
       return <PageShell><AdminPage me={props.me} config={props.config} onChanged={props.onChanged} /></PageShell>;
     case 'board':
+      if (route.tab === 'feed') return <PageShell><CasesPage initialTab="public" config={props.config} me={props.me} records={props.board?.records ?? []} items={props.todoItems ?? null} now={props.now ?? Date.now()} onOpenStatement={props.onOpenStatement} onOpenPlayer={props.board?.onSelectUser ?? (() => {})} /></PageShell>;
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
     case 'sessionGone':
       return <PageShell><NotFound title={SESSIONS_OFF} description={SESSIONS_OFF_DESCRIPTION}

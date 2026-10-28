@@ -230,7 +230,7 @@ describe('unknown addresses', () => {
     expect(home).toHaveAttribute('href', '/');
     await user.click(home);
     expect(window.location.pathname).toBe('/');
-    expect(await screen.findByRole('heading', { name: '信誉榜' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '最近判决' })).toBeInTheDocument();
   });
 
   it.each(['/sessions', '/sessions/5', '/sessions/new', '/sessions/history', '/sessions/5/rollcall', '/sessions/x/y'])
@@ -280,13 +280,14 @@ describe('/players/:id', () => {
   it('opens from the board as its own address; 返回 goes back to the lobby', async () => {
     mockFetch(routes());
     const user = userEvent.setup();
+    window.history.replaceState(null, '', '/board');
     render(<App />);
     await user.click(await screen.findByRole('button', { name: ROW }));
     expect(window.location.pathname).toBe('/players/p');
     expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
     expect(lobbyHidden()).toBe(true);
     await user.click(screen.getByRole('button', { name: '返回' }));
-    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    await waitFor(() => expect(window.location.pathname).toBe('/board'));
     expect(await screen.findByRole('button', { name: ROW })).toBeInTheDocument();
   });
 
@@ -298,7 +299,7 @@ describe('/players/:id', () => {
     await screen.findByRole('heading', { name: '选手' });
     await user.click(screen.getByRole('link', { name: 'EDG 信誉分 首页' }));
     expect(window.location.pathname).toBe('/');
-    expect(await screen.findByRole('button', { name: ROW })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '最近判决' })).toBeInTheDocument();
   });
 });
 

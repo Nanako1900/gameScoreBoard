@@ -1,5 +1,5 @@
 import type { Config, PublicUser, RecordItem, User, WeeklyReport } from '../types';
-import { BOARD_TABS, boardPath, type BoardTab } from '../lib/routes';
+import { boardPath, type BoardTab } from '../lib/routes';
 import { goBack } from '../lib/router';
 import { Leaderboard } from './Leaderboard';
 import { RecordsFeed } from './RecordsFeed';
@@ -8,7 +8,6 @@ import { Link } from './Link';
 import { RulesGuide } from './RulesGuide';
 import { RulesPanel } from './RulesPanel';
 import { WeeklyReportCard } from './WeeklyReportCard';
-import { WeekHighlights } from './WeekHighlights';
 import './board-page.css';
 
 export interface BoardData {
@@ -17,13 +16,12 @@ export interface BoardData {
   onRegenerate?: () => void; onSelectUser: (id: string) => void;
 }
 interface BoardPageProps { tab: BoardTab; config: Config; me: User | null; data?: BoardData }
-const TAB_LABEL: Readonly<Record<BoardTab, string>> = { list: '榜单', feed: '动态', report: '战报', rules: '规则' };
+const PAGE_TITLE: Readonly<Record<BoardTab, string>> = { list: '信誉榜', feed: '案件', report: '每周战报', rules: '规则与指南' };
 
 function BoardBody({ tab, config, me, data }: BoardPageProps & { data: BoardData }): JSX.Element {
   switch (tab) {
-    case 'list': return <Leaderboard title="全部选手" participants={data.participants} meId={me?.id} trends={data.trends}
-      counts={data.counts} onSelect={data.onSelectUser} highlights={<WeekHighlights records={data.records}
-        nextResetAt={config.nextResetAt} onSelectUser={data.onSelectUser} />} />;
+    case 'list': return <Leaderboard title="全部上榜成员" participants={data.participants} meId={me?.id} trends={data.trends}
+      counts={data.counts} onSelect={data.onSelectUser} />;
     case 'feed': return <RecordsFeed title="最新动态" records={data.records} onSelectUser={data.onSelectUser}
       emptyHint="还没有任何记录，等待第一笔。" />;
     case 'report': return data.report ? <WeeklyReportCard report={data.report} hidePigeon dismissible={false}
@@ -37,9 +35,9 @@ export function BoardPage(props: BoardPageProps): JSX.Element {
     trends: {}, counts: {}, regenerating: false, onSelectUser: () => {} };
   return <Modal open variant="page" labelledBy="board-title" onClose={goBack}>
     <div className="board">
-      <h2 id="board-title" tabIndex={-1}>信誉榜</h2>
-      <nav className="board__nav" aria-label="信誉榜">{BOARD_TABS.map((tab) =>
-        <Link key={tab} to={boardPath(tab)} aria-current={tab === props.tab ? 'page' : undefined}>{TAB_LABEL[tab]}</Link>)}</nav>
+      <header className="board__heading"><div><h2 id="board-title" tabIndex={-1}>{PAGE_TITLE[props.tab]}</h2>
+        {props.tab === 'list' && <p>上榜成员的当前信誉分与本周变化。</p>}</div>
+        {props.tab === 'list' && <Link to={boardPath('rules')}>计分规则</Link>}</header>
       <BoardBody {...props} data={data} />
     </div>
   </Modal>;

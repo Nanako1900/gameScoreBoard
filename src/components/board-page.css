@@ -1,10 +1,6 @@
-/* A top-level destination with ordinary navigation links. */
-.board { display: grid; gap: 1rem; }
-.board > h2 { font-size: var(--fs-2xl); }
-.board__nav { display: flex; flex-wrap: wrap; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
-.board__nav a { display: inline-flex; align-items: center; min-height: 40px; padding: 0.45rem 0.9rem; border: 1px solid transparent; border-radius: var(--r-pill); color: var(--muted); }
-.board__nav a[aria-current="page"] { color: var(--text); border-color: var(--border-strong); background: var(--panel-2); }
+.board { display: grid; gap: 1.5rem; }
+.board__heading { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: center; }
+.board__heading h2 { font-size: var(--fs-2xl); }
+.board__heading p { color: var(--muted); margin-top: 0.5rem; }
+.board__heading a { display: inline-flex; align-items: center; min-height: 44px; }
 .board__empty { color: var(--muted); font-size: var(--fs-sm); }
-@media (hover: hover) { .board__nav a:hover { color: var(--text); } }
-@media (pointer: coarse) { .board__nav a { min-height: 44px; } }
-@media (forced-colors: active) { .board__nav a[aria-current="page"] { border: 2px solid Highlight; } }

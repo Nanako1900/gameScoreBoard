@@ -394,7 +394,7 @@ describe('登录回跳 — back from the login page', () => {
     window.sessionStorage.setItem(LOGIN_RETURN_KEY, raw);
     stubApi();
     render(<App />);
-    await screen.findByRole('heading', { name: '信誉榜' });
+    await screen.findByRole('heading', { level: 1, name: 'EDG 信誉分' });
     expect(window.location.pathname).toBe('/');
     expect(window.sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe(raw);
   });
@@ -405,7 +405,7 @@ describe('登录回跳 — back from the login page', () => {
       const stub = stubApi();
       backFromLogin(stub, null);
       const user = userEvent.setup();
-      await screen.findByRole('heading', { name: '要你处理' });
+      await screen.findByRole('heading', { level: 1, name: '你好，选手。' });
       window.sessionStorage.setItem(LOGIN_RETURN_KEY, serializeLoginReturn('/players/q', Date.now()));
       await user.click(screen.getByRole('button', { name: /选手/ }));
       await user.click(screen.getByRole('button', { name: '退出登录' }));
