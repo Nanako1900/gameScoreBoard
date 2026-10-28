@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { tierFor } from '@shared/scoring';
 import type { Config, HistoryPoint, RecordItem, User, UserDetailResponse } from '../types';
 import {
@@ -48,6 +48,8 @@ interface PlayerDetailProps {
   pinnedRecord?: RecordItem | null;
   /** Bumped by the app when the cases changed elsewhere (a statement was judged): load again. */
   refreshKey?: number;
+  /** Optional app actor generation for drafts retained by nested forms. */
+  isCurrentActor?: () => boolean;
 }
 
 interface DetailState {
@@ -125,6 +127,12 @@ function useFirstFocus(
 
 /** A new subject or viewer gets a fresh state before effects, never the old person's data. */
 export function PlayerDetail(props: PlayerDetailProps): JSX.Element {
+  const actorScope = JSON.stringify([props.me?.id ?? null, props.me?.is_admin === true, props.me?.is_judge === true]);
+  const actorLease = useRef({ scope: actorScope });
+  if (actorLease.current.scope !== actorScope) actorLease.current = { scope: actorScope };
+  const lease = actorLease.current;
+  const outerActor = useRef(props.isCurrentActor); outerActor.current = props.isCurrentActor;
+  const isCurrentActor = (): boolean => actorLease.current === lease && outerActor.current?.() !== false;
   const scope = JSON.stringify([props.userId, props.me?.id ?? null, props.me?.is_admin === true,
     props.me?.is_judge === true, props.focusRecordId ?? null]);
   const source = useRef({ record: props.pinnedRecord, scope: scope as string | null });
@@ -136,7 +144,7 @@ export function PlayerDetail(props: PlayerDetailProps): JSX.Element {
   }
   const safePinned = source.current.scope === scope && props.pinnedRecord?.subject.id === props.userId
     ? props.pinnedRecord : null;
-  return <PlayerDetailContent key={scope} {...props} pinnedRecord={safePinned} />;
+  return <PlayerDetailContent key={scope} {...props} pinnedRecord={safePinned} isCurrentActor={isCurrentActor} />;
 }
 
 function PlayerDetailContent({
@@ -150,6 +158,7 @@ function PlayerDetailContent({
   variant = 'center',
   pinnedRecord = null,
   refreshKey = 0,
+  isCurrentActor,
 }: PlayerDetailProps): JSX.Element {
   const [state, setState] = useState<DetailState>({
     status: 'loading',
@@ -164,7 +173,7 @@ function PlayerDetailContent({
 
   const alive = useRef(true);
   const request = useRef(0);
-  useEffect(() => {
+  useLayoutEffect(() => {
     alive.current = true;
     return () => { alive.current = false; request.current += 1; };
   }, []);
@@ -310,8 +319,7 @@ function PlayerDetailContent({
                   <ScoreGauge score={score} size={128} strokeWidth={11} tone={isSelf ? 'tier' : 'neutral'} />
                   <div className="pd__id">
                     <div className="pd__name-row">
-                      <Avatar name={data.user.username} src={data.user.avatar_url} size={48}
-                        ring={isSelf} ringColor={isSelf ? tier.color : undefined} />
+                      <Avatar name={data.user.username} src={data.user.avatar_url} size={48} />
                       <h2 id={TITLE_ID} className="pd__name" tabIndex={-1}>{data.user.username}</h2>
                     </div>
                     <div className="pd__badges">
@@ -337,7 +345,7 @@ function PlayerDetailContent({
 
                 <section className="pd__section" aria-label="分数走势">
                   <h3 className="pd__section-title">分数走势</h3>
-                  <HistoryChart history={data.history} color={isSelf ? tier.color : 'var(--score-chip-fg)'} />
+                  <HistoryChart history={data.history} color="var(--score-chip-fg)" />
                 </section>
 
                 <section className="pd__section" aria-label="案件">
@@ -349,7 +357,8 @@ function PlayerDetailContent({
 
                 {isSelf && me && (
                   <section className="pd__section" aria-label="个人语音记录">
-                    <VoiceLog ownerId={me.id} userId={me.id} offsetHours={config?.boardTzOffsetHours ?? 8} />
+                    <VoiceLog ownerId={me.id} userId={me.id} offsetHours={config?.boardTzOffsetHours ?? 8}
+                      missingContent={<p className="pd__empty">语音记录暂不可用。</p>} />
                   </section>
                 )}
               </>
@@ -365,6 +374,7 @@ function PlayerDetailContent({
         <AppealSheet
           key={appealing.id}
           record={appealing}
+          isCurrentActor={isCurrentActor}
           onClose={() => setAppealing(null)}
           onAppealed={() => {
             if (!alive.current) return;

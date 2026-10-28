@@ -13,7 +13,7 @@
 
 .lb__title {
   font-size: var(--text-h2);
-  letter-spacing: 0.06em;
+  letter-spacing: normal;
 }
 
 .lb__count {
@@ -34,21 +34,19 @@
   flex-direction: column;
 }
 
-/* rank · player · trend · score · gauge. The gauge column only exists on
-   desktop; below it the plain score takes its place (H6). */
+/* One readable score column at every size; no repeated decorative gauges. */
 .lb-row {
   width: 100%;
   min-height: 56px;
   display: grid;
-  grid-template-columns: 2.4rem 1fr auto auto;
+  grid-template-columns: 2.4rem minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 0.75rem 1rem;
   padding: 0.7rem 0.5rem;
   border-radius: var(--r-md);
   border: 1px solid transparent;
   text-align: left;
-  transition: background var(--dur-fast), border-color var(--dur-fast),
-    transform var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast), border-color var(--dur-fast);
 }
 
 .lb-row + .lb-row,
@@ -62,7 +60,6 @@
   .lb-row:hover {
     background: var(--panel-2);
     border-color: var(--border-strong);
-    transform: translateX(2px);
   }
 }
 
@@ -71,7 +68,8 @@
    a TierBadge, so it is not marked by colour alone. */
 .lb-row--me {
   background: var(--panel-2);
-  box-shadow: inset 3px 0 0 0 var(--text);
+  box-shadow: none;
+  border-inline-start: 3px solid var(--text);
 }
 
 .lb-row__rank {
@@ -131,7 +129,7 @@
 }
 
 .lb-row__records {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -149,19 +147,10 @@
   place-items: center;
 }
 
-@media (min-width: 1024px) {
-  .lb-row__score {
-    display: none;
-  }
-  .lb-row__gauge {
-    display: grid;
-  }
-}
-
 /* Phones: 名次 · 头像 · 名字 · 分数 (spec §6.4). */
 @media (max-width: 600px) {
   .lb-row {
-    grid-template-columns: 1.9rem 1fr auto;
+    grid-template-columns: 1.9rem minmax(0, 1fr) auto;
     gap: 0.5rem 0.6rem;
   }
   .lb-row__trend {

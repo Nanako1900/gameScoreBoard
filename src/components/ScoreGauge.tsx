@@ -1,4 +1,3 @@
-import type { CSSProperties } from 'react';
 import { clampScore, tierFor } from '@shared/scoring';
 import './score-gauge.css';
 
@@ -8,9 +7,9 @@ interface ScoreGaugeProps {
   strokeWidth?: number;
   label?: string;
   /**
-   * Default 'tier' — today's colour and aria-label. 'neutral': ring uses
-   * --score-chip-fg, no --tier is set, aria-label is `${label} ${value} 分`
-   * (no 段位). Everyone but the viewer themself gets 'neutral' (spec §6.2).
+   * Default 'tier' keeps the self-only tier in the aria-label. 'neutral' uses
+   * `${label} ${value} 分` (no 段位). Both have the same neutral visual colour.
+   * Everyone but the viewer themself gets 'neutral' (spec §6.2).
    */
   tone?: 'tier' | 'neutral';
 }
@@ -61,16 +60,18 @@ function GaugeRing({ size, strokeWidth, value }: GaugeRingProps): JSX.Element {
         strokeDashoffset={dashOffset}
         transform={`rotate(-90 ${cx} ${cy})`}
       />
+      <text className="gauge__center" x={cx} y={cy} textAnchor="middle" dominantBaseline="central">
+        <tspan className="gauge__value tabular" fontSize={size * VALUE_FONT_RATIO}>{value}</tspan>
+        <tspan className="gauge__unit" fontSize={Math.min(16, size * 0.13)} dx={size * 0.025}>分</tspan>
+      </text>
     </svg>
   );
 }
 
 /**
- * Hand-rolled SVG circular gauge (0..100). Arc color follows tierFor(score),
- * unless tone="neutral": on public views the score is public, but the 段位 is
- * a label the board does not pin on anyone but the viewer. Big tabular numeral
- * in the center. Animates via stroke-dashoffset (respects reduced motion
- * through the CSS transition).
+ * SVG circular gauge (0..100), with one neutral colour for every score.
+ * The tier label is only available on the viewer's own gauge. Native SVG
+ * dimensions preserve arbitrary sizes without inline CSS.
  */
 export function ScoreGauge({
   score,
@@ -82,26 +83,13 @@ export function ScoreGauge({
   const value = clampScore(score);
   const tier = tierFor(value);
   const neutral = tone === 'neutral';
-  const fontSize = size * VALUE_FONT_RATIO;
-  // React applies this through CSSOM, which the CSP allows without 'unsafe-inline'.
-  const style: CSSProperties = neutral
-    ? { width: size, height: size }
-    : { width: size, height: size, ['--tier' as string]: tier.color };
-
   return (
     <div
       className={neutral ? 'gauge gauge--neutral' : 'gauge'}
-      style={style}
       role="img"
       aria-label={neutral ? `${label} ${value} 分` : `${label} ${value} 分，段位 ${tier.name}`}
     >
       <GaugeRing size={size} strokeWidth={strokeWidth} value={value} />
-      <div className="gauge__center">
-        <span className="gauge__value tabular" style={{ fontSize }}>
-          {value}
-        </span>
-        <span className="gauge__unit">分</span>
-      </div>
     </div>
   );
 }

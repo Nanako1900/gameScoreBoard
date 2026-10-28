@@ -71,6 +71,40 @@ describe('MyScoreLine', () => {
   });
 });
 
+describe('MyScoreLine overview variant', () => {
+  it('shows the shared score card with the caller’s clock and an explicit record action', async () => {
+    const onOpen = vi.fn();
+    render(<MyScoreLine me={ME} rank={6} config={{ ...CONFIG, nextResetAt: '2026-11-01T16:00:00Z' }}
+      now={Date.parse('2026-10-30T15:00:00Z')} variant="overview" onOpen={onOpen} />);
+    const region = screen.getByRole('region', { name: '我的分数' });
+    expect(region).toHaveClass('msl--overview');
+    expect(screen.getByRole('heading', { name: '我的信誉分' })).toBeInTheDocument();
+    expect(region).toHaveTextContent('82');
+    expect(region).toHaveTextContent('第 6 名');
+    expect(region).toHaveTextContent('周一 0 点回血 +5 → 预计 87 · 还有 2 天');
+    await userEvent.setup().click(screen.getByRole('button', { name: /我的分数与记录/ }));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an unlisted person’s records reachable without a score, rank or recovery', async () => {
+    const onOpen = vi.fn();
+    render(<MyScoreLine me={{ ...ME, is_participant: false }} rank={6} config={CONFIG} variant="overview" onOpen={onOpen} />);
+    expect(screen.getByText('当前不上榜')).toBeInTheDocument();
+    const region = screen.getByRole('region', { name: '我的分数' });
+    expect(region).not.toHaveTextContent('82');
+    expect(region).not.toHaveTextContent('第 6 名');
+    expect(region).not.toHaveTextContent('回血');
+    await userEvent.setup().click(screen.getByRole('button', { name: /我的记录/ }));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('does not invent a rank or an action when either is unavailable', () => {
+    render(<MyScoreLine me={ME} rank={null} config={CONFIG} variant="overview" />);
+    expect(screen.queryByText(/第 .* 名/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
 describe('ForgivenessNote', () => {
   it('gives the way back after a penalty, from weeklyHeal', () => {
     render(<ForgivenessNote delta={-6} scoreAfter={82} weeklyHeal={5} />);

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { MAX_NARRATIVE_LEN, affectsScore, clampScore } from '@shared/scoring';
 import type { Config, RecordItem } from '../types';
 import { ApiError, submitStatement } from '../api';
@@ -27,6 +27,8 @@ interface StatementDialogProps {
   onDecided: (record: RecordItem) => void;
   /** The subject's score before this verdict (App passes me.score). Without it, no ForgivenessNote. */
   score?: number;
+  /** The host revokes this lease before a different account or role renders. */
+  isCurrentActor?: () => boolean;
 }
 
 interface Outcome {
@@ -50,10 +52,12 @@ interface StatementSubmit {
   submit: () => void;
 }
 
-function useStatementSubmit(recordId: number, text: string, onSubmitted: (record: RecordItem) => void): StatementSubmit {
+function useStatementSubmit(recordId: number, text: string, onSubmitted: (record: RecordItem) => void,
+  isCurrent: () => boolean): StatementSubmit {
   const confirm = useInlineConfirm<HTMLButtonElement>();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
 
   const ask = (): void => {
     if (isBlankText(text)) {
@@ -65,14 +69,20 @@ function useStatementSubmit(recordId: number, text: string, onSubmitted: (record
   };
 
   const submit = (): void => {
+    if (!isCurrent() || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     submitStatement(recordId, text.trim())
       .then(({ record }) => {
+        if (!isCurrent()) return;
+        inFlight.current = false;
         confirm.close();
         setSubmitting(false);
         onSubmitted(record);
       })
       .catch((err: unknown) => {
+        if (!isCurrent()) return;
+        inFlight.current = false;
         setError(err instanceof ApiError ? err.message : '提交失败，请稍后重试');
         setSubmitting(false);
         confirm.dismiss();
@@ -89,8 +99,15 @@ function useStatementSubmit(recordId: number, text: string, onSubmitted: (record
  * judgment, which is the moment the whole feature exists for. What is typed is
  * a local draft until then (spec §5 #4), and the one-way step asks first.
  */
-export function StatementDialog({ open, record, config, onClose, onDecided, score }: StatementDialogProps): JSX.Element {
-  const draft = useDraft<string>('statement', record.id, '', DRAFT_OPTIONS);
+export function StatementDialog({ open, record, config, onClose, onDecided, score, isCurrentActor }: StatementDialogProps): JSX.Element {
+  const mounted = useRef(false);
+  const actor = useRef(isCurrentActor); actor.current = isCurrentActor;
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Ordinary close still flushes the final edit. Account boundaries revoke
+  // persistence before the old editor's unmount cleanup can run.
+  const canPersist = (): boolean => actor.current?.() !== false;
+  const isCurrent = (): boolean => mounted.current && canPersist();
+  const draft = useDraft<string>('statement', record.id, '', { ...DRAFT_OPTIONS, canPersist });
   const guard = useLeaveGuard(draft.dirty, onClose);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [appealing, setAppealing] = useState(false);
@@ -98,7 +115,7 @@ export function StatementDialog({ open, record, config, onClose, onDecided, scor
     draft.clear();
     setOutcome({ record: decided, scoreBefore: score });
     onDecided(decided);
-  });
+  }, isCurrent);
 
   // Esc / ✕: back out of an open confirm first; never mid-submit.
   const requestClose = (): void => {
@@ -130,7 +147,7 @@ export function StatementDialog({ open, record, config, onClose, onDecided, scor
         )}
       </Modal>
       {outcome && appealing && (
-        <AppealSheet record={outcome.record} onClose={() => setAppealing(false)} onAppealed={appealed} />
+        <AppealSheet record={outcome.record} onClose={() => setAppealing(false)} onAppealed={appealed} isCurrentActor={canPersist} />
       )}
     </>
   );

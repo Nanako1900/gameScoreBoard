@@ -40,18 +40,20 @@ interface RouteViewProps {
   onBeforeWelcomeBind?: () => void;
   welcomeNotice?: React.ReactNode;
   onRetryDiscord?: () => void;
+  /** App-level actor generation, valid across a role-keyed subtree unmount. */
+  isCurrentActor?: () => boolean;
 }
 
 /** Every route view closes the same way: back through history, or to '/' if this tab started here. */
 const close = (): void => goBack();
 
-function PageShell({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="app__page">{children}</div>;
+function PageShell({ children, narrow = false }: { children: React.ReactNode; narrow?: boolean }): JSX.Element {
+  return <main className={`app__page${narrow ? ' app__page--detail' : ''}`}>{children}</main>;
 }
 
 /** Pages sit in the flow where the hidden lobby was; drawers portal out on their own. */
 function LayoutShell({ layout, children }: { layout: RouteLayout; children: React.ReactNode }): JSX.Element {
-  return layout === 'page' ? <PageShell>{children}</PageShell> : <>{children}</>;
+  return layout === 'page' ? <PageShell narrow>{children}</PageShell> : <>{children}</>;
 }
 
 function RouteNotice({ layout, title }: { layout: RouteLayout; title: string }): JSX.Element {
@@ -125,6 +127,7 @@ function CaseRoute(props: CaseRouteProps): JSX.Element | null {
         onClose={close}
         onOpenStatement={props.onOpenStatement}
         onChanged={props.onChanged}
+        isCurrentActor={props.isCurrentActor}
       />
     </LayoutShell>
   );
@@ -181,6 +184,7 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
             onClose={close}
             onOpenStatement={props.onOpenStatement}
             onChanged={props.onChanged}
+            isCurrentActor={props.isCurrentActor}
           />
         </LayoutShell>
       );

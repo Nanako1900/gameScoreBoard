@@ -41,6 +41,7 @@ describe('HomeOverview information order', () => {
   it('shows score, rank and the configured capped recovery without a tier', async () => {
     const open = vi.fn(); render(<HomeOverview {...props} onOpenPlayer={open} />);
     const score = screen.getByRole('region', { name: '我的分数' });
+    expect(score).toHaveClass('msl--overview');
     expect(score).toHaveTextContent('98'); expect(score).toHaveTextContent('第 4 名');
     expect(score).toHaveTextContent('回血 +5 → 预计 100');
     expect(score.textContent).not.toMatch(/段位|誓约之光/);

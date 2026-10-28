@@ -1,13 +1,12 @@
-import { MAX_SCORE } from '@shared/scoring';
 import { AUTH_LOGIN_URL } from '../api';
 import type { Config, RecordItem, User, WeeklyReport } from '../types';
 import { DISCORD_INVITE_URL } from '../lib/env';
-import { healPreview, healPreviewText } from '../lib/forgiveness';
 import { navigate } from '../lib/router';
 import { boardPath, CASES_PATH, casePath, WELCOME_PATH } from '../lib/routes';
 import { formatRemaining, parseTimestamp } from '../lib/time';
 import { todoBadgeCount, type TodoItem } from '../lib/todo';
 import { Link } from './Link';
+import { MyScoreLine } from './MyScoreLine';
 import { RecordsFeed } from './RecordsFeed';
 import { Skeleton } from './Skeleton';
 import { WelcomeCard } from './WelcomeCard';
@@ -24,19 +23,6 @@ interface HomeOverviewProps {
   onDismissOnboarding?: () => void;
   now: number;
   reportStale?: boolean;
-}
-
-function ScoreOverview({ me, config, rank, now, onOpenPlayer }: Pick<HomeOverviewProps, 'config' | 'rank' | 'now' | 'onOpenPlayer'> & { me: User }): JSX.Element {
-  return <section className="home-overview__score panel" aria-label="我的分数">
-    <div><h2>我的信誉分</h2>{me.is_participant && rank !== null && <p className="home-overview__rank">第 {rank} 名</p>}</div>
-    {me.is_participant ? <>
-      <p className="home-overview__score-number tabular">{me.score}<span> / {MAX_SCORE}</span></p>
-      <p className="home-overview__heal">{healPreviewText(healPreview(me.score, config, now))}</p>
-    </> : <p className="home-overview__unlisted">当前不上榜</p>}
-    <button type="button" className="home-overview__score-open" onClick={() => onOpenPlayer(me.id)}>
-      {me.is_participant ? '我的分数与记录' : '我的记录'} <span aria-hidden="true">→</span>
-    </button>
-  </section>;
 }
 
 /** Only counts and the first real deadline belong in the home summary, never case bodies. */
@@ -78,7 +64,7 @@ export function HomeOverview({ me, config, rank, items, records, report, onOpenP
       </div>
     </section>}
     {me ? <div className="home-overview__summary">
-      <ScoreOverview me={me} config={config} rank={rank} now={now} onOpenPlayer={onOpenPlayer} />
+      <MyScoreLine me={me} config={config} rank={rank} now={now} variant="overview" onOpen={() => onOpenPlayer(me.id)} />
       <InboxOverview items={items} now={now} />
     </div> : <WelcomeCard compact loginUrl={AUTH_LOGIN_URL} discordInviteUrl={DISCORD_INVITE_URL}
       onShowRules={() => navigate(boardPath('rules'))} rulesTo={boardPath('rules')} weeklyHeal={config.weeklyHeal} />}

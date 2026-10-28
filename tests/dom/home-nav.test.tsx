@@ -14,11 +14,11 @@ const CONFIG: Config = { violations: [], tiers: [], weeklyHeal: 5,
   statementWindowHours: 12, aiEnabled: false, maxBatchSubjects: 5, nextResetAt: '2099-11-01T16:00:00Z' };
 
 describe('header navigation', () => {
-  it('keeps the brand and reset while pending, without navigation or account controls', () => {
+  it('keeps the brand while pending, without navigation or account controls', () => {
     const { container } = render(<Header pending layout="drawer" config={null} me={ME}
       onLogout={vi.fn()} onOpenOnboarding={vi.fn()} />);
     expect(screen.getByRole('link', { name: 'EDG 信誉分 首页' })).toHaveAttribute('href', '/');
-    expect(container.querySelector('.hdr__reset-time')).toHaveTextContent('—');
+    expect(container.querySelector('.hdr__reset')).toBeNull();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(container.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull();
@@ -32,7 +32,7 @@ describe('header navigation', () => {
       .toEqual([['首页', '/'], ['信誉榜', '/board'], ['案件', '/cases'], ['设置', '/settings/profile']]);
     expect(within(nav).getByRole('link', { name: '案件' })).toHaveAttribute('aria-current', 'page');
     const nodes = [screen.getByRole('link', { name: 'EDG 信誉分 首页' }), nav,
-      container.querySelector('.hdr__reset')!, screen.getByRole('button', { name: /小明/ })];
+      screen.getByRole('button', { name: /小明/ })];
     for (let i = 1; i < nodes.length; i += 1) expect(nodes[i - 1].compareDocumentPosition(nodes[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
   it('keeps the same four links for visitors with the existing login flow', () => {

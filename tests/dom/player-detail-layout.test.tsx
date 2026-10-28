@@ -45,9 +45,9 @@ describe('PlayerDetail — focused layouts and privacy', () => {
     expect(screen.queryByText(tierFor(88).blurb)).not.toBeInTheDocument();
     expect(document.querySelector('.pd__header')).not.toHaveAttribute('style');
     expect(document.querySelector('.pd__header .avatar')).not.toHaveClass('avatar--ring');
-    expect(document.querySelector('.pd__header .avatar')?.getAttribute('style')).not.toContain('--ring');
-    expect(document.querySelector('.chart')?.getAttribute('style')).not.toContain(tierFor(88).color);
-    expect(document.querySelector('.chart')?.getAttribute('style')).toContain('var(--score-chip-fg)');
+    expect(document.querySelector('.pd__header .avatar')).not.toHaveAttribute('style');
+    expect(document.querySelector('.chart')).not.toHaveAttribute('style');
+    expect(document.querySelector('.chart__line')).toHaveAttribute('stroke', 'var(--score-chip-fg)');
     expect(screen.getByRole('img', { name: /^信誉分 88 分/ })).toHaveClass('gauge--neutral');
   });
 
@@ -60,6 +60,21 @@ describe('PlayerDetail — focused layouts and privacy', () => {
     expect(screen.queryByRole('link', { name: '查看语音记录' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: '分数走势' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: '案件' })).toBeInTheDocument();
+    expect(document.querySelector('.pd__header .avatar')).not.toHaveClass('avatar--ring');
+    expect(document.querySelector('.chart')).not.toHaveAttribute('style');
+    expect(document.querySelector('.chart__line')).toHaveAttribute('stroke', 'var(--score-chip-fg)');
+  });
+
+  it('keeps an unavailable personal voice module local and distinct from empty evidence', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/api/voice?')
+      ? ({ ok: false, status: 404, text: async () => JSON.stringify({ error: 'Not found' }) } as Response) : json(detail())));
+    render(<PlayerDetail userId="p" me={SELF} onClose={() => {}} />);
+    expect(await screen.findByText('语音记录暂不可用。')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '这页不存在' })).not.toBeInTheDocument();
+    expect(screen.queryByText('没有保存的语音记录，不代表没来')).not.toBeInTheDocument();
+    expect(screen.queryByText('已覆盖')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '查询范围' })).not.toBeInTheDocument();
   });
 
   it.each([JUDGE, ADMIN])('offers staff a scoped voice tool link without reading another person’s voice inline: %o', async (me) => {

@@ -47,6 +47,7 @@ describe('the board destination', () => {
     expect(screen.getByRole('heading', { name: '信誉榜' })).toHaveFocus();
     expect(screen.getByRole('link', { name: '计分规则' })).toHaveAttribute('href', '/board/rules');
     expect(screen.queryByRole('link', { name: '动态' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('距离每周恢复')).toBeInTheDocument();
   });
   it('shows the full report even after home dismissal, with no pigeon award or dismiss action', () => {
     window.localStorage.setItem('edg.report.dismissed', REPORT.week_start);

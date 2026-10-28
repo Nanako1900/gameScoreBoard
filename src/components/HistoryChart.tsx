@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { HistoryPoint } from '../types';
 import { relativeTime } from '../lib/time';
@@ -16,7 +16,7 @@ const PAD_TOP = 16;
 const PAD_BOTTOM = 26;
 const INNER_W = W - PAD_X * 2;
 const INNER_H = H - PAD_TOP - PAD_BOTTOM;
-const GRID_LINES = [0, 25, 50, 75, 100];
+const GRID_LINES = [100, 75, 50, 25, 0];
 /** Dot radii (viewBox units): the picked point stands out from the latest, which stands out from the rest. */
 const DOT_R = { active: 5, last: 4, base: 2.5 } as const;
 
@@ -50,7 +50,6 @@ interface ChartSvgProps {
 }
 
 function ChartSvg({ points, active, color }: ChartSvgProps): JSX.Element {
-  const gradientId = useId();
   const coords = points.map((p) => `${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(' ');
   const floor = (PAD_TOP + INNER_H).toFixed(1);
   const area = `${PAD_X},${floor} ${coords} ${(W - PAD_X).toFixed(1)},${floor}`;
@@ -64,17 +63,11 @@ function ChartSvg({ points, active, color }: ChartSvgProps): JSX.Element {
       role="img"
       aria-label={`分数走势，从 ${first.score} 分到 ${last.score} 分`}
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
       {GRID_LINES.map((g) => (
         <line key={g} className="chart__grid" x1={PAD_X} x2={W - PAD_X} y1={yOf(g)} y2={yOf(g)} />
       ))}
-      <polygon className="chart__area" points={area} fill={`url(#${gradientId})`} />
-      <polyline className="chart__line" points={coords} />
+      <polygon className="chart__area" points={area} fill={color} fillOpacity={0.08} />
+      <polyline className="chart__line" points={coords} stroke={color} />
       {points.map((p, i) => (
         <circle
           key={i}
@@ -82,6 +75,8 @@ function ChartSvg({ points, active, color }: ChartSvgProps): JSX.Element {
           cx={p.px}
           cy={p.py}
           r={i === active ? DOT_R.active : i === points.length - 1 ? DOT_R.last : DOT_R.base}
+          stroke={color}
+          fill={i === active || i === points.length - 1 ? color : 'var(--panel)'}
         >
           <title>{readout(p.point)}</title>
         </circle>
@@ -90,12 +85,12 @@ function ChartSvg({ points, active, color }: ChartSvgProps): JSX.Element {
   );
 }
 
-/** Axis numbers as HTML beside the plot, positioned in % of its height (React style → CSSOM, CSP-safe). */
+/** Five fixed HTML ticks keep readable text and follow the visual top-to-bottom order. */
 function AxisTicks(): JSX.Element {
   return (
     <div className="chart__ticks" aria-hidden="true">
       {GRID_LINES.map((g) => (
-        <span key={g} className="chart__tick tabular" style={{ top: `${(yOf(g) / H) * 100}%` }}>
+        <span key={g} className={`chart__tick chart__tick--${g} tabular`}>
           {g}
         </span>
       ))}
@@ -135,7 +130,7 @@ export function HistoryChart({ history, color }: HistoryChartProps): JSX.Element
   };
 
   return (
-    <figure className="chart" style={{ ['--accent' as string]: color }}>
+    <figure className="chart">
       <div className="chart__plot">
         <AxisTicks />
         <div className="chart__canvas" onClick={onTap}>

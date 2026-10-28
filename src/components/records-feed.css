@@ -32,7 +32,7 @@
 
 .feed__title {
   font-size: var(--text-h2);
-  letter-spacing: 0.06em;
+  letter-spacing: normal;
 }
 
 .feed__empty {
@@ -50,7 +50,7 @@
 
 .feed-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   gap: 0.25rem 0.85rem;
   padding: 0.8rem 0.25rem;
@@ -88,7 +88,7 @@
 
 .feed-row--revoked,
 .feed-row--withdrawn {
-  opacity: 0.62;
+  opacity: 1;
 }
 
 .feed-row__emoji {
@@ -124,11 +124,13 @@
 
 .feed-row__subject--link {
   transition: color var(--dur-fast);
+  min-height: var(--tap-min);
+  align-items: center;
 }
 
 @media (hover: hover) {
   .feed-row__subject--link:hover .feed-row__name {
-    color: var(--blue);
+    color: var(--info);
     text-decoration: underline;
     text-underline-offset: 3px;
   }
@@ -143,7 +145,7 @@
 }
 
 .feed-row__status {
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
   font-weight: 600;
   padding: 0.1em 0.5em;
   border-radius: var(--r-pill);
@@ -151,9 +153,9 @@
 }
 
 .feed-row__status--appealed {
-  color: var(--gold);
-  background: color-mix(in oklab, var(--gold) 14%, transparent);
-  border-color: color-mix(in oklab, var(--gold) 40%, transparent);
+  color: var(--attn);
+  background: color-mix(in oklab, var(--attn) 14%, transparent);
+  border-color: color-mix(in oklab, var(--attn) 40%, transparent);
 }
 
 .feed-row__status--revoked,
@@ -170,7 +172,7 @@
   align-items: center;
   gap: 0.3rem 0.45rem;
   margin-top: 0.2rem;
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -198,29 +200,30 @@
 
 /* Case still in trial: the delta genuinely isn't known yet. */
 .feed-row__status--awaiting_statement {
-  color: var(--gold);
-  background: rgba(245, 197, 66, 0.14);
+  color: var(--attn);
+  background: color-mix(in oklab, var(--attn) 14%, var(--panel));
 }
 
 .feed-row__status--judging {
-  color: var(--blue);
-  background: rgba(74, 163, 255, 0.14);
+  color: var(--info);
+  background: color-mix(in oklab, var(--info) 14%, var(--panel));
 }
 
 .feed-row__delta--pending {
-  color: var(--gold);
+  color: var(--attn);
 }
 
 /* AI 想升级到团灭级、等人确认 */
 .feed-row__status--escalate {
   color: var(--danger-text);
-  background: rgba(229, 72, 77, 0.14);
-  border-color: rgba(229, 72, 77, 0.4);
+  background: color-mix(in oklab, var(--danger) 14%, var(--panel));
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--panel));
 }
 
 .feed__more {
   align-self: center;
   margin-top: 0.75rem;
+  min-height: var(--tap-min);
 }
 
 @media (pointer: coarse) {
@@ -229,3 +232,5 @@
     min-height: var(--tap-min);
   }
 }
+
+.feed-row__meta time { font-size: var(--fs-xs); }

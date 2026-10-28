@@ -9,7 +9,7 @@ interface TierBadgeProps {
   showName?: boolean;
 }
 
-/** Emoji + tier-name pill, tinted with the tier color. */
+/** Self-only tier label, with the same quiet visual treatment for every tier. */
 export function TierBadge({
   score,
   tier,
@@ -20,7 +20,6 @@ export function TierBadge({
   return (
     <span
       className={`tier-badge tier-badge--${size}`}
-      style={{ ['--tier' as string]: resolved.color }}
       title={resolved.blurb}
     >
       <span className="tier-badge__emoji" aria-hidden="true">

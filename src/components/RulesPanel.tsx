@@ -25,7 +25,7 @@ export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = 
   };
 
   return (
-    <section className="rules panel" id={alwaysOpen ? undefined : 'rules'}>
+    <section className={`rules panel${alwaysOpen ? ' rules--reference' : ''}`} id={alwaysOpen ? undefined : 'rules'}>
       <h2 className="rules__heading">
         {alwaysOpen ? '计分规则' : <button
           type="button"
@@ -120,7 +120,7 @@ export function RulesPanel({ config, open: openProp, onOpenChange, alwaysOpen = 
               <h3 className="rules__block-title">信誉段位</h3>
               <ul className="rules__tiers">
                 {TIERS.map((t) => (
-                  <li key={t.name} className="rules__tier" style={{ ['--tier' as string]: t.color }}>
+                  <li key={t.name} className="rules__tier">
                     <span className="rules__tier-emoji" aria-hidden="true">
                       {t.emoji}
                     </span>

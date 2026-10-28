@@ -22,6 +22,7 @@
 }
 
 button.msl__standing {
+  min-height: var(--tap-min);
   cursor: pointer;
 }
 
@@ -52,3 +53,64 @@ button.msl__standing {
 
 .msl--card { padding: 1.25rem; gap: 0.75rem; }
 .msl--card .msl__standing { font-size: var(--fs-xl); }
+
+.msl--overview {
+  align-content: start;
+  justify-items: start;
+  gap: .5rem;
+  padding: 1.25rem;
+}
+
+.msl--overview > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; width: 100%; }
+
+.msl--overview h2 {
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.msl__rank {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin-top: 0;
+}
+
+.msl__number {
+  font-size: 2.25rem;
+  line-height: 1.3;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.msl__number span {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
+
+.msl--overview .msl__heal {
+  line-height: 1.6;
+}
+
+.msl__open {
+  min-height: var(--tap-min);
+  color: var(--info);
+  font-size: var(--fs-sm);
+  padding: 0;
+  text-align: left;
+}
+
+.msl__unlisted {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+}
+
+@media (max-width: 600px) {
+  .msl--overview { padding: 1.25rem; }
+}
+
+@media (hover: hover) {
+  .msl__open:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}

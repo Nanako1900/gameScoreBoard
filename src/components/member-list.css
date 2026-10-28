@@ -3,7 +3,9 @@
 .member-list__search { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem; }
 .member-list__search label { font-weight: 600; }
 .member-list__search input { flex: 1; min-width: 0; min-height: var(--tap-min); padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-input); border-radius: var(--r-md); color: var(--text); background: var(--bg-elevated); }
+  border: 1px solid var(--border-input); border-radius: var(--r-md); color: var(--text); background: var(--bg-elevated);
+  font-size: var(--fs-md);
+}
 .member-list__hint { color: var(--muted); font-size: var(--text-sm); }
 .member-list__error { color: var(--danger-text); }
 .member-list__people { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
@@ -12,7 +14,7 @@
 .member-list__name { display: grid; gap: 0.35rem; min-width: 0; }
 .member-list__name > strong { overflow-wrap: anywhere; }
 .member-list__roles, .member-list__details, .member-list__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
-.member-list__roles > span { padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: var(--r-pill); font-size: var(--text-xs); color: var(--muted); }
+.member-list__roles > span { padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--muted); }
 .member-list__details { color: var(--muted); font-size: var(--text-sm); }
 .member-list__details strong { color: var(--text); }
 .member-list__avatar { width: 40px; height: 40px; flex: none; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); background: var(--panel-2); }

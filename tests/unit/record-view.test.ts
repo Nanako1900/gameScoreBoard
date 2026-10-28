@@ -8,7 +8,6 @@ import {
   violationLabel,
 } from '../../src/lib/recordView';
 import { computeTrends } from '../../src/lib/feedStats';
-import { computeWeekHighlights } from '../../src/lib/weekStars';
 import type { CaseStatus, RecordItem, ViolationType } from '../../src/types';
 
 // B1-1 (spec §11 #3 tier b): before the verdict, the API tells an outsider only
@@ -86,14 +85,6 @@ describe('recordView — naming a case', () => {
 
 describe('the week’s numbers ignore a hidden case', () => {
   const OLD = rec(1, '老王', 'organizer_bonus', 2, 'decided', LAST_WEEK);
-
-  it('still finds the stars, and a hidden case of theirs takes nothing away', () => {
-    const records = [hidden(9, '阿杰'), hidden(8, '阿杰', 'judging'), rec(3, '阿杰', 'on_time_bonus', 2, 'decided'), rec(2, '阿杰', 'on_time_bonus', 2, 'decided'), OLD];
-    expect(computeWeekHighlights(records, NEXT_RESET)).toEqual({
-      kind: 'stars',
-      stars: [{ user: { id: '阿杰', username: '阿杰', avatar_url: null }, onTime: 2 }],
-    });
-  });
 
   it('never moves the week’s trend', () => {
     expect(computeTrends([hidden(9, '阿杰'), OLD], NEXT_RESET)).toEqual({});

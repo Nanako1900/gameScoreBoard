@@ -38,8 +38,7 @@
   width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
-  padding: clamp(1.5rem, 1rem + 3vw, 3.5rem) var(--space-page)
-    clamp(2rem, 1.5rem + 3vw, 4rem);
+  padding: 2rem var(--space-page) 3rem;
   display: flex;
   flex-direction: column;
   /* Was --space-section (up to 5rem) between EVERY block, which pushed the page
@@ -58,7 +57,7 @@
   padding: 1.5rem var(--space-page);
   text-align: center;
   color: var(--faint);
-  font-size: var(--text-xs);
+  font-size: var(--fs-sm);
 }
 
 /* --- Routes (P1-1) ------------------------------------------------------------ */
@@ -74,9 +73,9 @@
 .app__page {
   flex: 1;
   width: 100%;
-  max-width: 720px;
+  max-width: var(--maxw);
   margin: 0 auto;
-  padding: 0 var(--space-page) clamp(2rem, 1.5rem + 3vw, 4rem);
+  padding: 2rem var(--space-page) 4rem;
 }
 
 .app__page-status {
@@ -87,3 +86,5 @@
 
 .app__footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.25rem 1.5rem; margin-bottom: 0.5rem; }
 .app__footer a { display: inline-flex; align-items: center; min-height: 44px; }
+
+.app__page--detail, .app__filing { max-width: 840px; }

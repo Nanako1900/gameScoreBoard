@@ -1,9 +1,9 @@
-.settings-page { max-width: var(--maxw); margin: 0 auto; padding: var(--space-page); min-width: 0; }
+.settings-page { max-width: var(--maxw); margin: 0 auto; padding: 0; min-width: 0; }
 .settings-page__heading { margin-bottom: 1.5rem; }
 .settings-page__heading > div > p { color: var(--muted); margin-top: .45rem; }
 .settings-page__layout { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 1.75rem; }
 .settings-page__nav { display: flex; flex-direction: column; gap: .3rem; align-self: start; }
-.settings-page__nav > span { color: var(--muted); font-size: var(--fs-xs); padding: .6rem .75rem; }
+.settings-page__nav > span { color: var(--muted); font-size: var(--fs-sm); padding: .6rem .75rem; }
 .settings-page__nav > span:not(:first-child) { margin-top: .8rem; }
 .settings-page__nav > a { padding: .65rem .75rem; min-height: var(--tap-min); border-radius: var(--r-sm); color: var(--muted); }
 .settings-page__nav > a[aria-current="page"] { background: var(--panel-2); color: var(--text); font-weight: 600; }

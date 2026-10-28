@@ -1,9 +1,6 @@
 import type { Config, User } from '../types';
-import { COUNTDOWN_TICK_MS } from '../lib/constants';
-import { formatResetCountdown } from '../lib/time';
 import { HOME_PATH, playerPath, type Route, type RouteLayout } from '../lib/routes';
 import { PRIMARY_NAVIGATION, primaryNavigationKey } from '../lib/navigation';
-import { useNow } from '../lib/useNow';
 import { AccountMenu } from './AccountMenu';
 import { LoginLink } from './LoginLink';
 import { Link } from './Link';
@@ -14,7 +11,7 @@ interface HeaderProps {
   me: User | null;
   onLogout: () => void;
   onOpenOnboarding: () => void;
-  /** Retained for older callers; AI settings now live at /admin/ai. */
+  /** Retained for older callers; AI settings now live at /settings/ai. */
   onOpenAiPanel?: () => void;
   pending?: boolean;
   layout?: RouteLayout;
@@ -47,15 +44,9 @@ function HeaderNavigation({ route, me = null, todoCount = 0 }: { route?: Route; 
 }
 
 export function Header(props: HeaderProps): JSX.Element {
-  const now = useNow(COUNTDOWN_TICK_MS);
-  const countdown = props.config ? formatResetCountdown(props.config.nextResetAt, now) : '—';
   return <header className="hdr"><div className="hdr__inner">
     <HeaderBrand />
     {!props.pending && <HeaderNavigation route={props.route} me={props.me} todoCount={props.todoCount} />}
-    <div className="hdr__reset" aria-label="距离每周恢复">
-      <span className="hdr__reset-label eyebrow">每周恢复</span>
-      <span className="hdr__reset-time tabular">{countdown}</span>
-    </div>
     {!props.pending && <div className="hdr__actions">{props.me
       ? <AccountMenu me={props.me} myPath={props.myPath ?? playerPath(props.me.id)} dot={props.meDot}
         onOpenOnboarding={props.onOpenOnboarding} onRecord={props.onRecord} onLogout={props.onLogout} />

@@ -15,7 +15,7 @@ function initials(name: string): string {
   if (trimmed.length === 0) {
     return '?';
   }
-  // For CJK names take the last character; for latin take first letter.
+  // Use the first whole Unicode character; uppercase Latin initials.
   const first = Array.from(trimmed)[0];
   return first.toUpperCase();
 }
@@ -30,20 +30,13 @@ export function Avatar({
   ringColor,
 }: AvatarProps): JSX.Element {
   const [failed, setFailed] = useState(false);
-  const style: React.CSSProperties = {
-    width: size,
-    height: size,
-    fontSize: Math.round(size * 0.42),
-    ...(ringColor ? { ['--ring' as string]: ringColor } : {}),
-  };
   const className = `avatar${ring ? ' avatar--ring' : ''}`;
   const resolved = failed ? null : avatarSrc(src);
 
-  if (resolved) {
-    return (
-      <img
-        className={className}
-        style={style}
+  return (
+    <span className={className} aria-hidden="true">
+      {resolved ? <img
+        className="avatar__image"
         src={resolved}
         alt=""
         loading="lazy"
@@ -51,13 +44,12 @@ export function Avatar({
         width={size}
         height={size}
         onError={() => setFailed(true)}
-      />
-    );
-  }
-
-  return (
-    <span className={`${className} avatar--fallback`} style={style} aria-hidden="true">
-      {initials(name)}
+      /> : <svg className="avatar__fallback" width={size} height={size} viewBox={`0 0 ${size} ${size}`} focusable="false">
+        <text x={size / 2} y={size / 2} fontSize={Math.round(size * 0.42)} textAnchor="middle" dominantBaseline="central">{initials(name)}</text>
+      </svg>}
+      {ring && <svg className="avatar__ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`} focusable="false">
+        <circle cx={size / 2} cy={size / 2} r={Math.max(0, size / 2 - 1)} fill="none" stroke={ringColor ?? 'var(--border-strong)'} strokeWidth={2} />
+      </svg>}
     </span>
   );
 }

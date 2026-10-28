@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { boardTzLabel } from '@shared/boardTime';
 import { VOICE_RETENTION_DAYS } from '@shared/voice';
 import { firstAvailableVoiceDate, type VoiceDay, type VoiceGap } from '@shared/voiceDays';
@@ -11,7 +11,14 @@ import { Link } from './Link';
 import { NotFound } from './NotFound';
 import './voice-log.css';
 
-interface VoiceLogProps { ownerId: string; userId: string | null; offsetHours: number; personPath?: (userId: string) => string }
+interface VoiceLogProps {
+  ownerId: string;
+  userId: string | null;
+  offsetHours: number;
+  personPath?: (userId: string) => string;
+  /** Embedded personal modules can replace the whole-route 404 presentation. */
+  missingContent?: ReactNode;
+}
 type RangeDays = 7 | 14 | 31;
 type ReadState =
   | { key: string; status: 'loading' | 'missing' }
@@ -53,7 +60,7 @@ function DailyHistory({ day, offsetHours }: { day: VoiceDay; offsetHours: number
 }
 
 /** The request key hides old evidence in the first render after any scope change. */
-export function VoiceLog({ ownerId, userId, offsetHours, personPath = adminVoicePath }: VoiceLogProps): JSX.Element {
+export function VoiceLog({ ownerId, userId, offsetHours, personPath = adminVoicePath, missingContent }: VoiceLogProps): JSX.Element {
   const dateId = useId(); const rangeId = useId();
   const now = Date.now();
   const today = boardToday(now, offsetHours);
@@ -80,7 +87,7 @@ export function VoiceLog({ ownerId, userId, offsetHours, personPath = adminVoice
   }, [key]);
 
   const visible: ReadState = read.key === key ? read : { key, status: 'loading' };
-  if (visible.status === 'missing') return <NotFound title={NOT_FOUND_TITLE} />;
+  if (visible.status === 'missing') return missingContent === undefined ? <NotFound title={NOT_FOUND_TITLE} /> : <>{missingContent}</>;
   return <div className="voice-log">
     <h3>{visible.status === 'history' ? `${visible.data.user.username}的语音记录` : userId === null ? '当天语音记录' : '个人语音记录'}</h3>
     <p className="voice-log__hint">记录保留 {visible.status === 'day' || visible.status === 'history' ? visible.data.retention_days : VOICE_RETENTION_DAYS} 天 · {boardTzLabel(offsetHours)}</p>

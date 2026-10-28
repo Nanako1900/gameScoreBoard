@@ -4,3 +4,5 @@
 .board__heading p { color: var(--muted); margin-top: 0.5rem; }
 .board__heading a { display: inline-flex; align-items: center; min-height: 44px; }
 .board__empty { color: var(--muted); font-size: var(--fs-sm); }
+
+.board__reset { color: var(--muted); font-size: var(--fs-sm); }

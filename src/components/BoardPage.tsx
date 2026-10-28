@@ -1,5 +1,8 @@
 import type { Config, PublicUser, RecordItem, User, WeeklyReport } from '../types';
 import { boardPath, type BoardTab } from '../lib/routes';
+import { COUNTDOWN_TICK_MS } from '../lib/constants';
+import { formatResetCountdown } from '../lib/time';
+import { useNow } from '../lib/useNow';
 import { goBack } from '../lib/router';
 import { Leaderboard } from './Leaderboard';
 import { RecordsFeed } from './RecordsFeed';
@@ -31,6 +34,7 @@ function BoardBody({ tab, config, me, data }: BoardPageProps & { data: BoardData
   }
 }
 export function BoardPage(props: BoardPageProps): JSX.Element {
+  const now = useNow(COUNTDOWN_TICK_MS);
   const data = props.data ?? { participants: [], records: [], report: null, reportStale: false,
     trends: {}, counts: {}, regenerating: false, onSelectUser: () => {} };
   return <Modal open variant="page" labelledBy="board-title" onClose={goBack}>
@@ -39,6 +43,7 @@ export function BoardPage(props: BoardPageProps): JSX.Element {
         {props.tab === 'list' && <p>上榜成员的当前信誉分与本周变化。</p>}</div>
         {props.tab === 'list' && <Link to={boardPath('rules')}>计分规则</Link>}</header>
       <BoardBody {...props} data={data} />
+      {props.tab === 'list' && <p className="board__reset" aria-label="距离每周恢复">每周恢复 +{props.config.weeklyHeal} · 距离下次恢复 <span className="board__reset-time tabular">{formatResetCountdown(props.config.nextResetAt, now)}</span></p>}
     </div>
   </Modal>;
 }

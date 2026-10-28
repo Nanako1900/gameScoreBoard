@@ -1,22 +1,29 @@
 .avatar {
+  position: relative;
+  display: inline-grid;
   flex: none;
+  vertical-align: middle;
+}
+
+.avatar__image,
+.avatar__fallback {
+  display: block;
+  grid-area: 1 / 1;
   border-radius: 50%;
   object-fit: cover;
   background: var(--panel-2);
   border: 1px solid var(--border);
 }
 
-.avatar--fallback {
-  display: inline-grid;
-  place-items: center;
-  font-family: var(--font-display);
+.avatar__fallback {
+  font-family: var(--font-body);
   font-weight: 700;
-  color: var(--muted);
-  background: radial-gradient(circle at 30% 25%, var(--panel-2), var(--bg-elevated));
+  fill: var(--muted);
   user-select: none;
 }
 
-.avatar--ring {
-  border: 2px solid var(--ring, var(--border-strong));
-  box-shadow: 0 0 0 2px var(--bg), 0 0 16px -4px var(--ring, transparent);
+.avatar__ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }

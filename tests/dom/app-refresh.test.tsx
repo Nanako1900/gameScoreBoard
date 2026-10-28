@@ -94,7 +94,7 @@ function routes(overrides: Record<string, Route> = {}): Record<string, Route> {
   };
 }
 
-const clock = (): string => document.querySelector('.hdr__reset-time')?.textContent ?? '';
+const clock = (): string => document.querySelector('.board__reset-time')?.textContent ?? '';
 
 let visibility: DocumentVisibilityState = 'visible';
 
@@ -121,7 +121,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('App — the header countdown', () => {
+describe('App — the board recovery countdown', () => {
   it('ticks by the minute and reads 回血中… once the reset has passed', async () => {
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],

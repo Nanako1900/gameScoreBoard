@@ -198,3 +198,24 @@ describe('voice evidence response isolation', () => {
     expect(screen.getByRole('status')).toHaveTextContent('正在读取语音记录');
   });
 });
+
+describe('embedded voice unavailable content', () => {
+  it('uses a caller-supplied local notice for an unsupported 404 without inventing empty evidence', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: 'Not found' })));
+    render(<VoiceLog ownerId="self" userId="self" offsetHours={8} missingContent={<p>语音记录暂不可用。</p>} />);
+    expect(await screen.findByText('语音记录暂不可用。')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '这页不存在' })).not.toBeInTheDocument();
+    expect(screen.queryByText('没有保存的语音记录，不代表没来')).not.toBeInTheDocument();
+    expect(screen.queryByText('已覆盖')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+  it('keeps ordinary read errors retryable even when a local missing notice is provided', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(503, { error: '暂时无法读取' })));
+    render(<VoiceLog ownerId="self" userId="self" offsetHours={8} missingContent={<p>语音记录暂不可用。</p>} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取');
+    expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument();
+    expect(screen.queryByText('语音记录暂不可用。')).not.toBeInTheDocument();
+    expect(screen.queryByText('没有保存的语音记录，不代表没来')).not.toBeInTheDocument();
+    expect(screen.queryByText('已覆盖')).not.toBeInTheDocument();
+  });
+});

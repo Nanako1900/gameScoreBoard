@@ -19,7 +19,7 @@ interface LeaderboardProps {
   onSelect: (id: string) => void;
   /** The viewer: their row is highlighted and is the only one with a TierBadge. */
   meId?: string | null;
-  /** Rendered between .lb__head and the list (WeekHighlights in P0; BoardMini's head from P3). */
+  /** Optional supporting content between the heading and rows for existing callers. */
   highlights?: ReactNode;
 }
 

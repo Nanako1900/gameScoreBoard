@@ -77,7 +77,7 @@ function AppMain(): JSX.Element {
   });
   const [welcomePending, setWelcomePending] = useState(welcomeEntry.requested);
   const welcomeRedirected = useRef(false);
-  const [statementCase, setStatementCase] = useState<RecordItem | null>(null);
+  const [statementState, setStatementState] = useState<{ scope: string; record: RecordItem } | null>(null);
   const [todoRefreshKey, setTodoRefreshKey] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(readOnboardingDismissed);
@@ -99,6 +99,13 @@ function AppMain(): JSX.Element {
   // A role returning to its old value does not revive a formerly privileged seed.
   const seedScope = JSON.stringify([viewerScope, viewerLease.current.generation]);
   const liveSeedScope = useRef(seedScope); liveSeedScope.current = seedScope;
+  const isCurrentActor = useCallback((): boolean => liveSeedScope.current === seedScope, [seedScope]);
+  const statementCase = statementState?.scope === seedScope ? statementState.record : null;
+  const setStatementCase = useCallback((record: RecordItem | null): void => {
+    if (!isCurrentActor()) return;
+    if (record === null) setStatementState(null);
+    else if (ready?.me?.id === record.subject.id) setStatementState({ scope: seedScope, record });
+  }, [isCurrentActor, ready?.me?.id, seedScope]);
   const pinned = pinnedState?.scope === seedScope ? pinnedState.value : null;
   const setPinned = useCallback((value: PinnedCase): void => {
     if (liveSeedScope.current === seedScope) setPinnedState({ scope: seedScope, value });
@@ -293,6 +300,7 @@ function AppMain(): JSX.Element {
         onPinned={setPinned}
         onChanged={handleChanged}
         onOpenStatement={setStatementCase}
+        isCurrentActor={isCurrentActor}
       />
 
       <footer className="app__footer">
@@ -323,7 +331,9 @@ function AppMain(): JSX.Element {
           config={config}
           score={me?.score}
           onClose={() => setStatementCase(null)}
+          isCurrentActor={isCurrentActor}
           onDecided={() => {
+            if (!isCurrentActor()) return;
             handleChanged();
             setPlayerRefreshKey((n) => n + 1);
           }}
