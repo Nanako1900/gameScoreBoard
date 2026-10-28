@@ -39,6 +39,7 @@ import { useTodoSources } from './lib/useTodoSources';
 import { useNow } from './lib/useNow';
 import { Skeleton } from './components/Skeleton';
 import { Link } from './components/Link';
+import { CommunityEntry } from './components/CommunityEntry';
 import './app.css';
 
 /** Toasts sit outside AppMain so every child — and every dialog — can raise one. */
@@ -278,6 +279,7 @@ function AppMain(): JSX.Element {
         <HomeOverview me={me} config={config} rank={myRank} items={extra.settled ? items : null}
           records={visibleRecords} report={report} onOpenPlayer={openPlayer} now={now}
           reportStale={board?.reportStale} onDismissOnboarding={dismissHomeOnboarding} />
+        {me && <CommunityEntry accountKey={`${me.id}:${me.is_admin}`} />}
       </main>
 
       <RouteView

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { bootRouter, useLocation } from '../../src/lib/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../src/api';
+import { communityApi } from '../../src/community-api';
 import { App } from '../../src/App';
 import { SettingsPage } from '../../src/components/SettingsPage';
 import { DiscordNotificationSettings } from '../../src/components/DiscordNotificationSettings';
@@ -25,6 +26,7 @@ function page(me: User | null = ME, tab: 'profile' | 'discord' | 'members' | 'ai
   return wrap(<SettingsPage me={me} config={CFG} tab={tab} discord={discord} onDiscordChanged={vi.fn()} onSaved={vi.fn()} onChanged={vi.fn()} />);
 }
 beforeEach(() => {
+  vi.spyOn(communityApi, 'overview').mockRejectedValue(new api.ApiError('Not found', 404));
   vi.spyOn(api, 'updateAiConfig').mockResolvedValue({ ok: true, enabled: true, prompt_version: 'new' });
   vi.spyOn(api, 'setDiscordNotify').mockResolvedValue(BOUND);
   vi.spyOn(api, 'resendWelcome').mockResolvedValue({ ok: true });

@@ -17,6 +17,8 @@ export type ToolsTab = (typeof TOOLS_TABS)[number];
 
 export type Route =
   | { readonly name: 'home' }
+  | { readonly name: 'community'; readonly tab: 'rooms' | 'roles' | 'play' }
+  | { readonly name: 'communityAdmin' }
   | { readonly name: 'welcome' }
   | { readonly name: 'guide' }
   | { readonly name: 'cases' }
@@ -111,6 +113,11 @@ function matchSegments(segments: readonly string[]): Route {
   if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
   if (segments.length === 1 && head === 'guide') return { name: 'guide' };
   if (segments.length === 1 && head === 'cases') return { name: 'cases' };
+  if (head === 'community') {
+    if (segments.length === 1) return { name: 'community', tab: 'rooms' };
+    if (segments.length === 2 && (first === 'roles' || first === 'play')) return { name: 'community', tab: first };
+  }
+  if (segments.length === 2 && (head === 'settings' || head === 'admin') && first === 'community') return { name: 'communityAdmin' };
   if (head === 'settings') {
     if (segments.length === 1) return { name: 'settings', tab: 'profile' };
     const tab = SETTINGS_TABS.find((value) => value === first);
@@ -179,6 +186,10 @@ export function formatRoute(route: LinkableRoute): string {
   switch (route.name) {
     case 'home':
       return HOME_PATH;
+    case 'community':
+      return route.tab === 'rooms' ? '/community' : `/community/${route.tab}`;
+    case 'communityAdmin':
+      return '/settings/community';
     case 'welcome':
       return WELCOME_PATH;
     case 'guide':

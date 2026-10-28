@@ -13,6 +13,7 @@ export const PRIMARY_NAVIGATION = [
 /** Older addresses retain their content while marking the matching new destination. */
 export function primaryNavigationKey(route: Route): PrimaryNavigationKey | null {
   switch (route.name) {
+    case 'community':
     case 'home':
       return 'home';
     case 'player':
@@ -22,6 +23,7 @@ export function primaryNavigationKey(route: Route): PrimaryNavigationKey | null 
     case 'playerCase':
     case 'tools':
       return 'cases';
+    case 'communityAdmin':
     case 'settings':
       return 'settings';
     case 'board':

@@ -5,6 +5,17 @@ import { beforeEach } from 'vitest';
 import { pool } from './cloudflare-test';
 
 const TABLES = [
+  'community_welcomes',
+  'community_role_choices',
+  'community_ai_usage',
+  'community_poll_votes',
+  'community_fun',
+  'community_audit',
+  'community_operations',
+  'community_room_access',
+  'community_rooms',
+  'community_resources',
+  'community_settings',
   'voice_sessions',
   'voice_coverage',
   'ai_verdicts',

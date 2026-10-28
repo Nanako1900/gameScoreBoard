@@ -2,7 +2,7 @@
 // PostgreSQL needs, so the shared worker suite cannot cover it.
 
 import pg from 'pg';
-import { describe, expect, inject, it } from 'vitest';
+import { afterEach, describe, expect, inject, it } from 'vitest';
 import { migrate } from '../../server/src/db/migrate';
 import { env, pool } from './cloudflare-test';
 
@@ -41,6 +41,16 @@ describe('PgD1Database', () => {
 const MIGRATIONS = new URL('../../server/migrations', import.meta.url).pathname;
 
 describe('migrate', () => {
+  let cleanupDatabase: string | null = null;
+  // DROP DATABASE waits for a cluster checkpoint. The larger integration suite
+  // can leave enough dirty relation files for cleanup to exceed a test's 5 s
+  // budget; keep that I/O outside the unchanged collation assertions.
+  afterEach(async () => {
+    const name = cleanupDatabase;
+    cleanupDatabase = null;
+    if (name) await pool.query(`DROP DATABASE IF EXISTS ${name}`);
+  }, 30_000);
+
   it('accepts the C-collated test database and is idempotent', async () => {
     const result = await migrate(pool, MIGRATIONS);
     expect(result.applied).toEqual([]);
@@ -61,6 +71,7 @@ describe('migrate', () => {
           .catch(() => false),
       );
     if (!created) ctx.skip();
+    cleanupDatabase = name;
     const url = new URL(inject('pgUrl'));
     url.pathname = `/${name}`;
     const other = new pg.Pool({ connectionString: url.toString(), max: 1 });
@@ -70,7 +81,6 @@ describe('migrate', () => {
       expect(tables.rows[0].n).toBe(0);
     } finally {
       await other.end();
-      await pool.query(`DROP DATABASE IF EXISTS ${name}`);
     }
   });
 });

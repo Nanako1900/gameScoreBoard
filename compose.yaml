@@ -118,6 +118,8 @@ services:
       # Developer Portal → OAuth2. See docs/DEPLOY-DISCORD.md.
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      # Node-only community module. Enable together with the bot after backup/migration.
+      COMMUNITY_ENABLED: ${COMMUNITY_ENABLED:-false}
     volumes:
       - app-data:/data
     depends_on:
@@ -152,6 +154,7 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN:-}
       # The Application ID — the same number as DISCORD_CLIENT_ID.
       DISCORD_APP_ID: ${DISCORD_APP_ID:-}
+      COMMUNITY_ENABLED: ${COMMUNITY_ENABLED:-false}
       GUILD_ID: ${GUILD_ID:-1114391825336250432}
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
       APP_URL: ${APP_URL:-https://capi.nanako.org}

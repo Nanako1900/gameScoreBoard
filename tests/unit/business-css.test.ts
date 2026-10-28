@@ -30,7 +30,8 @@ describe('business page visual contract', () => {
   it.each(['.aai__input', '.aai__textarea', '.ob__name-input', '.cd__textarea',
     '.cd-extra__input', '.sd__textarea', '.aps__textarea', '.pd__score-input', '.pd__override-input',
     '.voice-log__controls input', '.voice-log__controls select', '.member-list__search input',
-    '.tools-page__card > input', '.cases-page__filter select'])('keeps %s readable and touch-sized', (selector) => {
+    '.tools-page__card > input', '.cases-page__filter select',
+    '.community-page input:not([type=checkbox])', '.community-page textarea', '.community-page select'])('keeps %s readable and touch-sized', (selector) => {
     const body = declarations(selector);
     expect(body, selector).toMatch(readableFont);
     expect(body, selector).toMatch(touchSize);

@@ -15,6 +15,8 @@ import { AdminPage } from './AdminPage';
 import { CasesPage } from './CasesPage';
 import type { TodoItem } from '../lib/todo';
 import { SettingsPage } from './SettingsPage';
+import { CommunityPage } from './CommunityPage';
+import { CommunityAdminPage } from './CommunityAdminPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -151,6 +153,10 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         onComplete={props.onWelcomeDone ?? (() => navigate('/'))} onBeforeBind={props.onBeforeWelcomeBind} notice={props.welcomeNotice} /></PageShell>;
     case 'guide':
       return <PageShell><GuidePage /></PageShell>;
+    case 'community':
+      return <PageShell><CommunityPage tab={route.tab} accountKey={`${props.me?.id ?? 'guest'}:${props.me?.is_admin}`} /></PageShell>;
+    case 'communityAdmin':
+      return <PageShell><CommunityAdminPage me={props.me} /></PageShell>;
     case 'admin':
       if (route.tab === 'voice') return <PageShell><AdminPage me={props.me} config={props.config} tab="voice" onChanged={props.onChanged} /></PageShell>;
       return <PageShell><SettingsPage me={props.me} config={props.config} tab={route.tab} discord={props.discordRead ?? { value: undefined, loading: false }}

@@ -39,6 +39,8 @@ import type { Env } from '../../worker/types';
 import { envFlag, envInt } from './env';
 import { createDispatcher, type Dispatcher } from './outbox/dispatcher';
 import { scheduleBoardRefresh } from './outbox/board-delivery';
+import { COMMUNITY_COMMANDS } from './community/commands';
+import { createCommunityRuntime } from './community/runtime';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -49,14 +51,15 @@ const IN_FLIGHT_GRACE_MS = 5_000;
 const RETRY_LATER_MS = 5 * 60_000;
 
 
-async function registerCommands(client: Client<true>, config: BotConfig): Promise<void> {
+async function registerCommands(client: Client<true>, config: BotConfig, community = false): Promise<void> {
   if (client.application.id !== config.appId) {
     console.error(`DISCORD_APP_ID ${config.appId} is not the token's application (${client.application.id})`);
   }
   try {
     // Guild commands update instantly; a PUT of unchanged commands costs nothing.
-    await client.rest.put(Routes.applicationGuildCommands(config.appId, config.guildId), { body: COMMANDS });
-    console.log(`registered ${COMMANDS.length} slash commands in guild ${config.guildId}`);
+    const commands = community ? [...COMMANDS, ...COMMUNITY_COMMANDS] : COMMANDS;
+    await client.rest.put(Routes.applicationGuildCommands(config.appId, config.guildId), { body: commands });
+    console.log(`registered ${commands.length} slash commands in guild ${config.guildId}`);
   } catch (error) {
     console.error('could not register the slash commands', describeError(error));
   }
@@ -117,7 +120,11 @@ function main(): void {
   let stopping = false;
   const inFlight = new Set<Promise<void>>();
 
-  const client = createClient();
+  const communityEnabled = envFlag(process.env.COMMUNITY_ENABLED, false, 'COMMUNITY_ENABLED');
+  const client = createClient({ community: communityEnabled });
+  const community = communityEnabled ? createCommunityRuntime({ pool, db: ctx.db, client, guildId: config.guildId,
+    frontendUrl: config.frontendUrl, env: actionCtx.env, isReadOnly: () => ctx.readOnly || stopping,
+    onError: error => console.error('community processing failed', describeError(error)) }) : null;
   const recorder = createVoiceRecorder({
     pool,
     // The getter is invoked when each queued job executes, not at event admission.
@@ -136,7 +143,7 @@ function main(): void {
   client.once(Events.ClientReady, (ready) => {
     gateway = 'ready';
     console.log(`gateway ready as ${ready.user.tag}`);
-    void registerCommands(ready, config);
+    void registerCommands(ready, config, communityEnabled);
     if (stopping) return;
     dispatcher = createDispatcher({
       pool,
@@ -182,7 +189,9 @@ function main(): void {
       .catch((error: unknown) => console.error('could not reset dm_ok', describeError(error)));
     const caller = { id: interaction.user.id, username: interaction.user.username };
     let work: Promise<void>;
-    if (interaction.isChatInputCommand()) {
+    if (community?.accepts(interaction)) {
+      work = community.handle(interaction);
+    } else if (interaction.isChatInputCommand()) {
       work = respond(interaction, ctx, handleCommand, { guildId: config.guildId });
     } else if (interaction.isButton()) {
       const verdictId = parseVerdictButton(interaction.customId);
@@ -284,7 +293,7 @@ function main(): void {
     // The dispatcher first: it sends through the client's REST, which
     // destroy() takes the token from, so an event in flight would fail.
     await Promise.race([
-      Promise.allSettled([dispatcher?.stop(), recorder.stop()]),
+      Promise.allSettled([dispatcher?.stop(), recorder.stop(), community?.stop()]),
       new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
     ]);
     await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));
