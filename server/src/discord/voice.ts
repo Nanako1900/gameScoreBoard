@@ -1,66 +1,90 @@
-// One private embed. Long histories first lose detail, then whole lines; the
-// coverage warning and uncertainty qualifications survive both reductions.
+// One private embed. Keep the evidence summary when detail is too long;
+// only complete gap entries are omitted at the final reduction.
 import { boardTzLabel } from '../../../shared/boardTime';
 import type { VoiceHistoryResponse } from '../../../shared/voiceApi';
 import type { VoiceDay, VoiceDaySegment } from '../../../shared/voiceDays';
-import { VOICE_GAP_EXPLANATION, VOICE_GAP_NOTICE, voiceDayLabel, voiceDuration, voiceSegmentNotes, voiceTime } from '../../../shared/voicePresentation';
+import {
+  VOICE_EMPTY_NOTICE,
+  VOICE_GAP_EXPLANATION,
+  VOICE_GAP_NOTICE,
+  VOICE_MINUTE_NOTE,
+  voiceDayLabel,
+  voiceDaysRecentFirst,
+  voiceDuration,
+  voiceFirstJoinText,
+  voiceHistoryPeriod,
+  voiceInterval,
+  voiceSegmentNotes,
+} from '../../../shared/voicePresentation';
 import { VOICE_UNKNOWN_CHANNEL } from '../../../shared/voice';
 import { GOLD, RED, LIMITS, fitLines, safeLine } from './render';
 import type { BotEmbed } from './types';
 
-const COMPLETE = '完整记录请找裁判在网页查看';
+const COMPLETE = '完整记录请在网页查看';
 const NAME_MAX = 64;
 const CHANNEL_MAX = 256;
 
 function summary(day: VoiceDay, offsetHours: number): string {
-  const first = day.first_join === null ? '—' : voiceTime(day.first_join, offsetHours);
-  return `${voiceDayLabel(day.date)} · 首次 ${first} · 共 ${voiceDuration(day.total_min)}`;
+  const heading = `**${voiceDayLabel(day.date)}**`;
+  return `${heading}\n${day.segments.length === 0 ? '无保存记录'
+    : `累计 ${voiceDuration(day.total_min)} · ${voiceFirstJoinText(day, offsetHours)}`}`;
 }
+
 function notes(segments: readonly VoiceDaySegment[]): string[] {
   return [...new Set(segments.flatMap(voiceSegmentNotes))];
 }
-function segmentLine(segment: VoiceDaySegment, day: VoiceDay, offsetHours: number): string {
-  const at = (value: string): string => {
-    const dated = voiceTime(value, offsetHours, true);
-    return dated.slice(0, 5) === day.date.slice(5) ? voiceTime(value, offsetHours) : dated;
-  };
-  const end = segment.left_at === null ? '尚未记录离开' : at(segment.left_at);
-  // The unclosed marker already forms the range's end, so say it only once.
-  const qualifications = voiceSegmentNotes(segment).filter((note) => note !== '尚未记录离开');
+
+function segmentBlock(segment: VoiceDaySegment, day: VoiceDay, offsetHours: number): string {
+  // The range already marks an unclosed segment. Other qualifications remain
+  // on their own line instead of competing with the channel and timestamps.
+  const qualifications = voiceSegmentNotes(segment).filter(note => note !== '尚未记录离开');
   const channel = safeLine(segment.channel_name, CHANNEL_MAX) || VOICE_UNKNOWN_CHANNEL;
-  return `  ${at(segment.joined_at)}–${end} ${channel}${qualifications.length ? `（${qualifications.join('；')}）` : ''}`;
+  return [
+    `• ${channel}`,
+    `  ${voiceInterval(segment.joined_at, segment.left_at, offsetHours, day.date)}`,
+    ...(qualifications.length > 0 ? [`  说明：${qualifications.join('；')}`] : []),
+  ].join('\n');
 }
 
 export function renderVoiceHistory(history: VoiceHistoryResponse, offsetHours: number): BotEmbed {
-  const daily = history.days.map((day) => summary(day, offsetHours));
-  const detailed = history.days.flatMap((day, index) => [daily[index], ...day.segments.map((segment) => segmentLine(segment, day, offsetHours))]);
-  const compact = history.days.map((day, index) => {
-    const qualifications = notes(day.segments);
-    return `${daily[index]}${qualifications.length ? `（${qualifications.join('；')}）` : ''}`;
+  const days = voiceDaysRecentFirst(history.days);
+  const detailed = days.map(day => [summary(day, offsetHours), ...day.segments.map(segment => segmentBlock(segment, day, offsetHours))].join('\n'));
+  const compact = days.map(day => {
+    // The first-arrival text already says 接上一天 for a continuation-only day.
+    const qualifications = notes(day.segments).filter(note => note !== voiceFirstJoinText(day, offsetHours));
+    return [summary(day, offsetHours), ...(qualifications.length > 0 ? [`说明：${qualifications.join('；')}`] : [])].join('\n');
   });
-  const gaps = history.gaps.map((gap) => `${voiceTime(gap.from, offsetHours, true, true)}–${voiceTime(gap.to, offsetHours, true, true)}`);
-  const body = (days: string[], warning = true): string => [days.join('\n'),
-    ...(gaps.length ? ['未覆盖时段', ...(warning ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []), gaps.join('\n')] : [])].filter(Boolean).join('\n\n');
-  const footer = `保留 ${history.retention_days} 天 · 时间按${boardTzLabel(offsetHours)}`;
-  const embed: BotEmbed = {
-    title: `语音记录 · ${safeLine(history.user.username, NAME_MAX) || '未命名玩家'}`,
-    color: gaps.length > 0 ? RED : GOLD,
-    footer: { text: footer },
-  };
-  const full = body(detailed);
-  if (full.length <= LIMITS.embedDescription) return { ...embed, description: full || '暂无可显示的分日记录。' };
+  const gaps = history.gaps.map(gap => `• ${voiceInterval(gap.from, gap.to, offsetHours)}`);
+  const heading = `查询区间：${voiceHistoryPeriod(history.days)}\n时间：${boardTzLabel(offsetHours)}`;
+  const body = (dayBlocks: string[], gapLines: readonly string[], warnings = true): string => [
+    heading,
+    dayBlocks.join('\n\n'),
+    ...(gaps.length > 0 ? [
+      `**未覆盖时段 · ${gaps.length} 段**`,
+      ...(warnings ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []),
+      gapLines.join('\n'),
+    ] : []),
+  ].filter(Boolean).join('\n\n');
+  const baseFooter = `保留 ${history.retention_days} 天 · ${VOICE_MINUTE_NOTE}\n${VOICE_EMPTY_NOTICE}`;
+  const title = `语音记录 · ${safeLine(history.user.username, NAME_MAX) || '未命名玩家'}`;
+  const embed: BotEmbed = { title, color: gaps.length > 0 ? RED : GOLD };
+  const budget = (footer: string): number => Math.min(LIMITS.embedDescription, LIMITS.embedTotal - title.length - footer.length);
 
-  const condensed = body(compact);
-  const omission = history.days.some((day) => day.segments.length > 0) ? '段明细已省略。' : '';
-  if (condensed.length <= LIMITS.embedDescription) {
-    return { ...embed, description: condensed, footer: { text: `${footer}\n${omission}${COMPLETE}` } };
-  }
-  // Reserve the footer for facts that must never disappear during truncation.
-  // Its bounded, fixed vocabulary plus the short zone/retention label is well
-  // below 2048 chars; title + description + footer stays below the 6000 total.
-  const qualifications = notes(history.days.flatMap((day) => day.segments));
-  return { ...embed,
-    description: fitLines(body(compact, false).split('\n'), LIMITS.embedDescription, (count) => `…其余 ${count} 行已省略`),
-    footer: { text: [footer, omission, qualifications.join('；'), ...(gaps.length ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []), COMPLETE].filter(Boolean).join('\n') },
-  };
+  const full = body(detailed, gaps);
+  if (full.length <= budget(baseFooter)) return { ...embed, description: full, footer: { text: baseFooter } };
+
+  const segmentCount = days.reduce((total, day) => total + day.segments.length, 0);
+  const omission = segmentCount > 0 ? `已省略 ${segmentCount} 条分日段明细。` : '';
+  const compactFooter = [baseFooter, omission, COMPLETE].filter(Boolean).join('\n');
+  const condensed = body(compact, gaps);
+  if (condensed.length <= budget(compactFooter)) return { ...embed, description: condensed, footer: { text: compactFooter } };
+
+  // The command permits 1–14 dates: all day summaries and their qualifications
+  // fit before this bounded list. Keep every fixed warning outside that list.
+  const finalFooter = [baseFooter, omission, ...(gaps.length > 0 ? [VOICE_GAP_NOTICE, VOICE_GAP_EXPLANATION] : []), COMPLETE]
+    .filter(Boolean).join('\n');
+  const prefix = body(compact, [], false);
+  const visibleGaps = fitLines(gaps, budget(finalFooter) - prefix.length - 2,
+    count => `另 ${count} 段未覆盖时段未展开。`);
+  return { ...embed, description: `${prefix}\n\n${visibleGaps}`, footer: { text: finalFooter } };
 }

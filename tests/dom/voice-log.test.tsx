@@ -82,7 +82,7 @@ describe('voice management page', () => {
     expect(screen.getByLabelText('日期')).toHaveValue(TODAY);
     expect(screen.getByLabelText('日期')).toHaveAttribute('min', firstAvailableVoiceDate(NOW_SQL, 8));
     expect(calls).toContain('/api/voice/day?date=2026-10-28');
-    expect(screen.getByText('首次 04:00')).toBeInTheDocument();
+    expect(screen.getByText('首次进入 04:00:00')).toBeInTheDocument();
     expect(screen.getByText('在语音里')).toBeInTheDocument();
     expect(screen.getByText('尚未记录离开')).toBeInTheDocument();
     expect(screen.getAllByText('时长按查询时刻估算')).toHaveLength(2);
@@ -97,7 +97,7 @@ describe('voice management page', () => {
     expect(new URLSearchParams(window.location.search).get('user')).toBe(PERSON.id);
     expect(await screen.findByRole('heading', { name: '甲的语音记录' })).toBeInTheDocument();
     expect(calls).toContain('/api/voice?user=a%2Fb&from=2026-10-22&to=2026-10-28');
-    expect(screen.getByText('接上一天')).toBeInTheDocument();
+    expect(screen.getAllByText('接上一天')).toHaveLength(2);
     expect(screen.getAllByText('机器人上线时已在语音里')).toHaveLength(2);
     expect(screen.getAllByText('之后机器人离线，离开时间不确定')).toHaveLength(2);
   });
@@ -127,7 +127,7 @@ describe('voice management page', () => {
     const history = { ...HISTORY, days: [{ date: TODAY, first_join: '2026-10-27 20:00:00', total_min: 15,
       segments: [{ ...segment, channel_name: name, left_at: null, end_reason: null, continued: false }] }] };
     stubApp(JUDGE, () => json(200, history)); window.history.replaceState(null, '', '/admin/voice?user=a%2Fb'); render(<App />);
-    expect(await screen.findByText('尚未记录离开')).toBeInTheDocument();
+    expect(await screen.findByText(/– 尚未记录离开$/)).toBeInTheDocument();
     expect(screen.getByText('时长按查询时刻估算')).toBeInTheDocument();
     expect(screen.queryByText('在语音里')).not.toBeInTheDocument();
     expect(screen.getByText(name)).toBeInTheDocument(); expect(document.querySelector('.tools-page img')).toBeNull();

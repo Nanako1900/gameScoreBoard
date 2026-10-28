@@ -26,11 +26,11 @@ interface ToolsPageProps {
 const back = (): void => goBack(toolsPath());
 const voicePersonPath = (id: string): string => toolsPath('voice', id);
 
-function ToolsShell({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
+function ToolsShell({ title, children, headerAction }: { title: string; children: React.ReactNode; headerAction?: React.ReactNode }): JSX.Element {
   return <Modal open variant="page" labelledBy="tools-page-title" onClose={back}>
     <PageBar backLabel="返回" onBack={back} title={title} />
     <div className="tools-page"><header className="tools-page__heading"><h2 id="tools-page-title" tabIndex={-1}>{title}</h2>
-      {title !== '裁判工具' && <Link to={toolsPath()} className="tools-page__back">返回裁判工具</Link>}</header>{children}</div>
+      {headerAction ?? (title !== '裁判工具' && <Link to={toolsPath()} className="tools-page__back">返回裁判工具</Link>)}</header>{children}</div>
   </Modal>;
 }
 
@@ -142,8 +142,8 @@ function ToolsContent({ me, config, tab, onChanged }: ToolsPageProps & { me: Use
   if (tab === 'filing') return null;
   if (tab === 'home') return <ToolsHome admin={me.is_admin} />;
   if (tab === 'score') return userId === null ? <ScorePicker /> : <ScoreEditor key={`${me.id}:${userId}`} userId={userId} onChanged={onChanged} />;
-  return <ToolsShell title="语音记录"><p className="tools-page__intro">按日查看进入过语音的成员，或打开某位成员的分日明细。</p>
-    {userId !== null && <Link to={toolsPath('voice')} className="tools-page__other">按日汇总</Link>}
+  return <ToolsShell title="语音记录" headerAction={userId !== null
+    ? <Link to={toolsPath('voice')} className="tools-page__back">按日汇总</Link> : undefined}>
     <section className="tools-page__card panel"><VoiceLog key={userId ?? 'day'} ownerId={me.id} userId={userId}
       offsetHours={config.boardTzOffsetHours ?? 8} personPath={voicePersonPath} /></section>
   </ToolsShell>;

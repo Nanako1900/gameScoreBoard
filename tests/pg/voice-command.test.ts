@@ -27,6 +27,9 @@ describe('/voice private evidence command', () => {
     const reply = await command(); const body = text(reply);
     expect(reply.ephemeral).toBe(true); expect(reply.embeds).toHaveLength(1);
     expect(body.match(/周[一二三四五六日]/g)).toHaveLength(7); expect(body).toContain('12分钟');
+    expect(reply.buttons).toEqual([{ label: '在网页查看', url: 'https://score.example.com/players/self' }]);
+    expect(body).toContain('2026-10-21 — 2026-10-27');
+    expect(body).toContain('18:00:00 – 18:12:00');
     expect(body).toContain('开黑一号'); expect(body).toContain('这些时段没有完整记录，没有记录不代表没来。');
     expect(JSON.stringify(reply)).not.toMatch(/private-binding-nickname|secret-channel|discord_user_id|channel_id|40000000000000000[12]/);
   });
@@ -38,7 +41,21 @@ describe('/voice private evidence command', () => {
   it.each(['judge', 'admin'] as const)('allows %s to read a bound target privately', async (role) => {
     await bind('self', CALLER, { [role]: true }); await bind('other', TARGET);
     const reply = await command(undefined, true); expect(reply.ephemeral).toBe(true); expect(text(reply)).toContain('别人');
+    expect(reply.buttons).toEqual([{ label: '在网页查看', url: 'https://score.example.com/tools/voice?user=other' }]);
   });
+  it('encodes the public Nanako target in a staff link without exposing the binding ID', async () => {
+    await bind('self', CALLER, { judge: true });await bind('other/a&中?#', TARGET);
+    const reply = await command(undefined, true);
+    expect(reply.ephemeral).toBe(true);
+    expect(reply.buttons?.[0]?.url).toBe('https://score.example.com/tools/voice?user=other%2Fa%26%E4%B8%AD%3F%23');
+    expect(JSON.stringify(reply)).not.toContain(TARGET);
+  });
+
+  it('links a staff caller viewing themself to their scoped evidence tool', async () => {
+    await bind('self', CALLER, { admin: true });
+    expect((await command()).buttons?.[0]?.url).toBe('https://score.example.com/tools/voice?user=self');
+  });
+
   it('explains a target without a binding', async () => {
     await bind('self', CALLER, { judge: true });
     const reply = await command(undefined, true); expect(reply.ephemeral).toBe(true); expect(reply.content).toBe('TA 还没绑定 Nanako 账号');
