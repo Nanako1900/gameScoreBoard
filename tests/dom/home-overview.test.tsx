@@ -173,3 +173,12 @@ describe('HomeOverview signed-out entry', () => {
     expect(screen.getByRole('link', { name: '开始' })).toHaveAttribute('href', '/welcome');
   });
 });
+
+describe('pending privacy flags in the overview', () => {
+  it('keeps a hidden pending record out of recent verdicts even if a cached status disagrees', () => {
+    render(<HomeOverview {...props} records={[record(71, { pending_hidden: true, status: 'decided' }), record(72)]} />);
+    const recent = screen.getByRole('region', { name: '最近判决' });
+    expect(within(recent).queryByRole('button', { name: /#71/ })).not.toBeInTheDocument();
+    expect(within(recent).getByRole('button', { name: /#72/ })).toBeInTheDocument();
+  });
+});

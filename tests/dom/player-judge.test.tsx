@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlayerDetail } from '../../src/components/PlayerDetail';
+import { AdminScoreForm } from '../../src/components/AdminScoreForm';
+import { setScore } from '../../src/api';
 import type { RecordItem, User } from '../../src/types';
 
 const ME: User = {
@@ -42,22 +44,24 @@ function stubBackend(initiallyJudge: boolean) {
   return posts;
 }
 
-describe('PlayerDetail — appointing judges', () => {
-  it('lets an admin appoint a judge, and dismiss one', async () => {
+describe('PlayerDetail — unified management entries', () => {
+  it('sends an admin to member settings and score tools instead of inline forms', async () => {
     const posts = stubBackend(false);
-    const user = userEvent.setup();
     render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
-    await user.click(await screen.findByRole('button', { name: '设为裁判' }));
-    await waitFor(() => expect(posts).toEqual([{ path: '/api/admin/users/p', body: { is_judge: true } }]));
-    await user.click(await screen.findByRole('button', { name: '取消裁判资格' }));
-    await waitFor(() => expect(posts[1]).toEqual({ path: '/api/admin/users/p', body: { is_judge: false } }));
+    expect(await screen.findByRole('link', { name: '管理成员身份' })).toHaveAttribute('href', '/settings/members');
+    expect(screen.getByRole('link', { name: '调整分数' })).toHaveAttribute('href', '/tools/score?user=p');
+    expect(screen.queryByRole('button', { name: '设为裁判' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取消裁判资格' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: '调整分数' })).not.toBeInTheDocument();
+    expect(posts).toEqual([]);
   });
 
-  it('shows no such control to anyone else', async () => {
+  it('shows no management entry to anyone else', async () => {
     stubBackend(false);
     render(<PlayerDetail userId="p" me={{ ...ME, is_admin: false }} onClose={() => {}} />);
     await screen.findByRole('heading', { name: '选手' });
-    expect(screen.queryByRole('button', { name: '设为裁判' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '管理成员身份' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '调整分数' })).not.toBeInTheDocument();
   });
 });
 
@@ -125,11 +129,11 @@ describe('PlayerDetail — the escalation buttons', () => {
   });
 });
 
-describe('PlayerDetail — setting a score by hand', () => {
+describe('AdminScoreForm — setting a score by hand', () => {
   it('lets an admin set it in two steps, and posts only the score', async () => {
     const posts = stubBackend(false);
     const user = userEvent.setup();
-    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    render(<AdminScoreForm username="选手" score={90} busy={false} onSubmit={(score) => void setScore('p', score)} />);
     const input = await screen.findByRole('spinbutton', { name: '调整分数' });
     expect(screen.getByRole('button', { name: '改分' })).toBeDisabled();
     await user.clear(input);
@@ -144,7 +148,7 @@ describe('PlayerDetail — setting a score by hand', () => {
   it('refuses a score off the scale, and shows no such form to anyone else', async () => {
     stubBackend(false);
     const user = userEvent.setup();
-    const { unmount } = render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    const { unmount } = render(<AdminScoreForm username="选手" score={90} busy={false} onSubmit={(score) => void setScore('p', score)} />);
     const input = await screen.findByRole('spinbutton', { name: '调整分数' });
     await user.clear(input);
     await user.type(input, '101');
@@ -156,7 +160,7 @@ describe('PlayerDetail — setting a score by hand', () => {
   });
 });
 
-describe('PlayerDetail — the score form, at its edges', () => {
+describe('AdminScoreForm — the score form, at its edges', () => {
   for (const [what, typed] of [
     ['an empty box (it would read as 0)', ''],
     ['a score below 0', '-1'],
@@ -165,7 +169,7 @@ describe('PlayerDetail — the score form, at its edges', () => {
     it(`refuses ${what}`, async () => {
       stubBackend(false);
       const user = userEvent.setup();
-      render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+      render(<AdminScoreForm username="选手" score={90} busy={false} onSubmit={(score) => void setScore('p', score)} />);
       const input = await screen.findByRole('spinbutton', { name: '调整分数' });
       await user.clear(input);
       if (typed) await user.type(input, typed);
@@ -183,7 +187,7 @@ describe('PlayerDetail — the score form, at its edges', () => {
   it('keeps the keyboard where it was: on 确认改分, back on the number after 取消', async () => {
     stubBackend(false);
     const user = userEvent.setup();
-    render(<PlayerDetail userId="p" me={ME} onClose={() => {}} />);
+    render(<AdminScoreForm username="选手" score={90} busy={false} onSubmit={(score) => void setScore('p', score)} />);
     const input = await screen.findByRole('spinbutton', { name: '调整分数' });
     await user.clear(input);
     await user.type(input, '75');

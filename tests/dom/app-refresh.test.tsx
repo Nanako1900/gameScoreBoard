@@ -195,13 +195,13 @@ describe('App — after an admin write', () => {
   it('设为裁判 invalidates the board, the feed and me — not config or the report', async () => {
     const calls = mockFetch(
       adminRoutes({
-        'GET /api/users/p': () => json(200, { user: PLAYER, records: [], history: [] }),
+        'GET /api/admin/users': () => json(200, { users: [{ ...PLAYER, is_admin: false }], truncated: false }),
         'POST /api/admin/users/p': () => json(200, { ok: true }),
       }),
     );
     const user = userEvent.setup();
+    window.history.replaceState(null, '', '/settings/members');
     render(<App />);
-    await user.click(await screen.findByRole('button', { name: ROW }));
     await user.click(await screen.findByRole('button', { name: '设为裁判' }));
     await waitFor(() => expect(gets(calls, '/api/leaderboard')).toBe(2));
     await waitFor(() => expect(gets(calls, '/api/records?limit=50')).toBe(2));

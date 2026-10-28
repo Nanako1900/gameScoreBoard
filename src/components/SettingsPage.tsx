@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { Config, User } from '../types';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
-import { settingsPath, type SettingsTab } from '../lib/routes';
+import { settingsPath, toolsPath, type SettingsTab } from '../lib/routes';
 import { NOT_FOUND_TITLE } from '../lib/routeCopy';
 import { goBack } from '../lib/router';
 import { usePageLeaveGuard } from '../lib/usePageLeaveGuard';
@@ -76,7 +76,7 @@ function SettingsContent(props: SettingsPageProps & { me: User }): JSX.Element {
             </section>
           </>}
           {tab === 'members' && <section className="settings-page__card panel"><MemberList ownerId={me.id}
-            offsetHours={props.config.boardTzOffsetHours ?? 8} onChanged={props.onChanged} onUnavailable={() => setUnavailable(true)} /></section>}
+            scoreTo={id => toolsPath('score', id)} offsetHours={props.config.boardTzOffsetHours ?? 8} onChanged={props.onChanged} onUnavailable={() => setUnavailable(true)} /></section>}
           {tab === 'ai' && <section className="settings-page__card panel"><AiSettings collapsedAdvanced onDirtyChange={setDirty} onUnavailable={() => setUnavailable(true)} /></section>}
         </div>
       </div>

@@ -66,6 +66,7 @@
 /* A page-form route hides the lobby, which stays mounted. Without this the
    components' own `display` would beat the UA's [hidden] rule. */
 .app__main[hidden],
+.app__filing[hidden],
 .app__footer[hidden] {
   display: none;
 }

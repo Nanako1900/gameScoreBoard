@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, getRecord } from '../api';
-import type { RecordItem } from '../types';
+import type { RecordItem, User } from '../types';
+
+/** A cached private read belongs to the actor and the roles used to authorize it. */
+export function caseViewerScope(me: User | null): string {
+  return JSON.stringify(me ? [me.id, me.is_admin, me.is_judge] : [null]);
+}
 
 /** A case already read on the way in (old ?case= link, /cases/:id): the page needs no second GET. */
 export interface PinnedCase {

@@ -11,7 +11,7 @@ import { Link } from './Link';
 import { NotFound } from './NotFound';
 import './voice-log.css';
 
-interface VoiceLogProps { ownerId: string; userId: string | null; offsetHours: number }
+interface VoiceLogProps { ownerId: string; userId: string | null; offsetHours: number; personPath?: (userId: string) => string }
 type RangeDays = 7 | 14 | 31;
 type ReadState =
   | { key: string; status: 'loading' | 'missing' }
@@ -53,7 +53,7 @@ function DailyHistory({ day, offsetHours }: { day: VoiceDay; offsetHours: number
 }
 
 /** The request key hides old evidence in the first render after any scope change. */
-export function VoiceLog({ ownerId, userId, offsetHours }: VoiceLogProps): JSX.Element {
+export function VoiceLog({ ownerId, userId, offsetHours, personPath = adminVoicePath }: VoiceLogProps): JSX.Element {
   const dateId = useId(); const rangeId = useId();
   const now = Date.now();
   const today = boardToday(now, offsetHours);
@@ -98,7 +98,7 @@ export function VoiceLog({ ownerId, userId, offsetHours }: VoiceLogProps): JSX.E
       <CoverageGaps gaps={visible.data.gaps} offsetHours={offsetHours} />
       {visible.data.users.length === 0 ? <p className="voice-log__empty">{EMPTY}</p>
         : <ul className="voice-log__people">{visible.data.users.map((person) => <li key={person.user.id}>
-          <Link to={adminVoicePath(person.user.id)} className="voice-log__person">
+          <Link to={personPath(person.user.id)} className="voice-log__person">
             <strong>{person.user.username}</strong>
             <span>首次 {person.first_join === null ? '接上一天' : voiceTime(person.first_join, offsetHours)}</span>
             <span>共 {voiceDuration(person.total_min)}</span>

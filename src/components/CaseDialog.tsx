@@ -1,16 +1,21 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MAX_NARRATIVE_LEN, MIN_CLAIM_LEN } from '@shared/scoring';
 import type { BatchFailure, Config, PublicUser, RecordItem } from '../types';
 import { ApiError, createCases } from '../api';
 import { CASE_EXTRA_MAX, isCaseDraftEmpty, validateCaseDraft, type CaseDraftValue } from '../lib/draftShapes';
 import { useDraft } from '../lib/useDraft';
 import { useLeaveGuard } from '../lib/useLeaveGuard';
+import { usePageLeaveGuard } from '../lib/usePageLeaveGuard';
+import { clearDraft, readDraft, writeDraft } from '../lib/drafts';
+import { NOT_FOUND_TITLE } from '../lib/routeCopy';
 import { ConfirmInline } from './ConfirmInline';
 import { DraftNote } from './DraftNote';
 import { Modal } from './Modal';
+import { NotFound } from './NotFound';
+import { PageBar } from './PageBar';
 import { Avatar } from './Avatar';
 import { Link } from './Link';
-import { adminVoicePath } from '../lib/routes';
+import { adminVoicePath, toolsPath } from '../lib/routes';
 import './case-dialog.css';
 
 interface CaseDialogProps {
@@ -20,9 +25,18 @@ interface CaseDialogProps {
   selfId: string;
   config: Config;
   onCreated: (records: RecordItem[]) => void;
+  /** The app keeps the page controller mounted while routes change. */
+  variant?: 'center' | 'page';
 }
 
 const EMPTY_CASE: CaseDraftValue = { picked: [], claim: '', extras: {} };
+let currentPageActor: string | null = null;
+
+/** One private request/draft lifetime per actor, before any new actor renders. */
+export function CaseDialog(props: CaseDialogProps): JSX.Element {
+  if (props.variant === 'page') currentPageActor = props.selfId;
+  return <CaseEditor key={`${props.selfId}:${props.variant ?? 'center'}`} {...props} />;
+}
 
 /**
  * 记一笔 — v3: pick people, describe what happened, done.
@@ -32,14 +46,35 @@ const EMPTY_CASE: CaseDraftValue = { picked: [], claim: '', extras: {} };
  * The shared textarea covers the common case ("说好八点，你们俩都没来"); the
  * collapsible per-person note exists for when someone deserves a specific word.
  */
-export function CaseDialog({
+function CaseEditor({
   open,
   onClose,
   participants,
   selfId,
   config,
   onCreated,
+  variant = 'center',
 }: CaseDialogProps): JSX.Element {
+  const active = useRef(false);const unavailableRef = useRef(false);
+  const openRef = useRef(open);openRef.current = open;
+  const callbacks = useRef({ onClose, onCreated });callbacks.current = { onClose, onCreated };
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const isCurrentActor = (): boolean => active.current && !unavailableRef.current
+    && (variant !== 'page' || currentPageActor === selfId);
+  const [ownershipReady] = useState(() => {
+    if (variant === 'page') {
+      const owner = readDraft('case', 'owner', value => typeof value === 'string' ? value : null);
+      if (owner !== null && owner.value !== selfId) clearDraft('case');
+      // Existing unmarked drafts are the current session's legacy draft. New
+      // drafts must carry an actor marker before another account can restore
+      // one. A failed first marker write must not expose an unowned draft.
+      return owner?.value === selfId || writeDraft('case', 'owner', selfId);
+    }
+    return true;
+  });
   const candidates = useMemo(
     () => participants.filter((p) => p.id !== selfId),
     [participants, selfId],
@@ -48,14 +83,20 @@ export function CaseDialog({
   const candidateIds = useMemo(() => candidates.map((c) => c.id), [candidates]);
   // Who and what is a local draft (spec §5 #4) until every case is filed.
   const draft = useDraft<CaseDraftValue>('case', undefined, EMPTY_CASE, {
-    validate: (raw) => validateCaseDraft(raw, candidateIds, config.maxBatchSubjects),
+    validate: (raw) => ownershipReady ? validateCaseDraft(raw, candidateIds, config.maxBatchSubjects) : null,
     isEmpty: isCaseDraftEmpty,
+    canPersist: variant === 'page' ? () => ownershipReady && isCurrentActor() : undefined,
   });
   const { picked, claim, extras } = draft.value;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [failed, setFailed] = useState<BatchFailure[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [departing, setDeparting] = useState(false);
+  const departingRef = useRef(false);
 
   const atLimit = picked.length >= config.maxBatchSubjects;
 
@@ -65,9 +106,26 @@ export function CaseDialog({
     setError(null);
     setFailed([]);
     setSubmitting(false);
-    onClose();
+    if (isCurrentActor() && openRef.current && !departingRef.current) callbacks.current.onClose();
   };
   const guard = useLeaveGuard(draft.dirty, close);
+  const pageGuard = usePageLeaveGuard(variant === 'page' && open && draft.dirty && !completed && !departing && !unavailable, {
+    onLeave: () => {
+      // A route change does not unmount this controller. Flush the last edit
+      // now, and let an already-issued request finish pruning its own draft.
+      if (ownershipReady && isCurrentActor() && draft.dirty) writeDraft('case', undefined, draft.value);
+      departingRef.current = true;setDeparting(true);
+    },
+  });
+  useEffect(() => {
+    if (open) return;
+    departingRef.current = false;setDeparting(false);setCompleted(false);
+  }, [open]);
+  useEffect(() => {
+    // Let the page guard observe clean state before asking the router to go
+    // back; otherwise a successful submission would ask to leave again.
+    if (variant === 'page' && completed && open && !departingRef.current) close();
+  }, [completed, open, variant]);
 
   const claimRef = useRef<HTMLTextAreaElement>(null);
   // 清空 takes itself away with the note: hand the keyboard to the empty field.
@@ -92,6 +150,7 @@ export function CaseDialog({
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
+    if (!isCurrentActor() || !openRef.current || submittingRef.current) return;
     setError(null);
     setFailed([]);
     if (picked.length === 0) {
@@ -103,6 +162,7 @@ export function CaseDialog({
       return;
     }
     setSubmitting(true);
+    submittingRef.current = true;
     try {
       const res = await createCases({
         subject_ids: picked,
@@ -111,6 +171,7 @@ export function CaseDialog({
           Object.entries(extras).filter(([id, v]) => picked.includes(id) && v.trim().length > 0),
         ),
       });
+      if (!isCurrentActor()) return;
       if (res.failed.length > 0) {
         // Partial success is the designed behaviour, not an error state: keep the
         // dialog open so the judge can see exactly who was skipped — and keep
@@ -123,21 +184,36 @@ export function CaseDialog({
           extras: Object.fromEntries(Object.entries(prev.extras).filter(([id]) => failedIds.includes(id))),
         }));
         setSubmitting(false);
-        if (res.records.length > 0) onCreated(res.records);
+        submittingRef.current = false;
+        if (res.records.length > 0) callbacks.current.onCreated(res.records);
         return;
       }
       draft.clear();
-      onCreated(res.records);
-      close();
+      setSubmitting(false);submittingRef.current = false;
+      callbacks.current.onCreated(res.records);
+      if (variant === 'page' && openRef.current && !departingRef.current) setCompleted(true);
+      else close();
     } catch (err) {
+      if (!isCurrentActor()) return;
+      if (variant === 'page' && err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        unavailableRef.current = true;setUnavailable(true);
+      }
       setError(err instanceof ApiError ? err.message : '提交失败，请稍后重试');
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 
+  if (!open) return <></>;
+  if (unavailable) return <NotFound title={NOT_FOUND_TITLE} />;
+  const page = variant === 'page';
+  const confirming = page ? pageGuard.confirming : guard.confirmingLeave;
   return (
-    <Modal open={open} onClose={guard.requestClose} labelledBy="case-dialog-title" size="md" dismissible={!draft.dirty} historyKey="case">
-      <h2 id="case-dialog-title" className="cd__title">
+    <Modal open={open} variant={variant} onClose={page ? callbacks.current.onClose : guard.requestClose} labelledBy="case-dialog-title" size="md"
+      dismissible={!draft.dirty} historyKey={page ? undefined : 'case'}>
+      {page && <PageBar backLabel="返回" onBack={callbacks.current.onClose} title="记一笔" />}
+      {departing ? <p className="cd__status" role="status">正在离开…</p> : <div className={page ? 'cd__page' : undefined}>
+      <h2 id="case-dialog-title" className="cd__title" tabIndex={page ? -1 : undefined}>
         记一笔
       </h2>
       <p className="cd__subtitle">
@@ -166,14 +242,14 @@ export function CaseDialog({
                         type="checkbox"
                         className="visually-hidden"
                         checked={on}
-                        disabled={!on && atLimit}
+                      disabled={submitting || (!on && atLimit)}
                         onChange={() => toggle(p.id)}
                       />
                       <Avatar name={p.username} src={p.avatar_url} size={24} />
                       <span className="cd-chip__name">{p.username}</span>
                       <span className="cd-chip__score tabular">{p.score}</span>
                     </label>
-                    {on && <Link className="cd-person__voice" to={adminVoicePath(p.id)} target="_blank" rel="noopener">
+                    {on && <Link className="cd-person__voice" to={page ? toolsPath('voice', p.id) : adminVoicePath(p.id)} target="_blank" rel="noopener">
                       看 TA 的语音记录
                     </Link>}
                   </div>
@@ -194,6 +270,7 @@ export function CaseDialog({
             value={claim}
             onChange={(e) => setClaim(e.target.value)}
             rows={4}
+            disabled={submitting}
             maxLength={MAX_NARRATIVE_LEN}
             data-autofocus
             placeholder="说好八点五排，等到八点四十还没上线，微信也不回，最后四缺一散了。"
@@ -216,6 +293,7 @@ export function CaseDialog({
                     type="button"
                     className="cd-extra__toggle"
                     aria-expanded={open2}
+                    disabled={submitting}
                     onClick={() => setExpanded(open2 ? null : id)}
                   >
                     <span className="cd-extra__chev" aria-hidden="true">
@@ -227,6 +305,7 @@ export function CaseDialog({
                     <textarea
                       className="cd-extra__input"
                       rows={2}
+                      disabled={submitting}
                       maxLength={CASE_EXTRA_MAX}
                       value={extras[id] ?? ''}
                       onChange={(e) => setExtra(id, e.target.value)}
@@ -265,19 +344,19 @@ export function CaseDialog({
           </p>
         )}
 
-        {guard.confirmingLeave ? (
+        {confirming ? (
           <ConfirmInline
-            question="这笔还没提交，写的内容会留在这台设备上。"
-            cancelLabel="继续写"
+            question={page && submitting ? '立案请求已经发出，离开后仍可能完成。' : '这笔还没提交，写的内容会留在这台设备上。'}
+            cancelLabel={page && submitting ? '继续等待' : '继续写'}
             confirmLabel="先离开"
-            onCancel={guard.stay}
-            onConfirm={guard.confirmLeave}
+            onCancel={page ? pageGuard.stay : guard.stay}
+            onConfirm={page ? pageGuard.leave : guard.confirmLeave}
             tone="primary"
             focus="cancel"
           />
         ) : (
           <div className="cd__actions">
-            <button ref={guard.triggerRef} type="button" className="btn btn--ghost" onClick={guard.requestClose}>
+            <button ref={guard.triggerRef} type="button" className="btn btn--ghost" onClick={page ? callbacks.current.onClose : guard.requestClose}>
               取消
             </button>
             <button
@@ -294,6 +373,7 @@ export function CaseDialog({
           </div>
         )}
       </form>
+      </div>}
     </Modal>
   );
 }

@@ -9,8 +9,7 @@ import { useRouteLayout } from '../../src/lib/useRouteLayout';
 import type { PublicUser, RecordItem, User } from '../../src/types';
 import { useDesktopViewport } from './viewport';
 
-// P1-1: the routes of spec §2.2 inside the app — pages on a phone, drawers on a
-// desktop, NotFound, and the case a link points at moved to the top.
+// Routes stay full pages on every screen, and a case link isolates that one case.
 
 interface Call {
   method: string;
@@ -148,7 +147,7 @@ describe('building blocks', () => {
 });
 
 describe('PlayerDetail — page, drawer and the focused case', () => {
-  it('moves the focused case to the top: one #case-7, the list skips it, the count stays', async () => {
+  it('isolates the focused case: one #case-7, a case heading and a subject link', async () => {
     mockFetch(routes());
     render(<PlayerDetail userId="p" me={null} onClose={() => {}} focusRecordId={7} />);
     await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
@@ -156,8 +155,10 @@ describe('PlayerDetail — page, drawer and the focused case', () => {
     const pinned = screen.getByRole('region', { name: '你点开的这一起' });
     expect(pinned).toHaveTextContent('案件 #7 · 放鸽子');
     expect(pinned).toContainElement(document.getElementById('case-7'));
-    expect(document.querySelectorAll('.pd__cases .vc')).toHaveLength(1);
-    expect(document.querySelector('.pd__count')).toHaveTextContent('2');
+    expect(screen.getByRole('heading', { level: 2, name: '案件 #7' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '选手' })).toHaveAttribute('href', '/players/p');
+    expect(screen.queryByRole('region', { name: '分数走势' })).not.toBeInTheDocument();
+    expect(document.getElementById('case-6')).not.toBeInTheDocument();
   });
 
   it('pins the route’s copy when the list does not hold the case', async () => {
@@ -165,10 +166,11 @@ describe('PlayerDetail — page, drawer and the focused case', () => {
     render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} focusRecordId={7} pinnedRecord={CASE} />);
     await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
     expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
-    expect(document.querySelector('.pd__count')).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
+    expect(document.getElementById('case-6')).not.toBeInTheDocument();
   });
 
-  it('page form: the name takes focus; a case that is nowhere leaves the page unscrolled', async () => {
+  it('page form: the name takes focus; a missing focused case does not fall back to unrelated history', async () => {
     mockFetch(routes());
     const plain = render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} />);
     const name = await screen.findByRole('heading', { name: '选手' });
@@ -177,9 +179,9 @@ describe('PlayerDetail — page, drawer and the focused case', () => {
     plain.unmount();
 
     render(<PlayerDetail variant="page" userId="p" me={null} onClose={() => {}} focusRecordId={99} />);
-    await screen.findByRole('heading', { name: '选手' });
+    await screen.findByRole('heading', { name: '链接里的案件不存在了。' });
     expect(screen.queryByRole('region', { name: '你点开的这一起' })).not.toBeInTheDocument();
-    expect(document.querySelectorAll('.pd__cases .vc')).toHaveLength(2);
+    expect(document.querySelectorAll('.pd__cases .vc')).toHaveLength(0);
   });
 
   it('loads again when refreshKey changes', async () => {
@@ -304,19 +306,20 @@ describe('/players/:id', () => {
 });
 
 describe('/players/:id/cases/:caseId', () => {
-  it('moves the case to the top — one #case-7 on the page, focused, the rest below', async () => {
+  it('opens only the linked case — one focused #case-7 without unrelated history', async () => {
     const calls = mockFetch(routes());
     window.history.replaceState(null, '', '/players/p/cases/7');
     render(<App />);
-    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
     const card = document.getElementById('case-7');
     await waitFor(() => expect(document.activeElement).toBe(card));
     expect(document.querySelectorAll('[id="case-7"]')).toHaveLength(1);
     expect(card?.closest('.pd__pinned')).not.toBeNull();
     expect(card?.className).toContain('vc--focus');
     expect(screen.getByRole('region', { name: '你点开的这一起' })).toHaveTextContent('案件 #7 · 放鸽子');
-    expect(document.getElementById('case-6')?.closest('.pd__cases')).not.toBeNull();
-    expect(document.querySelector('.pd__count')).toHaveTextContent('2');
+    expect(document.getElementById('case-6')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '分数走势' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '选手' })).toHaveAttribute('href', '/players/p');
     expect(count(calls, '/api/records/7')).toBe(1);
   });
 
@@ -329,7 +332,7 @@ describe('/players/:id/cases/:caseId', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
     expect(window.location.search).toBe('?utm=dc');
     expect(window.history.length).toBe(before);
-    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
     expect(count(calls, '/api/users/wrong')).toBe(0);
     expect(count(calls, '/api/records/7')).toBe(1);
   });
@@ -342,7 +345,7 @@ describe('/players/:id/cases/:caseId', () => {
     const before = window.history.length;
     await waitFor(() => expect(window.location.pathname).toBe('/players/p/cases/7'));
     expect(window.history.length).toBe(before);
-    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
     await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));
     expect(count(calls, '/api/records/7')).toBe(1);
   });
@@ -352,7 +355,7 @@ describe('/players/:id/cases/:caseId', () => {
     mockFetch(routes());
     window.history.replaceState(null, '', '/players/p/cases/7');
     render(<App />);
-    await screen.findByRole('heading', { name: '选手' });
+    await screen.findByRole('heading', { name: '案件 #7' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.querySelector('.modal-page')).toBeInTheDocument();
     await waitFor(() => expect(document.activeElement?.id).toBe('case-7'));

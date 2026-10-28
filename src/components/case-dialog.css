@@ -288,3 +288,8 @@
     width: 100%;
   }
 }
+
+/* The same filing form is a route on every screen; its controller stays mounted. */
+.cd__page { max-width: 880px; width: 100%; margin-inline: auto; padding: 24px; }
+.cd__status { padding: 24px; color: var(--muted); }
+@media (max-width: 600px) { .cd__page { padding: 20px 16px; } }

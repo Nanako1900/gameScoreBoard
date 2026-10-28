@@ -64,7 +64,7 @@ function InboxOverview({ items, now }: Pick<HomeOverviewProps, 'items' | 'now'>)
 
 export function HomeOverview({ me, config, rank, items, records, report, onOpenPlayer, onDismissOnboarding, now, reportStale = false }: HomeOverviewProps): JSX.Element {
   const onboarding = me ? items?.find((item) => item.kind === 'onboarding') : undefined;
-  const recent = records.filter((record) => (record.status === 'decided' || record.status === 'appealed')
+  const recent = records.filter((record) => !record.pending_hidden && (record.status === 'decided' || record.status === 'appealed')
     && record.type !== 'on_time_bonus' && record.type !== 'organizer_bonus').slice(0, 3);
   return <div className="home-overview">
     <div className="home-overview__heading"><div>

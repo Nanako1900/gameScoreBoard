@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordItem, User } from './types';
 import { ApiError, logout as apiLogout, regenerateReport } from './api';
 import { lastWeekStartOf } from './lib/time';
-import { bootRouter, navigate, requestNavigation, useLocation } from './lib/router';
+import { bootRouter, currentPath, goBack, navigate, requestNavigation, useLocation } from './lib/router';
 import { HOME_PATH, WELCOME_PATH, parseRoute, playerPath, routeCoversHome } from './lib/routes';
 import { useRouteLayout } from './lib/useRouteLayout';
 import { useEntryTarget } from './lib/useEntryTarget';
 import { withoutParams } from './lib/deepLink';
-import type { PinnedCase } from './lib/useCaseLookup';
+import { caseViewerScope, type PinnedCase } from './lib/useCaseLookup';
+import { recordForViewer } from './lib/recordViewer';
 import { computeCounts, computeTrends } from './lib/feedStats';
 import { CHANGE_KEYS } from './lib/coreData';
 import { useCoreData } from './lib/useCoreData';
@@ -56,7 +57,6 @@ function AppMain(): JSX.Element {
   const layout = useRouteLayout();
   const { state, refresh, setMe } = useCoreData();
   const toast = useToast();
-  const [caseOpen, setCaseOpen] = useState(false);
   const [welcomeEntry] = useState(() => {
     const { pathname, search } = window.location;
     const params = new URLSearchParams(search);
@@ -87,11 +87,22 @@ function AppMain(): JSX.Element {
     () => new URLSearchParams(window.location.search).get('linked') === 'discord',
   );
   // The case an old ?case= link or /cases/:id resolved: its page shows it without a second GET.
-  const [pinned, setPinned] = useState<PinnedCase | null>(null);
+  const [pinnedState, setPinnedState] = useState<{ scope: string; value: PinnedCase } | null>(null);
   // Bumped when a statement is judged: the player page behind the dialog reloads its cases.
   const [playerRefreshKey, setPlayerRefreshKey] = useState(0);
 
   const ready = state.status === 'ready' ? state.data : null;
+  const visibleRecords = useMemo(() => ready?.records.map(record => recordForViewer(record, ready.me)) ?? [], [ready?.records, ready?.me]);
+  const viewerScope = caseViewerScope(ready?.me ?? null);
+  const viewerLease = useRef({ scope: viewerScope, generation: 0 });
+  if (viewerLease.current.scope !== viewerScope) viewerLease.current = { scope: viewerScope, generation: viewerLease.current.generation + 1 };
+  // A role returning to its old value does not revive a formerly privileged seed.
+  const seedScope = JSON.stringify([viewerScope, viewerLease.current.generation]);
+  const liveSeedScope = useRef(seedScope); liveSeedScope.current = seedScope;
+  const pinned = pinnedState?.scope === seedScope ? pinnedState.value : null;
+  const setPinned = useCallback((value: PinnedCase): void => {
+    if (liveSeedScope.current === seedScope) setPinnedState({ scope: seedScope, value });
+  }, [seedScope]);
   useEffect(() => {
     if (ready === null || !welcomeEntry.requested || welcomeRedirected.current) return;
     welcomeRedirected.current = true;
@@ -194,17 +205,17 @@ function AppMain(): JSX.Element {
   const board = useMemo<BoardData | undefined>(() => {
     if (!ready) return undefined;
     const lastWeek = lastWeekStartOf(ready.config.nextResetAt);
-    return { participants: ready.participants, records: ready.records, report: ready.report, trends, counts,
+    return { participants: ready.participants, records: visibleRecords, report: ready.report, trends, counts,
       reportStale: lastWeek !== null && ready.report !== null && ready.report.week_start < lastWeek,
       regenerating, onSelectUser: openPlayer,
       onRegenerate: ready.me?.is_admin && ready.report ? () => handleRegenerate(ready.report!.week_start) : undefined };
-  }, [ready, trends, counts, regenerating, openPlayer, handleRegenerate]);
+  }, [ready, visibleRecords, trends, counts, regenerating, openPlayer, handleRegenerate]);
 
   const now = useNow(COUNTDOWN_TICK_MS);
   const extra = useTodoSources({ me: ready?.me ?? null, pendingAppeals: ready?.pending.appeals ?? 0, refreshKey: todoRefreshKey });
   const items = useMemo(() => ready?.me ? buildTodo({ me: ready.me, now, pending: ready.pending, myPending: ready.myPending,
-    feed: ready.records, appealed: extra.appealed, discord: extra.discord,
-    onboardingDismissed }) : [], [ready, now, extra.appealed, extra.discord, onboardingDismissed]);
+    feed: visibleRecords, appealed: extra.appealed, discord: extra.discord,
+    onboardingDismissed }) : [], [ready, visibleRecords, now, extra.appealed, extra.discord, onboardingDismissed]);
   useTabTitle(todoBadgeCount(items));
   if (state.status === 'loading') {
     return <div className="app"><Header pending config={null} me={null} onLogout={() => {}} onOpenOnboarding={() => {}} />
@@ -227,10 +238,11 @@ function AppMain(): JSX.Element {
     );
   }
 
-  const { config, participants, records, me, report } = state.data;
+  const { config, participants, me, report } = state.data;
   // A page (phone) or NotFound replaces the lobby; it stays mounted, only hidden (contract §8 #6).
   const covered = routeCoversHome(location.route, layout);
   const canRecord = me?.is_judge === true || me?.is_admin === true;
+  const filing = location.route.name === 'tools' && location.route.tab === 'filing';
   // MyScoreLine's 第 N 名: the board's own competition ranking (P0-4's rank.ts).
   const myIndex = me ? participants.findIndex((p) => p.id === me.id) : -1;
   const myRank = myIndex >= 0 ? competitionRanks(participants.map((p) => p.score))[myIndex] : null;
@@ -245,7 +257,6 @@ function AppMain(): JSX.Element {
 
       <Header
         layout={layout} route={location.route} myPath={myPath} meDot={meNeedsAttention(items)} todoCount={todoBadgeCount(items)}
-        onRecord={canRecord ? () => setCaseOpen(true) : undefined}
         config={config}
         me={me}
         onLogout={() => requestNavigation(() => { void handleLogout(); })}
@@ -258,7 +269,7 @@ function AppMain(): JSX.Element {
       </div>
       <main className="app__main" hidden={covered}>
         <HomeOverview me={me} config={config} rank={myRank} items={extra.settled ? items : null}
-          records={records} report={report} onOpenPlayer={openPlayer} now={now}
+          records={visibleRecords} report={report} onOpenPlayer={openPlayer} now={now}
           reportStale={board?.reportStale} onDismissOnboarding={dismissHomeOnboarding} />
       </main>
 
@@ -290,14 +301,18 @@ function AppMain(): JSX.Element {
       </footer>
 
       {canRecord && me && (
+        <main className="app__page app__filing" hidden={!filing}>
         <CaseDialog
-          open={caseOpen}
-          onClose={() => setCaseOpen(false)}
+          key={me.id}
+          open={filing}
+          variant="page"
+          onClose={() => { if (currentPath().split('?')[0] === '/tools/filing') goBack(); }}
           participants={participants}
           selfId={me.id}
           config={config}
           onCreated={handleChanged}
         />
+        </main>
       )}
 
       {statementCase && (

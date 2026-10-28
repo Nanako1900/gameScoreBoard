@@ -93,11 +93,11 @@ describe('App — links into the app', () => {
     const calls = mockFetch(appRoutes);
     window.history.replaceState(null, '', '/?case=7&utm=dc');
     render(<App />);
-    expect(await screen.findByRole('heading', { name: '选手' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件 #7' })).toBeInTheDocument();
     const card = document.getElementById('case-7');
     await waitFor(() => expect(document.activeElement).toBe(card));
     expect(card?.className).toContain('vc--focus');
-    expect(document.getElementById('case-6')?.className).not.toContain('vc--focus');
+    expect(document.getElementById('case-6')).toBeNull();
     expect(window.location.search).toBe('?utm=dc');
     expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
     // P1-1: the link became the case's own address, and the case was moved — not copied — to the top.
@@ -113,7 +113,7 @@ describe('App — links into the app', () => {
       await screen.findByRole('heading', { level: 1, name: 'EDG 信誉分' });
       await settle();
       expect(calls.some((c) => c.path.startsWith('/api/records/')), bad).toBe(false);
-      expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: '案件 #7' })).not.toBeInTheDocument();
       expect(window.location.search, bad).toBe('');
       expect(window.location.pathname, bad).toBe('/');
       unmount();
@@ -125,7 +125,7 @@ describe('App — links into the app', () => {
     window.history.replaceState(null, '', '/?case=8');
     render(<App />);
     expect(await screen.findByText('链接里的案件不存在了。')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '选手' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '案件 #7' })).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
   });
 
@@ -144,7 +144,7 @@ describe('App — links into the app', () => {
     mockFetch(appRoutes);
     window.history.replaceState(null, '', '/?session=3&case=7&utm=dc');
     render(<App />);
-    await screen.findByRole('heading', { name: '选手' });
+    await screen.findByRole('heading', { name: '案件 #7' });
     expect(window.location.pathname).toBe('/players/p/cases/7');
     expect(window.location.search).toBe('?utm=dc');
     expect(screen.queryByText('约局功能已下线')).not.toBeInTheDocument();

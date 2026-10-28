@@ -5,6 +5,8 @@ import { clearDraft, readDraft, writeDraft, type DraftKind, type StoredDraft } f
 export interface DraftOptions<T> {
   validate: (raw: unknown) => T | null;
   isEmpty: (value: T) => boolean;
+  /** A private editor may revoke its actor lease before timers/unmount flushes. */
+  canPersist?: () => boolean;
 }
 
 export interface DraftState<T> {
@@ -50,10 +52,12 @@ function useDraftSaving<T>(
   value: T,
   isEmpty: (value: T) => boolean,
   onSaved: (savedAt: number | null) => void,
+  canPersist: (() => boolean) | undefined,
 ): MutableRefObject<boolean> {
   const pendingRef = useRef(false);
   const isEmptyRef = useRef(isEmpty);
   const latestRef = useRef(value);
+  const canPersistRef = useRef(canPersist); canPersistRef.current = canPersist;
 
   useEffect(() => {
     isEmptyRef.current = isEmpty;
@@ -64,6 +68,7 @@ function useDraftSaving<T>(
     if (!pendingRef.current) return undefined;
     const timer = window.setTimeout(() => {
       pendingRef.current = false;
+      if (canPersistRef.current?.() === false) return;
       onSaved(persist(kind, id, value, isEmptyRef.current));
     }, DRAFT_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
@@ -72,7 +77,7 @@ function useDraftSaving<T>(
   // Unmount: flush an edit still waiting for its debounce (no state update — the component is gone).
   useEffect(
     () => () => {
-      if (pendingRef.current) persist(kind, id, latestRef.current, isEmptyRef.current);
+      if (pendingRef.current && canPersistRef.current?.() !== false) persist(kind, id, latestRef.current, isEmptyRef.current);
     },
     [kind, id],
   );
@@ -95,7 +100,7 @@ export function useDraft<T>(
   const [savedAt, setSavedAt] = useState<number | null>(restoredDraft?.savedAt ?? null);
   const [restored, setRestored] = useState(restoredDraft !== null);
   const initialRef = useRef(initial);
-  const pendingRef = useDraftSaving(kind, id, value, options.isEmpty, setSavedAt);
+  const pendingRef = useDraftSaving(kind, id, value, options.isEmpty, setSavedAt, options.canPersist);
 
   const setValue = useCallback((next: T | ((prev: T) => T)): void => {
     pendingRef.current = true;

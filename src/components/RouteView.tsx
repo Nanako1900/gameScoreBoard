@@ -3,13 +3,14 @@ import type { Config, RecordItem, User } from '../types';
 import { goBack, navigate, type RouterLocation } from '../lib/router';
 import { playerCasePath, type RouteLayout } from '../lib/routes';
 import { CASE_GONE, CASE_OPENING, CASE_UNAVAILABLE, NOT_FOUND_TITLE, SESSIONS_OFF, SESSIONS_OFF_DESCRIPTION } from '../lib/routeCopy';
-import { useCaseLookup, type PinnedCase } from '../lib/useCaseLookup';
+import { useCaseLookup, caseViewerScope, type PinnedCase } from '../lib/useCaseLookup';
 import { Modal } from './Modal';
 import { NotFound } from './NotFound';
 import { PlayerDetail } from './PlayerDetail';
 import { BoardPage, type BoardData } from './BoardPage';
 import { WelcomePage } from './WelcomePage';
 import { GuidePage } from './GuidePage';
+import { ToolsPage } from './ToolsPage';
 import { AdminPage } from './AdminPage';
 import { CasesPage } from './CasesPage';
 import type { TodoItem } from '../lib/todo';
@@ -159,7 +160,8 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         onDiscordChanged={props.onDiscordChanged ?? (() => {})} onSaved={props.onMeUpdated ?? (() => props.onChanged())} onChanged={props.onChanged}
         onBeforeBind={props.onBeforeWelcomeBind} onRetryDiscord={props.onRetryDiscord} /></PageShell>;
     case 'tools':
-      return <PageShell><AdminPage me={props.me} config={props.config} onChanged={props.onChanged} /></PageShell>;
+      if (route.tab === 'filing' && (props.me?.is_judge || props.me?.is_admin)) return null;
+      return <PageShell><ToolsPage me={props.me} config={props.config} tab={route.tab} participants={props.board?.participants ?? []} onChanged={props.onChanged} /></PageShell>;
     case 'board':
       if (route.tab === 'feed') return <PageShell><CasesPage initialTab="public" config={props.config} me={props.me} records={props.board?.records ?? []} items={props.todoItems ?? null} now={props.now ?? Date.now()} onOpenStatement={props.onOpenStatement} onOpenPlayer={props.board?.onSelectUser ?? (() => {})} /></PageShell>;
       return <PageShell><BoardPage tab={route.tab} config={props.config} me={props.me} data={props.board} /></PageShell>;
@@ -183,8 +185,8 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
         </LayoutShell>
       );
     case 'playerCase':
-      return <CaseRoute {...props} caseId={route.caseId} userId={route.userId} />;
+      return <CaseRoute key={caseViewerScope(props.me)} {...props} caseId={route.caseId} userId={route.userId} />;
     case 'case':
-      return <CaseRoute {...props} caseId={route.caseId} userId={null} />;
+      return <CaseRoute key={caseViewerScope(props.me)} {...props} caseId={route.caseId} userId={null} />;
   }
 }

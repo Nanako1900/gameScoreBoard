@@ -23,8 +23,14 @@ const listing = (users = PEOPLE, truncated = false): AdminUsersResponse => ({ us
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void;
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 const row = (name: string) => screen.getByRole('listitem', { name: `${name}的账号` });
-function page(me: User | null = ADMIN, onChanged = vi.fn(), tab: 'members' | 'voice' = 'members') {
+function legacyPage(me: User | null = ADMIN, onChanged = vi.fn(), tab: 'members' | 'voice' = 'members') {
   return <ToastProvider><AdminPage me={me} config={CONFIG} tab={tab} onChanged={onChanged} /></ToastProvider>;
+}
+// Inline score compatibility belongs to the reusable list; the page links to the shared tool.
+function page(me: User | null = ADMIN, onChanged = vi.fn(), tab: 'members' | 'voice' = 'members') {
+  return me?.is_admin && tab === 'members'
+    ? <ToastProvider><MemberList key={me.id} ownerId={me.id} offsetHours={CONFIG.boardTzOffsetHours} onChanged={onChanged} /></ToastProvider>
+    : legacyPage(me, onChanged, tab);
 }
 const toastText = () => document.querySelector('.toasts')?.textContent ?? '';
 beforeEach(() => {
@@ -43,7 +49,7 @@ describe('member management list', () => {
     expect(within(row('裁判乙')).getByText('上榜')).toBeInTheDocument();
     expect(within(row('裁判乙')).getByText('裁判')).toBeInTheDocument();
     expect(within(row('管理员甲')).getByText('管理员')).toBeInTheDocument();
-    expect(container.querySelector('.admin-page style, .admin-page [style]')).toBeNull();
+    expect(container.querySelector('style, [style]')).toBeNull();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /删除|授予管理员|上榜开关/ })).not.toBeInTheDocument();
   });
@@ -149,16 +155,24 @@ describe('member management list', () => {
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument(); expect(toastText()).toBe('');
   });
   it.each([null, { ...ADMIN, is_admin: false }, { ...ADMIN, is_admin: false, is_judge: false }])('refuses a non-admin before reading accounts: %o', (me) => {
-    render(page(me)); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
+    render(legacyPage(me)); expect(screen.getByRole('heading', { name: '这页不存在' })).toBeInTheDocument();
     expect(api.getAdminUsers).not.toHaveBeenCalled(); expect(screen.queryByRole('navigation', { name: '管理' })).not.toBeInTheDocument();
   });
-  it('gives admins all three tabs while a judge sees only voice', async () => {
-    const view = render(page()); await screen.findByText('Alice游客');
-    expect(within(screen.getByRole('navigation', { name: '管理' })).getAllByRole('link').map(link => link.textContent)).toEqual(['语音记录', 'AI 设置', '成员']);
-    expect(screen.getByRole('link', { name: '成员' })).toHaveAttribute('aria-current', 'page');
-    view.rerender(page({ ...ADMIN, is_admin: false }, vi.fn(), 'voice'));
+  it('keeps legacy members in settings and legacy voice in tools without a second management navigation', async () => {
+    const view = render(legacyPage()); await screen.findByText('Alice游客');
+    const nav = screen.getByRole('navigation', { name: '设置分类' });
+    expect(within(nav).getByRole('link', { name: '成员与权限' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('link', { name: 'AI 模型与密钥' })).toHaveAttribute('href', '/settings/ai');
+    expect(within(nav).queryByRole('link', { name: '语音记录' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '管理' })).not.toBeInTheDocument();
+    expect(within(row('Alice游客')).getByRole('link', { name: '调整分数' })).toHaveAttribute('href', '/tools/score?user=visitor%2Fa');
+    expect(within(row('Alice游客')).queryByRole('button', { name: '调整分数' })).not.toBeInTheDocument();
+    view.rerender(legacyPage({ ...ADMIN, is_admin: false }, vi.fn(), 'voice'));
     await screen.findByText('没有保存的语音记录，不代表没来');
-    expect(within(screen.getByRole('navigation', { name: '管理' })).getAllByRole('link').map(link => link.textContent)).toEqual(['语音记录']);
+    expect(screen.getByRole('heading', { name: '语音记录', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回裁判工具' })).toHaveAttribute('href', '/tools');
+    expect(screen.queryByRole('navigation', { name: '设置分类' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '管理' })).not.toBeInTheDocument();
   });
 });
 
@@ -197,5 +211,15 @@ describe('private member response isolation', () => {
     const view = render(<ToastProvider><MemberList ownerId={ADMIN.id} onChanged={changed} /></ToastProvider>); await screen.findByText('Alice游客');
     await userEvent.setup().click(within(row('Alice游客')).getByRole('button', { name: '设为裁判' })); view.rerender(<ToastProvider><p>已离开</p></ToastProvider>);
     await act(async () => written.resolve({ ok: true })); expect(changed).not.toHaveBeenCalled(); expect(toastText()).toBe(''); expect(api.getAdminUsers).toHaveBeenCalledOnce();
+  });
+});
+
+describe('central score destination', () => {
+  it('can send a member to the shared score tool without opening a second inline editor', async () => {
+    render(<ToastProvider><MemberList ownerId={ADMIN.id} scoreTo={id => `/tools/score?user=${encodeURIComponent(id)}`} /></ToastProvider>);
+    const member = await screen.findByRole('listitem', { name: 'Alice游客的账号' });
+    expect(within(member).getByRole('link', { name: '调整分数' })).toHaveAttribute('href', '/tools/score?user=visitor%2Fa');
+    expect(within(member).queryByRole('button', { name: '调整分数' })).not.toBeInTheDocument();
+    expect(within(member).getByRole('button', { name: '设为裁判' })).toBeInTheDocument();
   });
 });
