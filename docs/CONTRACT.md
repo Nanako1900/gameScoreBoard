@@ -702,3 +702,40 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   Logging out clears the login return and pending welcome destination.
 - A case with `redacted: true` says a statement exists (when `statement_at` is
   set) rather than calling it a verdict in absence, and shows no verdict words.
+
+## 5. 社区 Bot / 网页模块（Node / PostgreSQL 专属）
+
+此新增模块的 Node/PG 边界已由机主确认。`COMMUNITY_ENABLED` 默认关闭；旧 Worker/D1 的下列路径返回 JSON 404，网页隐藏入口。既有信誉、案件、语音证据和绑定契约不变。
+
+所有社区 API 需要现有 Nanako session，返回 `Cache-Control: no-store`。JSON POST 还要求受允许的 Origin，并遵守 READ_ONLY。网页个人控制需当前 Discord 绑定与服务器成员身份；社区管理员只来自当前 `users.is_admin`。Bot 普通命令不需要绑定。API 不持 Bot Token，只写持久任务；Bot 执行前以及多个外部副作用之间重查身份、权限、版本、租约和目标资源。
+
+| 地址 | 方法 / 返回 |
+|---|---|
+| `/api/community` | GET `{settings: member projection, version, runtime, me}` |
+| `/api/community/rooms` | GET `{rooms}`；POST `{name?, requestKey}` → 202 `{operation}` |
+| `/api/community/rooms/:ref` | GET 当前可见房间；不可见与不存在同为 404 |
+| `/api/community/rooms/:ref/actions` | POST `{action, expectedVersion, requestKey, ...fields}` → 202 `{operation}` |
+| `/api/community/resources?kind=member\|role` | GET `{resources}`，成员只见安全的成员／白名单身份选择器 |
+| `/api/community/roles` | GET `{choices, selectedRefs, maxChoices, enabled}`；POST `{roleRefs, requestKey}` → 202 `{operation}` |
+| `/api/community/fun` | GET `{items}`；POST `{kind, input, roomRef?, requestKey}` → 202 `{operation}` |
+| `/api/community/fun/:ref/actions` | POST `{action: vote\|close\|redraw, choice?, requestKey}` → 202 `{operation}` |
+| `/api/community/operations/:ref` | GET `{operation}`，当前本人身份或管理员可读，目标范围仍须可见 |
+| `/api/admin/community` | GET `{settings, version, runtime}`；POST `{settings, expectedVersion, requestKey}` 原子保存全配置及应用任务，202 返回同结构和 `operation` |
+| `/api/admin/community/resources` | GET `{resources}`，管理员按名称选择分类／文字或语音频道／角色／成员 |
+| `/api/admin/community/operations`、`/audit` | GET `{operations}` / `{audit}`，仅管理员 |
+| `/api/admin/community/sync` | POST `{requestKey, kind?: resources.sync\|panel.refresh}` → 202 `{operation}` |
+| `/api/admin/community/operations/:ref/review` | POST `{confirm: true, requestKey}` → `{operation}`，仅当前管理员二次确认后取消待对账旧任务；不重放动作、不直接恢复房间 |
+
+房间动作：`join`、`rename {name}`、`limit {userLimit}`、`visibility {visibility}`、`grant/deny/kick/transfer {memberRef}`、`accept`、`claim`、`dissolve`、`admin_delete {confirm:true}`。加入前必须已连接语音，不能替未连接成员开始语音；管理员强制关闭必须先移动所有人到独立等候区，失败不删除。
+
+- 所有 ref 是随机 UUID v4，与原始 Discord ID 无可逆关系。DTO、URL、错误、审计与选择器不含原始成员／频道／角色标识、CDN 头像或精确频道链接。管理员配置也只用 opaque refs。
+- 成员配置投影不包含行政资源选择或私有 AI prompt。私房名称、成员、人数、互动与操作结果均按当前可见范围过滤。待对账房间对其他普通成员隔离；本人只见自身可读状态，管理员可诊断。
+- 操作状态：`queued/running/retry_wait/succeeded/failed/conflict/canceled/needs_review`。202 不代表执行成功。相同 actor 和 requestKey 的相同请求返回同一任务，不同内容冲突；房间与同成员的跨端角色任务分别串行。过期 running 进入待对账，不自动重放。
+- `runtime.ready` 有新鲜度限制；`appliedVersion` 与已保存 `version` 分开。恢复时只信完整资源／语音快照、已登记目标和严格审计标记，不把未知当作空房；Gap 后重新观察宽限。
+- 人工 review 只取消旧任务、解除 scope 阻塞并记审计。欢迎保守计作已发送；房间须再经类型、分类、完整访问模型或唯一建房审计证明才能恢复。不可证明时继续隔离。
+- 趣味结果不参与计分。投票同 Discord 身份跨端一票、可在截止前改票；抽签不放回，重抽保存旧记录；分队仅使用明确选定成员。
+- 社区 AI 独立开关／prompt／配额，复用已保存提供商凭据；只用本次主动主题，按现有 reset 时区原子计配额（失败也计）。无房间范围的建议仅创建者与管理员可读；房间范围继承房间 ACL；应用名字是另一次房主管理动作。
+
+新 PG 表均由可重复执行的 `0012_community.sql` 创建：settings、resources、rooms、room_access、operations、audit、fun、poll_votes、ai_usage、role_choices、welcomes（均带 `community_` 前缀）。不删除或复用约局／历史／语音证据表。
+
+新增完整页面 `/community`、`/community/roles`、`/community/play`、`/settings`、`/settings/community`；`/admin/community` 为后者兼容别名。原入户和永久深链不变。管理入口集中到设置；社区页面采用浅色布局，不依赖尚未合并的完整网页改版。
