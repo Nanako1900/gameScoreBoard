@@ -154,7 +154,7 @@ describe('voice-room persistent panel messages', () => {
   }
   it('sends the first card in the voice channel only after a complete fresh history check', async () => {
     const s = roomPanelSetup(), body = panel();
-    expect(await s.api.syncRoomPanel!(ROOM, OP, null, body)).toBe(MID);
+    expect(await s.api.syncRoomPanel!(ROOM, OP, null, body, PARENT)).toBe(MID);
     expect(s.get.mock.calls.some(([route]) => route === Routes.channelMessages(ROOM))).toBe(true);
     expect(s.post).toHaveBeenCalledWith(Routes.channelMessages(ROOM), { body });
     expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G)).length).toBeGreaterThanOrEqual(2);
@@ -163,7 +163,7 @@ describe('voice-room persistent panel messages', () => {
     const s = roomPanelSetup(); s.messages.set(MID, message());
     const body = renderRoomPanel({ roomRef: OP, name: '新名字', ownerName: 'Nanako', occupantCount: 1,
       userLimit: 4, visibility: 'locked', cleanupAt: null, emptyGraceSeconds: 120, claimable: false, transferPending: false });
-    expect(await s.api.syncRoomPanel!(ROOM, OP, MID, body)).toBe(MID);
+    expect(await s.api.syncRoomPanel!(ROOM, OP, MID, body, PARENT)).toBe(MID);
     expect(s.patch).toHaveBeenCalledWith(Routes.channelMessage(ROOM, MID), { body });
     expect(s.post).not.toHaveBeenCalled();
     expect(s.get.mock.calls.some(([route]) => route === Routes.channelMessages(ROOM))).toBe(false);
@@ -172,17 +172,17 @@ describe('voice-room persistent panel messages', () => {
     const s = roomPanelSetup(), existing = message();
     existing.embeds[0] = { ...existing.embeds[0], type: EmbedType.Rich };
     s.messages.set(MID, existing);
-    expect(await s.api.syncRoomPanel!(ROOM, OP, MID, panel())).toBe(MID);
+    expect(await s.api.syncRoomPanel!(ROOM, OP, MID, panel(), PARENT)).toBe(MID);
     expect(s.patch).not.toHaveBeenCalled(); expect(s.post).not.toHaveBeenCalled();
   });
   it('recovers a posted card after losing the database writeback', async () => {
     const s = roomPanelSetup(); s.history.push([message()]);
-    expect(await s.api.syncRoomPanel!(ROOM, OP, null, panel())).toBe(MID);
+    expect(await s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).toBe(MID);
     expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
   });
   it('searches after a deleted message and replaces it only when complete history has no own marker', async () => {
     const s = roomPanelSetup();
-    expect(await s.api.syncRoomPanel!(ROOM, OP, NEXT, panel())).toBe(MID);
+    expect(await s.api.syncRoomPanel!(ROOM, OP, NEXT, panel(), PARENT)).toBe(MID);
     expect(s.get.mock.calls.some(([route]) => route === Routes.channelMessage(ROOM, NEXT))).toBe(true);
     expect(s.post).toHaveBeenCalledTimes(1);
   });
@@ -190,34 +190,34 @@ describe('voice-room persistent panel messages', () => {
     const s = roomPanelSetup(), otherRoom = panel();
     otherRoom.embeds[0].footer = { text: 'community-room-panel:a004e6b9-9251-4d11-bbce-521b358fd53e' };
     s.history.push([message(NEXT, panel(), OTHER), message(MID, otherRoom)]);
-    await s.api.syncRoomPanel!(ROOM, OP, null, panel()); expect(s.post).toHaveBeenCalledTimes(1);
+    await s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT); expect(s.post).toHaveBeenCalledTimes(1);
   });
   it('does not overwrite a recorded message with the wrong author or marker', async () => {
     for (const body of [message(MID, panel(), OTHER), { ...message(), embeds: [] }]) {
       const s = roomPanelSetup(); s.messages.set(MID, body);
-      await expect(s.api.syncRoomPanel!(ROOM, OP, MID, panel())).rejects.toMatchObject({ status: 409 });
+      await expect(s.api.syncRoomPanel!(ROOM, OP, MID, panel(), PARENT)).rejects.toMatchObject({ status: 409 });
       expect(s.patch).not.toHaveBeenCalled(); expect(s.post).not.toHaveBeenCalled();
     }
   });
   it('does not choose between two matching cards or post a third', async () => {
     const s = roomPanelSetup(); s.history.push([message(NEXT), message(MID)]);
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toMatchObject({ status: 409 });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 409 });
     expect(s.patch).not.toHaveBeenCalled(); expect(s.post).not.toHaveBeenCalled();
   });
   it.each([P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.EmbedLinks])('requires each effective message permission: %s', async bit => {
     const s = roomPanelSetup(); s.channels.get(ROOM)!.permission_overwrites.push({ id: SELF, type: 1, allow: '0', deny: bit.toString() });
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toMatchObject({ status: 403 });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 403 });
     expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
   });
   it('rejects text/category targets and keeps welcome delivery restricted to text channels', async () => {
     const s = roomPanelSetup();
-    for (const target of [TEXT, PARENT]) await expect(s.api.syncRoomPanel!(target, OP, null, panel())).rejects.toThrow();
+    for (const target of [TEXT, PARENT]) await expect(s.api.syncRoomPanel!(target, OP, null, panel(), PARENT)).rejects.toThrow();
     await expect(s.api.sendText(ROOM, '欢迎')).rejects.toMatchObject({ status: 404 });
     expect(s.post).not.toHaveBeenCalled();
   });
   it('rejects a malformed intended marker before any network request', async () => {
     const s = roomPanelSetup(), body = panel(); body.embeds[0].footer = { text: 'not-this-room' };
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, body)).rejects.toMatchObject({ status: 400 });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, body, PARENT)).rejects.toMatchObject({ status: 400 });
     expect(s.get).not.toHaveBeenCalled(); expect(s.post).not.toHaveBeenCalled();
   });
   it('does not mistake permission revocation during an empty scan for proof that no card exists', async () => {
@@ -226,33 +226,66 @@ describe('voice-room persistent panel messages', () => {
       if (route === Routes.channelMessages(ROOM)) { s.setBotPermissions(BOT); return []; }
       return get(route, options);
     });
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toMatchObject({ status: 403 });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 403 });
     expect(s.post).not.toHaveBeenCalled();
   });
   it('uses a decreasing cursor and completes every page before accepting a unique match', async () => {
     const s = roomPanelSetup();
     s.history.push(Array.from({ length: 100 }, (_, index) => message(aid(200 - index), panel(), OTHER)), [message(aid(100))]);
-    expect(await s.api.syncRoomPanel!(ROOM, OP, null, panel())).toBe(aid(100));
+    expect(await s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).toBe(aid(100));
     const calls = s.get.mock.calls.filter(([route]) => route === Routes.channelMessages(ROOM));
     expect(calls[1][1]?.query?.get('before')).toBe(aid(101)); expect(s.post).not.toHaveBeenCalled();
   });
   it('rejects malformed, unordered or interrupted history without sending', async () => {
     for (const page of [null, [message(MID), message(NEXT)], [{ id: 'bad', author: { id: SELF } }]]) {
       const s = roomPanelSetup(); s.history.push(page);
-      await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toThrow(); expect(s.post).not.toHaveBeenCalled();
+      await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toThrow(); expect(s.post).not.toHaveBeenCalled();
     }
     const s = roomPanelSetup(), get = s.get.getMockImplementation()!;
     s.get.mockImplementation(async (route, options) => { if (route === Routes.channelMessages(ROOM)) throw { status: 503 }; return get(route, options); });
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toMatchObject({ status: 503 }); expect(s.post).not.toHaveBeenCalled();
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 503 }); expect(s.post).not.toHaveBeenCalled();
   });
   it('does not immediately recreate when the card disappears during its edit', async () => {
     const s = roomPanelSetup(); s.messages.set(MID, { ...message(), content: '旧内容' });
     s.patch.mockRejectedValue({ status: 404 });
-    await expect(s.api.syncRoomPanel!(ROOM, OP, MID, panel())).rejects.toMatchObject({ status: 404 }); expect(s.post).not.toHaveBeenCalled();
+    await expect(s.api.syncRoomPanel!(ROOM, OP, MID, panel(), PARENT)).rejects.toMatchObject({ status: 404 }); expect(s.post).not.toHaveBeenCalled();
   });
   it('does no network work while the Gateway is unavailable', async () => {
     const s = roomPanelSetup(); s.setAvailable(false);
-    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel())).rejects.toMatchObject({ status: 503 }); expect(s.get).not.toHaveBeenCalled();
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 503 }); expect(s.get).not.toHaveBeenCalled();
+  });
+  it('does not publish in a room already moved out of its managed category', async () => {
+    const s = roomPanelSetup(); s.channels.get(ROOM)!.parent_id = TEXT;
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 409 });
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
+    expect(s.get.mock.calls.some(([route]) => route === Routes.channelMessages(ROOM))).toBe(false);
+  });
+  it('rechecks the category after scanning history instead of trusting the initial room location', async () => {
+    const s = roomPanelSetup(), get = s.get.getMockImplementation()!;
+    s.get.mockImplementation(async (route, options) => {
+      if (route === Routes.channelMessages(ROOM)) s.channels.get(ROOM)!.parent_id = TEXT;
+      return get(route, options);
+    });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT)).rejects.toMatchObject({ status: 409 });
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('rechecks the category before editing a recorded message after a human moves its room', async () => {
+    const s = roomPanelSetup(), get = s.get.getMockImplementation()!;
+    s.messages.set(MID, { ...message(), content: '旧内容' });
+    s.get.mockImplementation(async (route, options) => {
+      if (route === Routes.channelMessage(ROOM, MID)) s.channels.get(ROOM)!.parent_id = TEXT;
+      return get(route, options);
+    });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, MID, panel(), PARENT)).rejects.toMatchObject({ status: 409 });
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('checks fresh database authority before a panel write (existing: %s)', async existing => {
+    const s = roomPanelSetup(), beforeWrite = vi.fn(async () => { throw new Error('room or read-only state changed'); });
+    if (existing) s.messages.set(MID, { ...message(), content: '旧内容' });
+    await expect(s.api.syncRoomPanel!(ROOM, OP, existing ? MID : null, panel(), PARENT, beforeWrite))
+      .rejects.toThrow('room or read-only state changed');
+    expect(beforeWrite).toHaveBeenCalledTimes(1);
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
   });
 });
 

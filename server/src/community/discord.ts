@@ -66,7 +66,7 @@ export interface CommunityDiscord {
   removeRole(memberId: string, roleId: string): Promise<void>;
   sendText(channelId: string, content: string): Promise<string>;
   sendPanel(channelId: string, messageId?: string | null): Promise<string>;
-  syncRoomPanel?(channelId: string, roomRef: string, messageId: string | null, body: CommunityRoomPanelMessage): Promise<string>;
+  syncRoomPanel?(channelId: string, roomRef: string, messageId: string | null, body: CommunityRoomPanelMessage, expectedParentId: string, beforeWrite?: () => Promise<void>): Promise<string>;
 }
 export class CommunityDiscordError extends Error {
   constructor(readonly status: number, message: string, readonly uncertain = false) {
@@ -445,8 +445,8 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       }
       assertReady(); const sent = raw(await request('post', Routes.channelMessages(channelId), { body })); return id(sent.id);
     },
-    async syncRoomPanel(channelId, roomRef, messageId, body) {
-      validateId(channelId);
+    async syncRoomPanel(channelId, roomRef, messageId, body, expectedParentId, beforeWrite) {
+      validateId(channelId); validateId(expectedParentId);
       let marker: string;
       try { marker = roomPanelMarker(roomRef); }
       catch { throw new CommunityDiscordError(400, '房间引用无效'); }
@@ -454,7 +454,11 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
         || !Array.isArray(body.allowed_mentions?.parse) || body.allowed_mentions.parse.length !== 0) {
         throw new CommunityDiscordError(400, '房间控制卡标记无效');
       }
-      const check = () => managedChannel(channelId, ROOM_PANEL_PERMISSIONS);
+      const check = async () => {
+        const current = await managedChannel(channelId, ROOM_PANEL_PERMISSIONS);
+        if (current.channel.parentId !== expectedParentId) throw new CommunityDiscordError(409, '房间已移出受管分类，停止更新控制卡');
+        return current;
+      };
       const { ctx } = await check();
       const marked = (value: Raw): boolean => {
         const author = raw(value.author);
@@ -508,10 +512,12 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
         if (comparablePanel(previous) !== comparablePanel(body as unknown as Raw)) {
           // A deletion during PATCH is retried via a fresh GET/history scan on
           // the next synchronization, never an immediate second POST here.
+          await beforeWrite?.(); assertReady();
           await request('patch', Routes.channelMessage(channelId, savedId), { body });
         }
         return savedId;
       }
+      await beforeWrite?.(); assertReady();
       const sent = message(await request('post', Routes.channelMessages(channelId), { body }));
       return id(sent.id);
     },
