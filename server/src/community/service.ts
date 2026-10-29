@@ -80,7 +80,7 @@ export class CommunityService {
       Date.now() >= Date.parse(room.ownerLeftAt) + settings.rooms.ownerGraceSeconds * 1000;
     const channel = room.channelRef ? await this.store.resource(room.channelRef, 'voice') : null;
     const problem = channel?.metadata.roomPanelProblem;
-    const panelProblem = problem === 'permissions_missing' ? '机器人缺少控制卡权限，请检查查看频道、发送消息、读取历史和嵌入链接。' :
+    const panelProblem = problem === 'permissions_missing' ? '机器人缺少控制卡权限，请在服务器的机器人角色上开启查看频道、发送消息、读取历史和嵌入链接，并检查频道覆盖。' :
       problem === 'history_conflict' ? '控制卡历史需要管理员核对，未自动补发。' : problem ? '房内控制卡暂未同步，机器人会自动重试。' : null;
     return { ref: room.ref, name: safeCommunityText(room.name), owner: await this.memberView(room.ownerRef), members,
       kind: isFixedRoom(room) ? 'fixed' : 'temporary', managers: (await Promise.all(fixedManagerRefs(room).map(ref => this.memberView(ref)))).filter((member): member is CommunityMemberView => member !== null), panelProblem,
