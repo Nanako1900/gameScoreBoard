@@ -3,6 +3,8 @@ import { linkByDiscordId, linkByUserId } from '../discord/links';
 import { isCommunityRef, parseCommunitySettings, type CommunityJson, type CommunityMemberView, type CommunityOverview,
   type CommunityResourceKind, type CommunityResourceView, type CommunityRoomView, type CommunitySettings } from '../../../shared/community';
 import { canReadRoom, publicCommunityJson, publicCommunitySettings, safeCommunityText } from './security';
+import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
+import { canControlRoom } from './room-policy';
 import { CommunityStore, CommunityStoreError, operationView, type CommunityActor, type StoredOperation, type StoredRoom, type StoredResource } from './store';
 
 export interface CommunityWebActor {
@@ -73,12 +75,17 @@ export class CommunityService {
     const access = await this.store.roomAccess(room.ref); const settings = (await this.store.settings()).settings;
     const present = access.filter(item => item.present); const members = (await Promise.all(present.map(item => this.memberView(item.memberRef)))).filter((value): value is CommunityMemberView => value !== null);
     const mine = access.find(item => item.memberRef === actor.memberRef);
-    const canClaim = actor.memberAvailable && !!mine?.present && !mine.blocked && room.ownerRef !== actor.memberRef &&
+    const canClaim = !isFixedRoom(room) && actor.memberAvailable && !!mine?.present && !mine.blocked && room.ownerRef !== actor.memberRef &&
       !present.some(item => item.memberRef === room.ownerRef) && room.ownerLeftAt !== null &&
       Date.now() >= Date.parse(room.ownerLeftAt) + settings.rooms.ownerGraceSeconds * 1000;
+    const channel = room.channelRef ? await this.store.resource(room.channelRef, 'voice') : null;
+    const problem = channel?.metadata.roomPanelProblem;
+    const panelProblem = problem === 'permissions_missing' ? '机器人缺少控制卡权限，请检查查看频道、发送消息、读取历史和嵌入链接。' :
+      problem === 'history_conflict' ? '控制卡历史需要管理员核对，未自动补发。' : problem ? '房内控制卡暂未同步，机器人会自动重试。' : null;
     return { ref: room.ref, name: safeCommunityText(room.name), owner: await this.memberView(room.ownerRef), members,
+      kind: isFixedRoom(room) ? 'fixed' : 'temporary', managers: (await Promise.all(fixedManagerRefs(room).map(ref => this.memberView(ref)))).filter((member): member is CommunityMemberView => member !== null), panelProblem,
       status: room.status, visibility: room.visibility, userLimit: room.userLimit, version: room.version,
-      canManage: actor.isAdmin || (actor.memberAvailable && room.ownerRef === actor.memberRef), canClaim: canClaim && room.status === 'active',
+      canManage: actor.isAdmin || actor.memberAvailable && canControlRoom(actor, room), canClaim: canClaim && room.status === 'active',
       transferTo: await this.memberView(room.transferToRef), cleanupAt: room.cleanupAt, createdAt: room.createdAt, updatedAt: room.updatedAt };
   }
   async rooms(userId: string): Promise<CommunityRoomView[]> {
@@ -114,13 +121,23 @@ export class CommunityService {
       if (!resourceRef) continue; const resource = await this.store.resource(resourceRef, kind);
       if (!resource || (requireAvailable && !resource.available)) fail(400, 'invalid_resource', '所选资源已不可用或类型不匹配');
     }
+    for (const categoryRef of settings.rooms.fixedCategoryRefs ?? []) {
+      const category = await this.store.resource(categoryRef, 'category');
+      if (!category || settings.enabled && !category.available) fail(400, 'invalid_resource', '固定房分类已不可用');
+    }
     for (const roleRef of settings.roles.allowedRefs) {
       const role = await this.store.resource(roleRef, 'role'); if (!role?.available || !role.safe) fail(400, 'invalid_resource', '身份白名单包含不可安全自选的身份');
     }
   }
   async saveSettings(userId: string, input: unknown, expectedVersion: number, key: string) {
     const actor = await this.actorFromWeb(userId); this.requireAdmin(actor); let settings: CommunitySettings;
-    try { settings = parseCommunitySettings(input); } catch { return fail(400, 'invalid_input', '社区设置格式或范围无效'); }
+    let candidate = input;
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      const value = candidate as Record<string, unknown>, rooms = value.rooms;
+      if (rooms && typeof rooms === 'object' && !Array.isArray(rooms) && !Object.hasOwn(rooms, 'fixedCategoryRefs'))
+        candidate = { ...value, rooms: { ...rooms, fixedCategoryRefs: (await this.store.settings()).settings.rooms.fixedCategoryRefs ?? [] } };
+    }
+    try { settings = parseCommunitySettings(candidate); } catch { return fail(400, 'invalid_input', '社区设置格式或范围无效'); }
     await this.validateSettings(settings);
     const saved = await this.store.saveSettingsAndEnqueue(settings, expectedVersion, { source: 'web', userId, ...(actor.memberRef ? { memberRef: actor.memberRef } : {}) }, key);
     return { settings: publicCommunityJson(saved.settings as unknown as CommunityJson), version: saved.version, runtime: saved.runtime, operation: operationView(saved.operation) };
@@ -140,17 +157,25 @@ export class CommunityService {
       payload = fields(input, ['name']); if (payload.name !== undefined) payload = typeof payload.name === 'string' && !payload.name.trim() ? {} : { name: text(payload.name) };
       if (roomRef !== null) fail(400, 'invalid_input', '创建房间不能指定房间引用');
     } else if (kind.startsWith('room.')) {
-      const action = kind.slice(5); const allowed = ['join', 'rename', 'limit', 'visibility', 'grant', 'deny', 'kick', 'transfer', 'accept', 'claim', 'dissolve', 'admin_delete'];
+      const action = kind.slice(5); const allowed = ['join', 'rename', 'limit', 'visibility', 'grant', 'deny', 'kick', 'transfer', 'accept', 'claim', 'dissolve', 'admin_delete', 'managers'];
       if (!allowed.includes(action)) fail(400, 'invalid_input', '不支持此房间操作');
       if (!roomRef) return missing(); const room = await this.roomForActor(roomRef, authority); integer(version, 1, Number.MAX_SAFE_INTEGER);
       const view = await this.roomView(room, authority); const access = await this.store.roomAccess(room.ref);
-      if (action === 'admin_delete') this.requireAdmin(authority);
+      if (isFixedRoom(room) && ['dissolve', 'admin_delete', 'transfer', 'accept', 'claim'].includes(action)) fail(400, 'invalid_input', '固定房不提供回收、解散或房主转让');
+      if (action === 'managers') {
+        this.requireAdmin(authority);
+        if (!isFixedRoom(room)) fail(400, 'invalid_input', '只能分配固定房管理员');
+      }
       else if (action === 'join') { this.requireMember(authority); if (access.some(item => item.memberRef === authority.memberRef && item.blocked)) return missing(); }
       else if (action === 'claim') { this.requireMember(authority); if (!view.canClaim) fail(403, 'forbidden', '当前不能认领这个房间'); }
       else if (action === 'accept') { this.requireMember(authority); if (room.transferToRef !== authority.memberRef || !room.transferExpiresAt || Date.parse(room.transferExpiresAt) <= Date.now()) fail(403, 'forbidden', '没有待接受的房主转让'); }
       else if (!view.canManage) fail(403, 'not_owner', '当前账号没有房间管理权限');
-      const extra = action === 'rename' ? ['name'] : action === 'limit' ? ['userLimit'] : action === 'visibility' ? ['visibility'] : ['grant', 'deny', 'kick', 'transfer'].includes(action) ? ['memberRef'] : action === 'admin_delete' ? ['confirm'] : [];
+      const extra = action === 'managers' ? ['discordIds'] : action === 'rename' ? ['name'] : action === 'limit' ? ['userLimit'] : action === 'visibility' ? ['visibility'] : ['grant', 'deny', 'kick', 'transfer'].includes(action) ? ['memberRef'] : action === 'admin_delete' ? ['confirm'] : [];
       payload = { ...fields(input, ['action', ...extra]), action };
+      if (action === 'managers') {
+        if (!Array.isArray(payload.discordIds) || payload.discordIds.length > 20 || payload.discordIds.some(id => typeof id !== 'string' || !/^\d{17,20}$/.test(id))) fail(400, 'invalid_input', '请输入有效的 Discord 用户 ID，最多 20 人');
+        payload.discordIds = [...new Set(payload.discordIds as string[])];
+      }
       if (action === 'rename') payload.name = text(payload.name);
       if (action === 'limit') payload.userLimit = integer(payload.userLimit, 0, settings.rooms.maxUserLimit);
       if (action === 'visibility' && !['open', 'locked', 'hidden'].includes(String(payload.visibility))) fail(400, 'invalid_input', '房间可见性无效');
@@ -197,7 +222,7 @@ export class CommunityService {
     if (!actor.isAdmin) {
       // A Nanako session does not retain the former Discord identity after an
       // unlink/rebind, and former administrators cannot inspect privileged jobs.
-      if (['settings.apply', 'resources.sync', 'panel.refresh', 'room.admin_delete'].includes(operation.kind) ||
+      if (['settings.apply', 'resources.sync', 'panel.refresh', 'room.managers'].includes(operation.kind) ||
         !actor.memberAvailable || !actor.memberRef || operation.actor.memberRef !== actor.memberRef) return missing();
     }
     if (operation.roomRef) {

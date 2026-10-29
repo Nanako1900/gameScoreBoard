@@ -32,6 +32,11 @@ function setup() {
 }
 
 describe('community room execution and reconciliation',()=>{
+  it('lets a visible ordinary member rename a temporary room without being its creator',async()=>{const s=setup();const r=await s.room();const op=await s.enqueue('room.rename',r.ref,{name:'共享房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(op.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledWith('channel','共享房')});
+  it('allows only assigned fixed-room managers and rejects the unassigned creator',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.other]};s.settings.rooms.fixedCategoryRefs=[s.category];const denied=await s.enqueue('room.rename',r.ref,{name:'拒绝'},r.version);await s.engine.runOne();expect(denied.status).toBe('failed');const allowed=await s.enqueue('room.rename',r.ref,{name:'固定房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(allowed.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledTimes(1)});
+  it('refuses every fixed-room deletion path including an old system cleanup',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.owner]};r.cleanupAt=new Date(s.now()-1000).toISOString();s.settings.rooms.fixedCategoryRefs=[s.category];s.setPresent([]);for(const action of ['cleanup','dissolve','admin_delete']){const op=await s.enqueue(`room.${action}`,r.ref,{confirm:true},r.version,action==='cleanup'?{source:'system'}:{source:'discord',memberRef:s.owner});await s.engine.runOne();expect(op.status).not.toBe('succeeded');}expect(s.discord.delete).not.toHaveBeenCalled()});
+  it('keeps a fixed empty room free of automatic cleanup and owner-absence timers',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[]};s.settings.rooms.fixedCategoryRefs=[s.category];s.setPresent([]);await s.engine.onVoice('owner','channel');expect(r.cleanupAt).toBeNull();expect(r.ownerLeftAt).toBeNull();expect(s.operations.some(op=>op.kind==='room.cleanup')).toBe(false)});
+  it('assigns fixed managers by administrator-entered Discord IDs and stores only mapped refs',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[]};s.settings.rooms.fixedCategoryRefs=[s.category];s.resources.get(s.other)!.externalId='333333333333333333';s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:true});const op=await s.enqueue('room.managers',r.ref,{discordIds:['333333333333333333']},r.version);await s.engine.runOne();expect(op.status).toBe('succeeded');expect(r.metadata.managerRefs).toEqual([s.other]);expect(JSON.stringify(op.result)).not.toContain('333333333333333333');expect(s.discord.grant).not.toHaveBeenCalled()});
   it('retries a received entrance event after a fresh census restores readiness',async()=>{
     const s=setup();let ready=false;
     vi.mocked(s.store.runtime).mockImplementation(async()=>({ready}) as never);
@@ -98,7 +103,7 @@ describe('community room execution and reconciliation',()=>{
   it('stops further force-close effects if admin privileges are revoked mid-operation',async()=>{
     const s=setup();const room=await s.room();s.setPresent(['owner','other']);
     s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:true});
-    vi.mocked(s.discord.move).mockImplementation(async()=>{s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:false});});
+    vi.mocked(s.discord.move).mockImplementation(async()=>{s.authorize.mockResolvedValue({memberRef:null,isAdmin:false});});
     const op=await s.enqueue('room.admin_delete',room.ref,{confirm:true},room.version);await s.engine.runOne();
     expect(s.discord.move).toHaveBeenCalledTimes(1);expect(s.discord.delete).not.toHaveBeenCalled();expect(op.status).toBe('needs_review');
   });

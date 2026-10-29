@@ -151,11 +151,11 @@ it('retains an occupied room when a later waiting-room move fails during admin c
   expect(positions.get(OWNER)).toBe(WAITING); expect(positions.get(OTHER)).toBe(CHANNEL); expect(discord.delete).not.toHaveBeenCalled();
 });
 
-it.each(['admin', 'binding'])('rechecks current %s authority between every forced move', async change => {
+it.each(['visibility', 'binding'])('rechecks current %s authority between every forced move', async change => {
   const value = await room(); positions.set(OWNER, CHANNEL); positions.set(OTHER, CHANNEL);
   vi.mocked(discord.move).mockImplementationOnce(async (id, target) => {
     positions.set(id, target);
-    if (change === 'admin') await pool.query("UPDATE users SET is_admin=0 WHERE id='admin'");
+    if (change === 'visibility') { await pool.query("UPDATE users SET is_admin=0 WHERE id='admin'"); vi.mocked(discord.canView).mockResolvedValue(false); }
     else await pool.query("DELETE FROM discord_links WHERE user_id='admin'");
   });
   const op = await queue('room.admin_delete', value.ref, { confirm: true }, value.version, { source: 'web', userId: 'admin', memberRef: adminRef });

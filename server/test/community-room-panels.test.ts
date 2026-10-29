@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultCommunitySettings } from '../../shared/community';
-import type { CommunityDiscord } from '../src/community/discord';
+import { CommunityDiscordError, type CommunityDiscord } from '../src/community/discord';
 import { CommunityRoomPanels } from '../src/community/room-panels';
 import type { CommunityStore, StoredResource, StoredRoom } from '../src/community/store';
 
 function setup() {
   let now = Date.parse('2026-10-29T12:00:00Z'), readOnly = false;
   const room = { ref: randomUUID(), ownerRef: randomUUID(), channelRef: randomUUID(), status: 'active', name: '小屋',
-    visibility: 'open', userLimit: 6, version: 2, cleanupAt: null, ownerLeftAt: null, transferToRef: null, transferExpiresAt: null } as StoredRoom;
+    metadata: {}, visibility: 'open', userLimit: 6, version: 2, cleanupAt: null, ownerLeftAt: null, transferToRef: null, transferExpiresAt: null } as StoredRoom;
   const category = { ref: randomUUID(), externalId: 'category', kind: 'category', available: true } as StoredResource;
   const channel = { ref: room.channelRef!, externalId: 'channel', kind: 'voice', name: '小屋', metadata: {}, available: true } as StoredResource;
   const owner = { ref: room.ownerRef!, externalId: 'owner', name: 'Nanako', available: true, kind: 'member' } as StoredResource;
@@ -26,6 +26,16 @@ function setup() {
 }
 
 describe('independent room control card synchronization', () => {
+  it('publishes a safe actionable card permission diagnostic and clears it on success', async () => {
+    const s = setup(); vi.mocked(s.discord.syncRoomPanel!).mockRejectedValueOnce(new CommunityDiscordError(403, 'secret raw discord 123456789012345678'));
+    await s.panels.sync(); expect(s.channel.metadata.roomPanelProblem).toBe('permissions_missing'); expect(s.errors.mock.calls.map(([error])=>(error as Error).message).join(' ')).not.toContain('123456789012345678');
+    s.setNow(s.now()+30_000); await s.panels.sync(); expect(s.channel.metadata.roomPanelProblem).toBeNull();
+  });
+  it('adds a fixed room card in its configured category without requiring a temporary-room category', async () => {
+    const s = setup(); const category = s.settings.rooms.categoryRef!; s.settings.rooms.categoryRef=null;s.settings.rooms.fixedCategoryRefs=[category];
+    s.room.metadata={kind:'fixed',categoryRef:category,managerRefs:[s.owner.ref]}; await s.panels.sync();
+    expect(s.discord.syncRoomPanel).toHaveBeenCalled(); const card=JSON.stringify(vi.mocked(s.discord.syncRoomPanel!).mock.calls[0][3]);expect(card).toContain('固定');expect(card).not.toContain('自动删除');
+  });
   it('rechecks read-only mode and room quarantine immediately before a delayed message write', async () => {
     const s = setup(); vi.mocked(s.discord.syncRoomPanel!).mockImplementation(async (...args) => { s.setReadOnly(); await args[5]!(); return 'message'; });
     await s.panels.sync(); expect(vi.mocked(s.discord.syncRoomPanel!).mock.calls[0][5]).toBeTypeOf('function'); expect(s.store.upsertResource).not.toHaveBeenCalled(); expect(s.channel.metadata.roomPanelMessageId).toBeUndefined();

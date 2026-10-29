@@ -5,6 +5,8 @@ import type { CommunityDiscord } from './discord';
 import type { CommunityFunService } from './fun-service';
 import type { CommunityMembershipService } from './membership';
 import { canReadRoom, safeCommunityText } from './security';
+import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
+import { canControlRoom } from './room-policy';
 import type { CommunityService } from './service';
 import { CommunityStoreError, type CommunityActor, type StoredOperation, type StoredRoom } from './store';
 
@@ -106,23 +108,25 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
         }
         await respond(message('临时语音房\n进入服务器的「创建入口」语音频道，机器人会自动建房并把你移入。\n房内文字聊天有自动更新的控制卡；空房后会按设置时间自动删除。')); return;
       }
-      const room = await roomFor(ref), access = await deps.service.store.roomAccess(ref), mine = room.ownerRef === authority.memberRef;
+      const room = await roomFor(ref), access = await deps.service.store.roomAccess(ref), mine = room.ownerRef === authority.memberRef, fixed = isFixedRoom(room), controls = canControlRoom(authority, room);
       const channel = room.channelRef ? await deps.service.store.resource(room.channelRef, 'voice') : null;
       const occupants = channel ? deps.discord.occupants(channel.externalId) : null;
       const prefix = (action: string) => `v1:community:act:${action}:${room.ref}:${room.version}`;
       const rows: Row[] = [];
-      if (mine || authority.isAdmin) {
+      if (controls) {
         rows.push(row([button('改名', `v1:community:edit:rename:${room.ref}:${room.version}`), button('人数', `v1:community:edit:limit:${room.ref}:${room.version}`), button('可见性', `v1:community:visibility:${room.ref}:${room.version}`)]));
-        rows.push(row([button('允许成员', `v1:community:target:grant:${room.ref}:${room.version}`), button('禁止成员', `v1:community:target:deny:${room.ref}:${room.version}`), button('移出成员', `v1:community:target:kick:${room.ref}:${room.version}`), button('转让房主', `v1:community:target:transfer:${room.ref}:${room.version}`)]));
-        rows.push(row([button('解散空房间', `v1:community:confirm:dissolve:${room.ref}:${room.version}`, 4), ...(authority.isAdmin ? [button('管理员移往等候区后解散', `v1:community:confirm:admin_delete:${room.ref}:${room.version}`, 4)] : [])]));
-      } else {
+        rows.push(row([button('允许成员', `v1:community:target:grant:${room.ref}:${room.version}`), button('禁止成员', `v1:community:target:deny:${room.ref}:${room.version}`), button('移出成员', `v1:community:target:kick:${room.ref}:${room.version}`), ...(!fixed ? [button('转让房主', `v1:community:target:transfer:${room.ref}:${room.version}`)] : [])]));
+        if (!fixed) rows.push(row([button('解散空房间', `v1:community:confirm:dissolve:${room.ref}:${room.version}`, 4), button('移往等候区后解散', `v1:community:confirm:admin_delete:${room.ref}:${room.version}`, 4)]));
+      }
+      if (!fixed) {
         const actions: APIComponentInMessageActionRow[] = [];
-        if (room.transferToRef === authority.memberRef) actions.push(button('接受房主转让', prefix('accept'), 3));
+        if (!fixed && room.transferToRef === authority.memberRef) actions.push(button('接受房主转让', prefix('accept'), 3));
         const config = (await deps.service.store.settings()).settings;
-        if (occupants?.includes(interaction.user.id) && room.ownerLeftAt && Date.now() >= Date.parse(room.ownerLeftAt) + config.rooms.ownerGraceSeconds * 1000) actions.push(button('认领房间', prefix('claim'), 3));
+        if (!fixed && occupants?.includes(interaction.user.id) && room.ownerLeftAt && Date.now() >= Date.parse(room.ownerLeftAt) + config.rooms.ownerGraceSeconds * 1000) actions.push(button('认领房间', prefix('claim'), 3));
         if (actions.length) rows.push(row(actions));
       }
-      await respond(message(`${clean(room.name)}\n${mine ? '你是房主' : '社区房间'} · ${room.visibility === 'open' ? '开放' : room.visibility === 'locked' ? '上锁' : '隐藏'} · ${room.userLimit || '不限'} 人\n${occupants === null ? '语音状态暂不可用' : `当前 ${occupants.length} 人`} · ${access.filter(item => item.allowed).length} 位受邀成员\n状态：${room.status}${room.transferToRef ? '\n有一项待接受的房主转让。' : ''}`, rows));
+      const managers = fixed ? (await Promise.all(fixedManagerRefs(room).map(ref => deps.service.store.resource(ref, 'member')))).filter(Boolean).map(member => clean(member!.name)).join('、') : '';
+      await respond(message(`${clean(room.name)}\n${fixed ? `固定房 · 管理员：${managers || '尚未分配'} · 不自动删除` : mine ? '你是创建者 · 成员共用控制' : '临时房 · 成员共用控制'} · ${room.visibility === 'open' ? '开放' : room.visibility === 'locked' ? '上锁' : '隐藏'} · ${room.userLimit || '不限'} 人\n${occupants === null ? '语音状态暂不可用' : `当前 ${occupants.length} 人`} · ${access.filter(item => item.allowed).length} 位受邀成员\n状态：${room.status}${room.transferToRef ? '\n有一项待接受的房主转让。' : ''}`, rows));
     };
     const showRoles = async (page = 0): Promise<void> => {
       const roles = await deps.membership.readRoles(authority.memberRef!); const entries = roles.choices.slice(page * 25, (page + 1) * 25), rows: Row[] = [];
@@ -141,7 +145,7 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
     };
     const showOperation = async (op: StoredOperation): Promise<void> => {
       if (!authority.isAdmin && op.actor.memberRef !== authority.memberRef) return missing();
-      if (!authority.isAdmin && ['settings.apply', 'resources.sync', 'panel.refresh', 'room.admin_delete'].includes(op.kind)) return missing();
+      if (!authority.isAdmin && ['settings.apply', 'resources.sync', 'panel.refresh', 'room.managers'].includes(op.kind)) return missing();
       if (op.roomRef) {
         const storedRoom = await deps.service.store.getRoom(op.roomRef);
         if (storedRoom?.status === 'closed') {
@@ -181,13 +185,13 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
       if (room.status !== 'active') throw new CommunityStoreError(409, 'version_conflict', '房间当前暂不可操作。');
       if (parts[1] === 'more') await showRoom(room.ref);
       else if (parts[1] === 'visibility') {
-        if (!authority.isAdmin && room.ownerRef !== authority.memberRef) throw new CommunityStoreError(403, 'not_owner', '只有当前房主或管理员可以管理房间。');
+        if (!canControlRoom(authority, room)) throw new CommunityStoreError(403, 'not_owner', '只有已分配的固定房管理员可以管理房间。');
         await respond(message('选择房间访问方式。', [row([{ type: 3, custom_id: `v1:community:setvisibility:${room.ref}:${room.version}`, options: [{ label: '公开：所有成员可进入', value: 'open' }, { label: '锁门：仅允许的成员可进入', value: 'locked' }, { label: '隐藏：仅允许的成员可查看', value: 'hidden' }] }])]));
       } else return missing();
     } else if (parts[0] === 'panelsubmit' && interaction.isModalSubmit() && ['rename', 'limit'].includes(parts[1])) {
       const room = await roomFor(parts[2]);
       if (room.status !== 'active') throw new CommunityStoreError(409, 'version_conflict', '房间当前暂不可操作。');
-      if (!authority.isAdmin && room.ownerRef !== authority.memberRef) throw new CommunityStoreError(403, 'not_owner', '只有当前房主或管理员可以管理房间。');
+      if (!canControlRoom(authority, room)) throw new CommunityStoreError(403, 'not_owner', '只有已分配的固定房管理员可以管理房间。');
       await enqueue(`room.${parts[1]}`, room.ref, parts[1] === 'limit' ? { userLimit: Number(interaction.fields.getTextInputValue('value')) } : { name: interaction.fields.getTextInputValue('value') }, room.version);
     } else if (parts[0] === 'roles' && parts[1] !== 'set') await showRoles(parts[1] === 'page' ? Math.max(0, Number(parts[2]) || 0) : 0);
     else if (parts[0] === 'roles' && parts[1] === 'set' && interaction.isStringSelectMenu()) {
@@ -219,7 +223,7 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
       const item = await funFor(parts[1]), value = object(item.data), index = Number(parts[2]);
       if (item.kind !== 'ai' || value.purpose !== 'room_name' || !Array.isArray(value.suggestions) || !Number.isInteger(index) || index < 0 || index >= value.suggestions.length) return missing();
       const room = item.roomRef ? await roomFor(item.roomRef) : (await deps.service.store.listRooms()).find(room => room.status === 'active' && room.ownerRef === authority.memberRef);
-      if (!room || room.ownerRef !== authority.memberRef) throw new CommunityStoreError(403, 'not_owner', '只有当前房主可以确认应用建议。');
+      if (!room || !canControlRoom(authority, room)) throw new CommunityStoreError(403, 'not_owner', '当前账号没有此房间的管理权限。');
       await enqueue('room.rename', room.ref, { name: clean(value.suggestions[index]) }, room.version);
     } else if (parts[0] === 'tool') {
       if (parts[1] === 'teams') await respond(message('选择明确参与分队的成员（默认分成 2 队）。', [row([{ type: 5, custom_id: 'v1:community:teams:2', min_values: 2, max_values: Math.min(25, (await deps.service.store.settings()).settings.fun.maxParticipants) }])]));
