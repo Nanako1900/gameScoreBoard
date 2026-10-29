@@ -376,11 +376,12 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
         || !has(guildPermissions(ctx.self, ctx, guildId), P.ViewAuditLog)) throw forbidden();
       const owner = await currentMember(ownerId, ctx); if (owner.bot) throw forbidden();
       const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility);
-      // Explicit room access overwrites replace category inheritance. Preserve
-      // only this bot's effective chat permissions so its control card remains
-      // usable when those permissions were granted in the category alone.
+      // Discord's create-channel API only permits overwriting permissions the
+      // bot holds guild-wide. A category-only grant must not make the primary
+      // room creation fail; missing card permissions are diagnosed separately.
       const bot = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === ctx.selfId)!;
-      bot.allow = (BigInt(bot.allow) | channelPermissions(ctx.self, parent, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS).toString();
+      const retained = channelPermissions(ctx.self, parent, ctx, guildId) & guildPermissions(ctx.self, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS;
+      bot.allow = (BigInt(bot.allow) | retained).toString();
       assertReady();
       const created = raw(await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
         parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker }));

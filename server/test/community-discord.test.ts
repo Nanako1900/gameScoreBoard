@@ -116,9 +116,9 @@ describe('community Discord resource adapter',()=>{
     const bot=overwrites.find(o=>o.id===SELF)!;const owner=overwrites.find(o=>o.id===OWNER)!;const everyone=overwrites.find(o=>o.id===G)!;
     expect(BigInt(bot.allow)&(P.ViewChannel|P.Connect)).toBe(P.ViewChannel|P.Connect);expect(BigInt(owner.allow)&(P.ManageChannels|P.ManageRoles|P.Administrator)).toBe(0n);expect(BigInt(everyone.deny)&P.ViewChannel).toBe(P.ViewChannel);
   });
-  it('preserves message permissions granted to the bot only in the destination category', async () => {
+  it('preserves effective category message permissions that the bot also holds in the guild', async () => {
     const s = setup(), chat = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
-    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT & ~chat);
+    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT | chat);
     s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: chat.toString(), deny: '0' });
     await s.api.createVoice(PARENT, '我的房间', OWNER, 'hidden', 6, OP);
     const overwrites = s.post.mock.calls.find(([route]) => route === Routes.guildChannels(G))![1].body.permission_overwrites as Array<{ id: string; allow: string; deny: string }>;
@@ -128,11 +128,27 @@ describe('community Discord resource adapter',()=>{
   });
   it('copies only message permissions the bot effectively has in the category', async () => {
     const s = setup(), chat = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
-    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT & ~chat);
+    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT | chat);
     s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: P.SendMessages.toString(), deny: (P.ReadMessageHistory | P.EmbedLinks).toString() });
     await s.api.createVoice(PARENT, '我的房间', OWNER, 'open', 0, OP);
     const overwrites = s.post.mock.calls.find(([route]) => route === Routes.guildChannels(G))![1].body.permission_overwrites as Array<{ id: string; allow: string }>;
     expect(BigInt(overwrites.find(item => item.id === SELF)!.allow) & chat).toBe(P.SendMessages);
+  });
+  it('does not make room creation fail by copying a category-only permission the bot lacks in the guild', async () => {
+    const s = setup(); s.setBotPermissions(BOT & ~P.ReadMessageHistory);
+    s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: P.ReadMessageHistory.toString(), deny: '0' });
+    const post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => {
+      if (route === Routes.guildChannels(G)) {
+        const entries = options.body.permission_overwrites as Array<{ id: string; allow: string }>;
+        if (BigInt(entries.find(item => item.id === SELF)!.allow) & P.ReadMessageHistory) throw { status: 403 };
+      }
+      return post(route, options);
+    });
+    await expect(s.api.createVoice(PARENT, '我的房间', OWNER, 'open', 0, OP)).resolves.toBe(ROOM);
+    const overwrites = s.post.mock.calls.find(([route]) => route === Routes.guildChannels(G))![1].body.permission_overwrites as Array<{ id: string; allow: string }>;
+    expect(BigInt(overwrites.find(item => item.id === SELF)!.allow) & P.ReadMessageHistory).toBe(0n);
+    expect(s.put).not.toHaveBeenCalled();
   });
   it('reads the directory before one fresh context instead of fetching the same context twice', async () => {
     const s = setup(); await s.api.snapshot();
