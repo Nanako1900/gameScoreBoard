@@ -843,6 +843,14 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
 
 房间动作：`join`、`rename {name}`、`limit {userLimit}`、`visibility {visibility}`、`grant/deny/kick/transfer {memberRef}`、`accept`、`claim`、`dissolve`、`admin_delete {confirm:true}`。加入前必须已连接语音，不能替未连接成员开始语音；管理员强制关闭必须先移动所有人到独立等候区，失败不删除。
 
+C4 的常规成员流程为进入指定语音入口 → 自动建房并移入 → 房内控制卡 → 空房延迟删除。已有 active 房间的本人再次进入入口，持久化 `room.join` 任务并返回原房；执行时必须仍在入口、仍为当前房主且房间版本未变。creating／needs_review 房间不新建、不回流。网页移除常规创建表单／加入按钮，保留本人相关房间和折叠的辅助管理；管理员仍管理全部受管房间。旧创建／加入 HTTP 契约保留。
+
+每个受管语音房自带文字聊天中维护一张共享控制卡：房名、房主、人数／上限、访问模式、回收规则与四个主按钮。卡片无个人化授权状态，按钮仅带 opaque ref；改名／人数表单立即打开，提交时读当前身份、房主与版本，实际执行仍重新校验。访问方式／更多为私密回复，不覆盖共享卡。名称、人数、模式、房主、宽限变化触发合并同步；原消息无变化不 PATCH，每 60 秒核验一次存在性。面板队列独立，不等待其慢请求来建房或回收；失败退避至少 30 秒，只影响卡片。
+
+消息 ID 存在 `community_resources.metadata.roomPanelMessageId`，只在 Bot 内部使用，不进入 DTO、不递增房间版本。重启或消息 404 时，完整分页查找本 Bot 与控制按钮内的同房 opaque ref 标记；唯一匹配继续编辑，完整证明不存在才补建，缺权限／不完整／多义均停止补发。历史核对前后及写入前复查语音频道类型、受管分类和权限，写入前另查房间／配置版本、ready 与只读状态。发送成功而写回前崩溃由同标记找回，不盲目重复 POST。只处理自有面板，普通聊天正文不保存或用于 AI。
+
+管理员房间设置默认五项：开关、创建入口、分类、空房删除分钟、默认人数。高级策略及运行日志折叠，待对账提醒常显并可展开诊断；分钟输入无损保留旧秒值，编辑后按秒四舍五入，仍遵守 15–86400 秒约束。既有全局社区入口频道保持可选兼容，不是房内卡的配置项。
+
 - 所有 ref 是随机 UUID v4，与原始 Discord ID 无可逆关系。DTO、URL、错误、审计与选择器不含原始成员／频道／角色标识、CDN 头像或精确频道链接。管理员配置也只用 opaque refs。
 - 成员配置投影不包含行政资源选择或私有 AI prompt。私房名称、成员、人数、互动与操作结果均按当前可见范围过滤。待对账房间对其他普通成员隔离；本人只见自身可读状态，管理员可诊断。
 - 操作状态：`queued/running/retry_wait/succeeded/failed/conflict/canceled/needs_review`。202 不代表执行成功。相同 actor 和 requestKey 的相同请求返回同一任务，不同内容冲突；房间与同成员的跨端角色任务分别串行。过期 running 进入待对账，不自动重放。
