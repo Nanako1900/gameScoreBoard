@@ -13,7 +13,8 @@ describe('persistent room control card', () => {
     const card = renderRoomPanel(state);
     expect(card.allowed_mentions).toEqual({ parse: [] });
     expect(card.embeds[0].title).toBe('Nanako 的房间');
-    expect(card.embeds[0].footer?.text).toBe(`community-room-panel:${REF}`);
+    expect(card.embeds[0].footer?.text).toBe('房间状态自动更新');
+    expect(JSON.stringify(card.embeds)).not.toContain(REF);
     expect(card.embeds[0].fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: '房主', value: 'Nanako' }),
       expect.objectContaining({ name: '人数', value: '3 / 6' }),

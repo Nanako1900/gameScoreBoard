@@ -25,7 +25,7 @@ export interface CommunityRoomPanelMessage {
 
 export function roomPanelMarker(roomRef: string): string {
   if (!isCommunityRef(roomRef)) throw new Error('房间引用无效');
-  return `community-room-panel:${roomRef}`;
+  return `v1:community:panel:more:${roomRef}`;
 }
 
 function label(value: string): string {
@@ -54,10 +54,11 @@ export function renderRoomPanel(state: CommunityRoomPanelState): CommunityRoomPa
         { name: '人数', value: `${state.occupantCount === null ? '状态暂不可用' : state.occupantCount} / ${state.userLimit || '不限'}`, inline: true },
         { name: '访问', value: { open: '公开', locked: '锁门', hidden: '隐藏' }[state.visibility], inline: true },
       ],
-      footer: { text: marker },
+      footer: { text: '房间状态自动更新' },
     }],
     components: [{ type: 1, components: [
       ['rename', '修改名称'], ['limit', '人数上限'], ['visibility', '访问方式'], ['more', '更多操作'],
-    ].map(([action, name]) => ({ type: 2, style: 2, label: name, custom_id: `v1:community:panel:${action}:${state.roomRef}` })) }],
+    ].map(([action, name]) => ({ type: 2, style: 2, label: name,
+      custom_id: action === 'more' ? marker : `v1:community:panel:${action}:${state.roomRef}` })) }],
   };
 }

@@ -450,7 +450,12 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       let marker: string;
       try { marker = roomPanelMarker(roomRef); }
       catch { throw new CommunityDiscordError(400, '房间引用无效'); }
-      if (!Array.isArray(body.embeds) || body.embeds.length !== 1 || body.embeds[0]?.footer?.text !== marker
+      const actions = ['rename', 'limit', 'visibility', 'more'];
+      const row = Array.isArray(body.components) && body.components.length === 1 ? body.components[0] : null;
+      if (!Array.isArray(body.embeds) || body.embeds.length !== 1
+        || row?.type !== 1 || !Array.isArray(row.components) || row.components.length !== actions.length
+        || row.components.some((button, index) => button.type !== 2 || !('custom_id' in button)
+          || button.custom_id !== `v1:community:panel:${actions[index]}:${roomRef}` || button.style !== 2)
         || !Array.isArray(body.allowed_mentions?.parse) || body.allowed_mentions.parse.length !== 0) {
         throw new CommunityDiscordError(400, '房间控制卡标记无效');
       }
@@ -463,11 +468,12 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       const marked = (value: Raw): boolean => {
         const author = raw(value.author);
         if (id(author.id) !== ctx.selfId) return false;
-        if (!Array.isArray(value.embeds)) throw invalid();
-        return value.embeds.some(value => {
-          const embed = raw(value);
-          return embed.footer !== null && typeof embed.footer === 'object' && !Array.isArray(embed.footer)
-            && (embed.footer as Raw).text === marker;
+        if (!Array.isArray(value.components)) throw invalid();
+        return value.components.some(value => {
+          const row = raw(value);
+          if (row.type !== 1) return false;
+          if (!Array.isArray(row.components)) throw invalid();
+          return row.components.some(value => { const button = raw(value); return button.type === 2 && button.custom_id === marker; });
         });
       };
       const message = (value: unknown, expectedId?: string): Raw => {
@@ -494,7 +500,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
           for (const entry of response) {
             const item = message(entry), current = id(item.id);
             if (before && BigInt(current) >= BigInt(before)) throw invalid(); before = current;
-            // Other members' chat bodies and embeds are never read or stored.
+            // Other members' bodies, embeds and components are never inspected.
             if (marked(item)) matches.push(item);
           }
         }
