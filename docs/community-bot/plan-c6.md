@@ -38,3 +38,7 @@ Node22.22.3，`47b309d`，全部通过。PG显式取消TEST_DATABASE_URL，仅�
 - 分支 `codex/community-admin-fixes`。
 - PR标题 `fix: 修复社区设置保存并优化管理员表单（C6）`。
 - 不自行合并、部署，不操作Coolify／Cloudflare／远程数据库，不执行远程迁移或真实Discord调用。
+
+## 5. 实施结果
+
+四步开发与本机验证完成，详见 [validation-c6.md](validation-c6.md)。复核补充的晚到撤权、可选记录阻塞及旧读取覆盖新保存竞态均先红后绿修复。业务限制及单次完整保存规则保持，浏览器API测试归入DOM套件以隔离前端与Worker类型环境。提PR后等待检查，不自行合并或部署。

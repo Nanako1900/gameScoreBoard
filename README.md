@@ -6,7 +6,7 @@
 
 新增自助语音房与自动房管、公开入服欢迎、自选兴趣身份，以及投票／分队／抽签／骰子／话题／AI 灵感。Discord 与网页共用状态，全局主导航的「设置」集中个人与管理入口；首页另有一个「社区中心」入口。社区功能独立于信誉分。
 
-网页沿用 [#43](https://github.com/Nanako1900/gameScoreBoard/pull/43) 的四项主导航、集中设置和整页详情。临时房的日常入口为 Discord：进入指定语音入口后自动建房并移入，房内文字聊天只有一张自动更新的控制卡，空房按配置时间删除；已有房间再次进入入口会送回原房。临时房由能查看该房间的服务器成员共用控制；固定房通过网页选择分类自动补卡，由 Nanako 管理员输入 Discord 用户 ID 分配管理者，空房也保留。常用五项设置保持集中，固定房配置、高级与诊断折叠。最新计划及验证见 [C5 计划](docs/community-bot/plan-c5.md)、[C5 验证](docs/community-bot/validation-c5.md)。
+网页沿用 [#43](https://github.com/Nanako1900/gameScoreBoard/pull/43) 的四项主导航、集中设置和整页详情。临时房的日常入口为 Discord：进入指定语音入口后自动建房并移入，房内文字聊天只有一张自动更新的控制卡，空房按配置时间删除；已有房间再次进入入口会送回原房。临时房由能查看该房间的服务器成员共用控制；固定房通过网页选择分类自动补卡，由 Nanako 管理员输入 Discord 用户 ID 分配管理者，空房也保留。常用五项设置保持集中，其余设置按组折叠；保存前显示具体字段问题并展开定位，操作记录故障不阻挡配置编辑。最新计划及验证见 [C6 计划](docs/community-bot/plan-c6.md)、[C6 验证](docs/community-bot/validation-c6.md)；固定房权限与控制卡见 [C5 计划](docs/community-bot/plan-c5.md)。
 
 功能开关、权限、备份迁移与真实验收见 [社区使用与上线说明](docs/community-bot/operations.md)；需求和确认记录见 [community-bot/requirements.md](docs/community-bot/requirements.md)。本模块为 Node/PG 专属，旧 D1 隐藏入口。
 
