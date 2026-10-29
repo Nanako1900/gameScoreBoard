@@ -2,6 +2,7 @@
 // must resolve resources through the opaque references owned by CommunityStore.
 import { ChannelType, PermissionFlagsBits as P, Routes, type Client } from 'discord.js';
 import type { CommunityResourceKind, CommunityVisibility } from '../../../shared/community';
+import { roomPanelMarker, type CommunityRoomPanelMessage } from './room-panel';
 
 export interface CommunityDiscordResource {
   id: string;
@@ -65,6 +66,7 @@ export interface CommunityDiscord {
   removeRole(memberId: string, roleId: string): Promise<void>;
   sendText(channelId: string, content: string): Promise<string>;
   sendPanel(channelId: string, messageId?: string | null): Promise<string>;
+  syncRoomPanel?(channelId: string, roomRef: string, messageId: string | null, body: CommunityRoomPanelMessage): Promise<string>;
 }
 export class CommunityDiscordError extends Error {
   constructor(readonly status: number, message: string, readonly uncertain = false) {
@@ -81,6 +83,7 @@ const ID = /^\d{17,20}$/;
 const OP = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const ACCESS = P.ViewChannel | P.Connect;
 const CHANNEL_MANAGEMENT = P.ViewChannel | P.ManageChannels;
+const ROOM_PANEL_PERMISSIONS = P.ViewChannel | P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
 const DANGEROUS = Object.entries(P).filter(([name]) => name.startsWith('Manage') || name.startsWith('Moderate') ||
   ['Administrator', 'KickMembers', 'BanMembers', 'ViewAuditLog', 'MentionEveryone', 'MoveMembers', 'MuteMembers', 'DeafenMembers'].includes(name))
   .reduce((all, [, bit]) => all | bit, 0n);
@@ -147,6 +150,28 @@ function memberView(member: Member, ctx: Context, guildId: string): CommunityDis
 }
 function safeRole(role: Role, ctx: Context, guildId: string): boolean {
   return role.id !== guildId && !role.managed && role.position < ctx.highest && (role.permissions & DANGEROUS) === 0n;
+}
+
+/** Discord adds rich/default component fields when reading a message back.
+ * Ignore those transport defaults, retaining all user-visible differences. */
+function comparablePanel(value: Raw): string {
+  const embeds = Array.isArray(value.embeds) ? value.embeds.map(value => {
+    const embed = { ...raw(value) }; if (embed.type === 'rich') delete embed.type; return embed;
+  }) : [];
+  const components = Array.isArray(value.components) ? value.components.map(value => {
+    const row = { ...raw(value) }; delete row.id;
+    if (Array.isArray(row.components)) row.components = row.components.map(value => {
+      const component = { ...raw(value) }; delete component.id;
+      if (component.disabled === false) delete component.disabled;
+      return component;
+    });
+    return row;
+  }) : [];
+  // Object key order in REST payloads is not a content change.
+  const ordered = (value: unknown): unknown => Array.isArray(value) ? value.map(ordered)
+    : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, ordered(item)])) : value;
+  return JSON.stringify(ordered({ content: value.content ?? '', embeds, components }));
 }
 
 export function createCommunityDiscord(client: Client, guildId: string): CommunityDiscord {
@@ -419,6 +444,76 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
         assertReady(); await request('patch', Routes.channelMessage(channelId, messageId), { body }); return messageId;
       }
       assertReady(); const sent = raw(await request('post', Routes.channelMessages(channelId), { body })); return id(sent.id);
+    },
+    async syncRoomPanel(channelId, roomRef, messageId, body) {
+      validateId(channelId);
+      let marker: string;
+      try { marker = roomPanelMarker(roomRef); }
+      catch { throw new CommunityDiscordError(400, '房间引用无效'); }
+      if (!Array.isArray(body.embeds) || body.embeds.length !== 1 || body.embeds[0]?.footer?.text !== marker
+        || !Array.isArray(body.allowed_mentions?.parse) || body.allowed_mentions.parse.length !== 0) {
+        throw new CommunityDiscordError(400, '房间控制卡标记无效');
+      }
+      const check = () => managedChannel(channelId, ROOM_PANEL_PERMISSIONS);
+      const { ctx } = await check();
+      const marked = (value: Raw): boolean => {
+        const author = raw(value.author);
+        if (id(author.id) !== ctx.selfId) return false;
+        if (!Array.isArray(value.embeds)) throw invalid();
+        return value.embeds.some(value => {
+          const embed = raw(value);
+          return embed.footer !== null && typeof embed.footer === 'object' && !Array.isArray(embed.footer)
+            && (embed.footer as Raw).text === marker;
+        });
+      };
+      const message = (value: unknown, expectedId?: string): Raw => {
+        const result = raw(value), resultId = id(result.id);
+        if (expectedId !== undefined && expectedId !== resultId
+          || result.channel_id !== undefined && result.channel_id !== channelId) throw invalid();
+        return result;
+      };
+      let previous: Raw | null = null;
+      if (messageId) {
+        validateId(messageId);
+        try { previous = message(await request('get', Routes.channelMessage(channelId, messageId)), messageId); }
+        catch (error) { if (!(error instanceof CommunityDiscordError) || error.status !== 404) throw error; }
+        if (previous && !marked(previous)) throw new CommunityDiscordError(409, '房间控制卡与已登记消息不一致，请管理员检查');
+      }
+      if (!previous) {
+        let before: string | undefined, complete = false;
+        const matches: Raw[] = [];
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const query = new URLSearchParams({ limit: '100', ...(before ? { before } : {}) });
+          const response = await request('get', Routes.channelMessages(channelId), { query });
+          if (!Array.isArray(response) || response.length > 100) throw invalid();
+          if (!response.length) { complete = true; break; }
+          for (const entry of response) {
+            const item = message(entry), current = id(item.id);
+            if (before && BigInt(current) >= BigInt(before)) throw invalid(); before = current;
+            // Other members' chat bodies and embeds are never read or stored.
+            if (marked(item)) matches.push(item);
+          }
+        }
+        if (!complete) throw new CommunityDiscordError(503, '控制卡消息历史尚未完整核对');
+        // Discord can return [] when ReadMessageHistory was revoked mid-scan.
+        // Such an empty response is not proof that posting a new card is safe.
+        await check();
+        if (matches.length > 1) throw new CommunityDiscordError(409, '找到多张房间控制卡，请管理员检查');
+        previous = matches[0] ?? null;
+      }
+      await check();
+      assertReady();
+      if (previous) {
+        const savedId = id(previous.id);
+        if (comparablePanel(previous) !== comparablePanel(body as unknown as Raw)) {
+          // A deletion during PATCH is retried via a fresh GET/history scan on
+          // the next synchronization, never an immediate second POST here.
+          await request('patch', Routes.channelMessage(channelId, savedId), { body });
+        }
+        return savedId;
+      }
+      const sent = message(await request('post', Routes.channelMessages(channelId), { body }));
+      return id(sent.id);
     },
   };
 }
