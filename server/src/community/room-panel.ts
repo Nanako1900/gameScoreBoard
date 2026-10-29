@@ -15,6 +15,8 @@ export interface CommunityRoomPanelState {
   emptyGraceSeconds: number;
   claimable: boolean;
   transferPending: boolean;
+  kind?: 'temporary' | 'fixed';
+  managerNames?: readonly string[];
 }
 export interface CommunityRoomPanelMessage {
   content: string;
@@ -40,17 +42,21 @@ export function renderRoomPanel(state: CommunityRoomPanelState): CommunityRoomPa
     || !Number.isInteger(state.emptyGraceSeconds) || state.emptyGraceSeconds < 15 || state.emptyGraceSeconds > 86_400
     || !['open', 'locked', 'hidden'].includes(state.visibility)) throw new Error('房间状态无效');
   const grace = state.emptyGraceSeconds % 60 === 0 ? `${state.emptyGraceSeconds / 60} 分钟` : `${state.emptyGraceSeconds} 秒`;
-  const lines = [`无人后 ${grace}自动删除。`];
+  const fixed = state.kind === 'fixed';
+  const lines = [fixed ? '固定语音房，房间状态自动更新。' : `无人后 ${grace}自动删除。`];
   const deadline = state.cleanupAt === null ? NaN : Date.parse(state.cleanupAt);
-  if (state.occupantCount === 0 && Number.isFinite(deadline)) lines.push(`房间已空，将于 <t:${Math.floor(deadline / 1000)}:R> 删除；有人回来会取消。`);
-  if (state.claimable) lines.push('房主暂离，房内成员可从更多操作认领。');
-  if (state.transferPending) lines.push('有一项待接受的房主转让，可从更多操作查看。');
+  if (!fixed && state.occupantCount === 0 && Number.isFinite(deadline)) lines.push(`房间已空，将于 <t:${Math.floor(deadline / 1000)}:R> 删除；有人回来会取消。`);
+  if (!fixed && state.claimable) lines.push('房主暂离，房内成员可从更多操作认领。');
+  if (!fixed && state.transferPending) lines.push('有一项待接受的房主转让，可从更多操作查看。');
+  const managers = state.managerNames ?? [];
+  const managerLabel = managers.length ? managers.slice(0, 5).map(label).filter(Boolean).join('、') + (managers.length > 5 ? `等 ${managers.length} 人` : '') : '未分配管理员';
   return {
     content: '', allowed_mentions: { parse: [] },
     embeds: [{
       title: label(state.name) || '临时语音房', description: lines.join('\n'),
       fields: [
-        { name: '房主', value: state.ownerName ? label(state.ownerName) || '社区成员' : '暂无房主', inline: true },
+        fixed ? { name: '管理者', value: managerLabel || '未分配管理员', inline: true }
+          : { name: '房主', value: state.ownerName ? label(state.ownerName) || '社区成员' : '暂无房主', inline: true },
         { name: '人数', value: `${state.occupantCount === null ? '状态暂不可用' : state.occupantCount} / ${state.userLimit || '不限'}`, inline: true },
         { name: '访问', value: { open: '公开', locked: '锁门', hidden: '隐藏' }[state.visibility], inline: true },
       ],

@@ -66,4 +66,19 @@ describe('persistent room control card', () => {
   it('uses seconds for a non-minute setting without rounding its deletion policy', () => {
     expect(renderRoomPanel({ ...state, emptyGraceSeconds: 90 }).embeds[0].description).toContain('90 秒');
   });
+  it('shows fixed room managers without a temporary owner or automatic deletion policy', () => {
+    const card = renderRoomPanel({ ...state, kind: 'fixed', managerNames: ['Nanako', '成员二'],
+      ownerName: null, cleanupAt: '2026-10-29T12:02:00Z', occupantCount: 0, claimable: true, transferPending: true });
+    expect(card.embeds[0].fields).toContainEqual(expect.objectContaining({ name: '管理者', value: 'Nanako、成员二' }));
+    expect(card.embeds[0].fields?.some(field => field.name === '房主')).toBe(false);
+    expect(card.embeds[0].description).toContain('固定语音房');
+    for (const word of ['自动删除', '认领', '转让', '<t:']) expect(card.embeds[0].description).not.toContain(word);
+    expect(card.components[0].components).toHaveLength(4);
+  });
+  it('uses a friendly unassigned-manager label for fixed rooms and sanitizes manager names', () => {
+    expect(renderRoomPanel({ ...state, kind: 'fixed', managerNames: [] }).embeds[0].fields)
+      .toContainEqual(expect.objectContaining({ name: '管理者', value: '未分配管理员' }));
+    expect(JSON.stringify(renderRoomPanel({ ...state, kind: 'fixed', managerNames: ['<#666666666666666666>'] }).embeds))
+      .not.toContain('666666666666666666');
+  });
 });

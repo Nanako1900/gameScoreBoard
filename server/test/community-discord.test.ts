@@ -56,6 +56,37 @@ describe('community Discord resource adapter',()=>{
     for(const id of[G,BOTROLE,ADMIN,HIGH,MANAGED])expect(data.resources.find(r=>r.id===id)?.safe).toBe(false);
     expect(s.guild.members.cache.size).toBe(0);
   });
+  it('projects exact viewable members only for voice rooms in the selected fixed categories', async () => {
+    const s = setup(); s.channels.get(ROOM)!.permission_overwrites = [
+      { id: G, type: 0, allow: '0', deny: P.ViewChannel.toString() },
+      { id: FUN, type: 0, allow: P.ViewChannel.toString(), deny: '0' },
+      { id: SELF, type: 1, allow: P.ViewChannel.toString(), deny: '0' },
+    ];
+    const unselected = rawChannel('666666666666666667'); unselected.parent_id = '555555555555555556'; s.channels.set(unselected.id, unselected);
+    const data = await s.api.snapshot([PARENT]);
+    expect(data.resources.find(item => item.id === ROOM)?.metadata).toMatchObject({
+      viewableMemberIds: [SELF, OWNER], presentMemberIds: [OWNER, OTHER], defaultVisibility: 'hidden', userLimit: 0,
+    });
+    expect(data.resources.find(item => item.id === TEXT)?.metadata?.viewableMemberIds).toBeUndefined();
+    expect(data.resources.find(item => item.id === unselected.id)?.metadata?.viewableMemberIds).toBeUndefined();
+    expect((await s.api.snapshot()).resources.find(item => item.id === ROOM)?.metadata?.viewableMemberIds).toBeUndefined();
+  });
+  it('calculates fixed-room access with roles read after the full member directory', async () => {
+    const s = setup(); s.roles.find(role => role.id === G)!.permissions = (BASE & ~P.ViewChannel).toString();
+    s.roles.find(role => role.id === FUN)!.permissions = P.ViewChannel.toString();
+    const get = s.get.getMockImplementation()!;
+    s.get.mockImplementation(async (route, options) => {
+      const value = await get(route, options);
+      if (route === Routes.guildMembers(G)) s.roles.find(role => role.id === FUN)!.permissions = '0';
+      return value;
+    });
+    const data = await s.api.snapshot([PARENT]);
+    expect(data.resources.find(item => item.id === ROOM)?.metadata?.viewableMemberIds).toEqual([SELF]);
+  });
+  it('does not invent an unlimited fixed room from an incomplete actual limit', async () => {
+    const s = setup(); delete (s.channels.get(ROOM)! as { user_limit?: number }).user_limit;
+    await expect(s.api.snapshot([PARENT])).rejects.toThrow();
+  });
   it('paginates more than a thousand members with an increasing member cursor',async()=>{
     const s=setup();const first=Array.from({length:1000},(_,i)=>rawMember(aid(i+1)));s.memberPages.push(first,[rawMember(aid(1001))]);
     const result=await s.api.snapshot();expect(result.members).toHaveLength(1001);

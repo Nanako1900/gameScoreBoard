@@ -43,7 +43,7 @@ export interface CommunityDiscordSnapshot {
   members: CommunityDiscordMember[];
 }
 export interface CommunityDiscord {
-  snapshot(): Promise<CommunityDiscordSnapshot>;
+  snapshot(fixedCategoryIds?: readonly string[]): Promise<CommunityDiscordSnapshot>;
   member(id: string): Promise<CommunityDiscordMember | null>;
   channel(id: string): Promise<CommunityDiscordChannel | null>;
   /** null means the current state cannot safely be represented by our room model. */
@@ -330,15 +330,33 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     assertReady(); await request(remove ? 'delete' : 'put', Routes.guildMemberRole(guildId, memberId, roleId), { reason: 'community self-selected role' });
   }
   return {
-    async snapshot() {
+    async snapshot(fixedCategoryIds = []) {
+      const fixedCategories = new Set(fixedCategoryIds); for (const categoryId of fixedCategories) validateId(categoryId);
       if (!gateway()) return { ready: false, guildName: '', selfId: client.user?.id ?? '', resources: [], members: [] };
       const [channelsRaw, members] = await Promise.all([request('get', Routes.guildChannels(guildId)), memberList()]);
       if (!Array.isArray(channelsRaw)) throw invalid();
-      const ctx = await context(), channels = channelsRaw.map(value => parseChannel(value, guildId)).filter((value): value is Channel => value !== null);
-      const resources: CommunityDiscordResource[] = channels.map(channel => ({ id: channel.id, name: channel.name, kind: channel.kind,
-        available: has(channelPermissions(ctx.self, channel, ctx, guildId), P.ViewChannel), metadata: { parentId: channel.parentId,
+      const ctx = await context(), channels = channelsRaw.map(value => {
+        const channel = parseChannel(value, guildId);
+        if (channel?.kind === 'voice' && channel.parentId && fixedCategories.has(channel.parentId)) {
+          const limit = raw(value).user_limit;
+          if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 99) throw invalid();
+        }
+        return channel;
+      }).filter((value): value is Channel => value !== null);
+      const resources: CommunityDiscordResource[] = channels.map(channel => {
+        const metadata: Record<string, unknown> = { parentId: channel.parentId,
           ...(channel.kind === 'text' ? { publicView: has(channelPermissions({ id: '0', name: '', bot: false, roleIds: [], joinedAt: null }, channel, ctx, guildId), P.ViewChannel) } : {}),
-          ...(channel.kind === 'voice' ? { userLimit: channel.userLimit } : {}) } }));
+          ...(channel.kind === 'voice' ? { userLimit: channel.userLimit } : {}) };
+        if (channel.kind === 'voice' && channel.parentId && fixedCategories.has(channel.parentId)) {
+          const present = occupants(channel.id); if (present === null) throw unavailable();
+          const everyone = channelPermissions({ id: '0', name: '', bot: false, roleIds: [], joinedAt: null }, channel, ctx, guildId);
+          metadata.defaultVisibility = !has(everyone, P.ViewChannel) ? 'hidden' : has(everyone, P.Connect) ? 'open' : 'locked';
+          metadata.viewableMemberIds = members.filter(member => has(channelPermissions(member, channel, ctx, guildId), P.ViewChannel)).map(member => member.id);
+          metadata.presentMemberIds = [...present];
+        }
+        return { id: channel.id, name: channel.name, kind: channel.kind,
+          available: has(channelPermissions(ctx.self, channel, ctx, guildId), P.ViewChannel), metadata };
+      });
       for (const role of ctx.roles.values()) resources.push({ id: role.id, name: role.name, kind: 'role', available: true, safe: safeRole(role, ctx, guildId),
         metadata: { managed: role.managed, position: role.position, unsafePermissions: (role.permissions & DANGEROUS) !== 0n } });
       for (const member of members) resources.push({ id: member.id, name: member.name, kind: 'member', available: true });

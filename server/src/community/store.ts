@@ -19,6 +19,10 @@ export interface StoredRoom {
 }
 export type RoomPatch = Partial<Pick<StoredRoom, 'ownerRef' | 'channelRef' | 'name' | 'status' | 'visibility' | 'userLimit' |
   'transferToRef' | 'transferExpiresAt' | 'ownerLeftAt' | 'emptySince' | 'cleanupAt' | 'metadata'>>;
+export interface FixedRoomProjection {
+  name: string; userLimit: number; visibility: StoredRoom['visibility']; categoryRef: string;
+  visibleMemberRefs: readonly string[]; presentMemberRefs: readonly string[]; active?: boolean;
+}
 export interface RoomAccess { memberRef: string; allowed: boolean; blocked: boolean; present: boolean; joinedAt: string | null; updatedAt: string }
 export interface StoredOperation extends CommunityOperationView {
   actor: CommunityActor; payload: CommunityJson; requestKey: string; expectedVersion: number | null;
@@ -181,6 +185,12 @@ export class CommunityStore {
     const row = (await this.pool.query('SELECT * FROM community_resources WHERE guild_id=$1 AND kind=$2 AND external_id=$3', [this.guildId, kind, externalId])).rows[0];
     return row ? resourceRow(row as Row) : null;
   }
+  async memberRefsByExternal(externalIds: readonly string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(externalIds)]; for (const id of ids) label(id, 100);
+    if (!ids.length) return new Map();
+    const result = await this.pool.query("SELECT external_id,ref FROM community_resources WHERE guild_id=$1 AND kind='member' AND available=true AND external_id=ANY($2::text[])", [this.guildId, ids]);
+    return new Map(result.rows.map(row => [String(row.external_id), String(row.ref)]));
+  }
   async storedResources(kind?: CommunityResourceKind): Promise<StoredResource[]> {
     return (await this.pool.query('SELECT * FROM community_resources WHERE guild_id=$1 AND ($2::text IS NULL OR kind=$2) ORDER BY kind,name,ref LIMIT 1000', [this.guildId, kind ?? null])).rows.map(row => resourceRow(row as Row));
   }
@@ -198,12 +208,87 @@ export class CommunityStore {
       await this.requireResource(ownerRef, 'member', client); await this.requireResource(options.channelRef ?? null, 'voice', client);
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['community:rooms:' + this.guildId]);
       if (options.maxRooms !== undefined) {
-        const live = await client.query("SELECT count(*)::int AS count FROM community_rooms WHERE guild_id=$1 AND status IN ('creating','active','closing','needs_review')", [this.guildId]);
+        const live = await client.query("SELECT count(*)::int AS count FROM community_rooms WHERE guild_id=$1 AND status IN ('creating','active','closing','needs_review') AND COALESCE(metadata->>'kind','temporary')<>'fixed'", [this.guildId]);
         if (Number(live.rows[0].count) >= options.maxRooms) reject('room_limit', '服务器当前房间数已达到上限', 409);
       }
       const row = await client.query(`INSERT INTO community_rooms(guild_id,owner_ref,channel_ref,name,visibility,user_limit,metadata)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [this.guildId, ownerRef, options.channelRef ?? null, name.trim(), options.visibility ?? 'open', options.userLimit ?? 0, JSON.stringify(json(options.metadata ?? {}))]);
       return roomRow(row.rows[0] as Row);
+    });
+  }
+  /** Existing Discord rooms are registered, never created or adopted as a
+   * member's temporary room. Refreshes preserve manager assignments. */
+  async ensureFixedRoom(channelRef: string, name: string, metadata: CommunityJsonObject): Promise<StoredRoom> {
+    ref(channelRef); label(name); ref(metadata.categoryRef);
+    const managers = metadata.managerRefs ?? [];
+    if (!Array.isArray(managers) || managers.some(value => !isCommunityRef(value))) reject('invalid_input', '固定房管理者引用无效');
+    const normalized = json({ ...metadata, kind: 'fixed', managerRefs: [...new Set(managers)] });
+    return this.tx(async client => {
+      await this.requireResource(channelRef, 'voice', client); await this.requireResource(metadata.categoryRef as string, 'category', client);
+      for (const memberRef of managers as string[]) await this.requireResource(memberRef, 'member', client);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['community:rooms:' + this.guildId]);
+      const found = (await client.query('SELECT * FROM community_rooms WHERE guild_id=$1 AND channel_ref=$2 FOR UPDATE', [this.guildId, channelRef])).rows[0];
+      if (found) {
+        const current = roomRow(found as Row);
+        if (current.metadata.kind !== 'fixed' || current.ownerRef !== null) reject('version_conflict', '此频道已经登记为临时房间', 409);
+        return current;
+      }
+      const row = await client.query(`INSERT INTO community_rooms(guild_id,channel_ref,name,status,visibility,metadata)
+        VALUES($1,$2,$3,'active','hidden',$4) RETURNING *`, [this.guildId, channelRef, name.trim(), JSON.stringify(normalized)]);
+      return roomRow(row.rows[0] as Row);
+    });
+  }
+  async hasUnreviewedRoomOperation(roomRef: string): Promise<boolean> {
+    ref(roomRef);
+    return (await this.pool.query(`SELECT 1 FROM community_operations WHERE guild_id=$1 AND status='needs_review'
+      AND (room_ref=$2::uuid OR scope_key=$2::text) LIMIT 1`, [this.guildId, roomRef])).rows.length > 0;
+  }
+  /** One transaction replaces the visibility projection. Readers can never see
+   * a partially rebuilt ACL, and unchanged snapshots do not invalidate buttons. */
+  async syncFixedRoomProjection(roomRef: string, expectedVersion: number, input: FixedRoomProjection): Promise<StoredRoom> {
+    ref(roomRef); count(expectedVersion, 1); label(input.name); count(input.userLimit, 0, 99); ref(input.categoryRef);
+    if (!['open', 'locked', 'hidden'].includes(input.visibility)) reject('invalid_input', '固定房访问状态无效');
+    const visible = [...new Set(input.active === false ? [] : input.visibleMemberRefs)].sort();
+    const present = [...new Set(input.active === false ? [] : input.presentMemberRefs)].sort();
+    for (const memberRef of [...visible, ...present]) ref(memberRef);
+    if (present.some(memberRef => !visible.includes(memberRef))) reject('invalid_input', '固定房成员状态不完整');
+    return this.tx(async client => {
+      const row = (await client.query('SELECT * FROM community_rooms WHERE guild_id=$1 AND ref=$2 FOR UPDATE', [this.guildId, roomRef])).rows[0];
+      if (!row) reject('not_found', '房间不存在', 404);
+      const current = roomRow(row as Row);
+      if (current.metadata.kind !== 'fixed' || current.version !== expectedVersion) reject('version_conflict', '房间状态已变化', 409);
+      const pending = await client.query(`SELECT 1 FROM community_operations WHERE guild_id=$1 AND status='needs_review'
+        AND (room_ref=$2::uuid OR scope_key=$2::text) LIMIT 1`, [this.guildId, roomRef]);
+      if (pending.rows.length) {
+        if (current.status === 'needs_review') return current;
+        return roomRow((await client.query("UPDATE community_rooms SET status='needs_review',version=version+1,updated_at=now() WHERE ref=$1 RETURNING *", [roomRef])).rows[0] as Row);
+      }
+      await this.requireResource(input.categoryRef, 'category', client);
+      if (visible.length) {
+        const mapped = await client.query("SELECT ref FROM community_resources WHERE guild_id=$1 AND kind='member' AND ref=ANY($2::uuid[])", [this.guildId, visible]);
+        if (mapped.rows.length !== visible.length) reject('invalid_resource', '固定房成员尚未完整映射');
+      }
+      const previous = (await client.query('SELECT member_ref,allowed,blocked,present FROM community_room_access WHERE room_ref=$1', [roomRef])).rows;
+      const allowedBefore = previous.filter(item => item.allowed === true).map(item => String(item.member_ref)).sort();
+      const presentBefore = previous.filter(item => item.present === true).map(item => String(item.member_ref)).sort();
+      const status = input.active === false ? 'closed' : 'active';
+      const same = current.name === input.name.trim() && current.userLimit === input.userLimit && current.visibility === input.visibility
+        && current.metadata.categoryRef === input.categoryRef && current.status === status && current.ownerRef === null
+        && current.ownerLeftAt === null && current.emptySince === null && current.cleanupAt === null
+        && current.transferToRef === null && current.transferExpiresAt === null && !previous.some(item => item.blocked === true)
+        && JSON.stringify(allowedBefore) === JSON.stringify(visible) && JSON.stringify(presentBefore) === JSON.stringify(present);
+      if (same) return current;
+      await client.query(`UPDATE community_room_access SET allowed=false,blocked=false,present=false,joined_at=NULL,updated_at=now()
+        WHERE room_ref=$1 AND NOT(member_ref=ANY($2::uuid[])) AND (allowed OR blocked OR present)`, [roomRef, visible]);
+      if (visible.length) await client.query(`INSERT INTO community_room_access(room_ref,member_ref,allowed,blocked,present,joined_at)
+        SELECT $1,member_ref,true,false,member_ref=ANY($3::uuid[]),CASE WHEN member_ref=ANY($3::uuid[]) THEN now() ELSE NULL END
+        FROM unnest($2::uuid[]) AS member_ref ON CONFLICT(room_ref,member_ref) DO UPDATE SET
+        allowed=true,blocked=false,present=excluded.present,
+        joined_at=CASE WHEN excluded.present THEN COALESCE(community_room_access.joined_at,now()) ELSE NULL END,updated_at=now()`, [roomRef, visible, present]);
+      const metadata = { ...current.metadata, kind: 'fixed', categoryRef: input.categoryRef };
+      return roomRow((await client.query(`UPDATE community_rooms SET name=$2,user_limit=$3,visibility=$4,status=$5,metadata=$6,
+        owner_ref=NULL,owner_left_at=NULL,empty_since=NULL,cleanup_at=NULL,transfer_to_ref=NULL,transfer_expires_at=NULL,
+        version=version+1,updated_at=now() WHERE ref=$1 RETURNING *`, [roomRef, input.name.trim(), input.userLimit, input.visibility, status, JSON.stringify(metadata)])).rows[0] as Row);
     });
   }
   async getRoom(roomRef: string): Promise<StoredRoom | null> {
