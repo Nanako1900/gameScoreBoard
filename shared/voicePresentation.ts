@@ -1,7 +1,9 @@
 // Evidence wording and fixed-board-time formatting shared by the web and bot.
-import type { VoiceDaySegment } from './voiceDays';
+import type { VoiceDay, VoiceDaySegment } from './voiceDays';
 
-export const VOICE_GAP_NOTICE = '这段时间机器人不在线，没有记录不代表没来。';
+export const VOICE_GAP_NOTICE = '这些时段没有完整记录，没有记录不代表没来。';
+export const VOICE_EMPTY_NOTICE = '没有保存的语音记录，不代表没来';
+export const VOICE_MINUTE_NOTE = '累计时长按天向下取整到分钟。';
 export const VOICE_GAP_EXPLANATION = '未覆盖表示缺少完整证据，也可能来自记录清理或尚未持久化的心跳尾段。';
 const HOUR_MS = 3_600_000;
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
@@ -34,7 +36,8 @@ export function voiceDuration(totalMin: number): string {
   if (!Number.isFinite(totalMin) || totalMin < 0) return '—';
   const total = Math.floor(totalMin);
   const hours = Math.floor(total / 60);
-  return hours > 0 ? `${hours} 小时 ${total % 60} 分` : `${total} 分`;
+  const minutes = total % 60;
+  return hours > 0 ? `${hours}小时${minutes > 0 ? `${minutes}分钟` : ''}` : `${total}分钟`;
 }
 
 /** These observations must stay qualified even when individual rows are omitted. */
@@ -45,4 +48,31 @@ export function voiceSegmentNotes(segment: VoiceDaySegment): string[] {
   if (segment.end_reason === 'bot_offline') notes.push('之后机器人离线，离开时间不确定');
   if (segment.left_at === null) notes.push('尚未记录离开', '时长按查询时刻估算');
   return notes;
+}
+
+/** Keep exact stored boundaries. A day context only suppresses repeated dates. */
+export function voiceInterval(from: string, to: string | null, offsetHours: number, dayDate?: string): string {
+  const endpoint = (value: string): string => {
+    const at = new Date(utcMillis(value) + offsetHours * HOUR_MS);
+    const sameDay = dayDate !== undefined && Number.isFinite(at.getTime()) && at.toISOString().slice(0, 10) === dayDate;
+    return voiceTime(value, offsetHours, !sameDay, true);
+  };
+  return `${endpoint(from)} – ${to === null ? '尚未记录离开' : endpoint(to)}`;
+}
+
+/** A continued row does not establish a new arrival on this calendar date. */
+export function voiceFirstJoinText(day: Pick<VoiceDay, 'first_join' | 'segments'>, offsetHours: number): string {
+  if (day.first_join !== null) return `首次进入 ${voiceTime(day.first_join, offsetHours, false, true)}`;
+  return day.segments.some(segment => segment.continued) ? '接上一天' : '首次进入时间未记录';
+}
+
+/** The API's complete calendar range, with years visible across New Year. */
+export function voiceHistoryPeriod(days: readonly Pick<VoiceDay, 'date'>[]): string {
+  const dates = days.map(day => day.date).filter(date => voiceDayLabel(date) !== '—').sort();
+  return dates.length > 0 ? `${dates[0]} — ${dates[dates.length - 1]}` : '日期范围未知';
+}
+
+/** Presentation order only; retain empty dates and leave evidence objects untouched. */
+export function voiceDaysRecentFirst(days: readonly VoiceDay[]): VoiceDay[] {
+  return [...days].sort((a, b) => b.date.localeCompare(a.date));
 }

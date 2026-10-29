@@ -369,7 +369,8 @@ async function handleVoice(input: CommandInput, ctx: BotContext): Promise<BotRep
   const from = new Date(Date.parse(`${to}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   const history = await getVoiceHistory(ctx.db, target.id, from, to, offset, now);
   const button = caller.is_judge || caller.is_admin
-    ? linkButton('在网页查看', joinUrl(ctx.frontendUrl, `/admin/voice?user=${encodeURIComponent(target.id)}`)) : webButton(ctx);
+    ? linkButton('在网页查看', joinUrl(ctx.frontendUrl, `/tools/voice?user=${encodeURIComponent(target.id)}`))
+    : linkButton('在网页查看', joinUrl(ctx.frontendUrl, `/players/${encodeURIComponent(target.id)}`));
   return ephemeralReply(undefined, { embeds: [renderVoiceHistory(history, offset)], buttons: [button] });
 }
 

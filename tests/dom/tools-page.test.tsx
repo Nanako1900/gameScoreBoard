@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../src/api';
@@ -72,6 +72,28 @@ describe('the role-scoped tools page', () => {
     await screen.findByRole('heading', { name: '不上榜的账号的语音记录' });
     expect(api.getVoiceHistory).toHaveBeenCalledWith(PERSON.id, expect.any(String), expect.any(String));
     expect(api.getVoiceDay).not.toHaveBeenCalled();
+  });
+  it('puts the personal-history day destination in the header and switches back to the daily roster', async () => {
+    address('/tools/voice?user=visitor%2Fa%26%E4%B8%AD');render(page('voice', JUDGE));
+    await screen.findByRole('heading', { name: '不上榜的账号的语音记录' });
+    const header = screen.getByRole('heading', { name: '语音记录', level: 2 }).closest('header')!;
+    const dayLink = within(header).getByRole('link', { name: '按日汇总' });
+    expect(dayLink).toHaveAttribute('href', '/tools/voice');
+    expect(dayLink).toHaveClass('tools-page__back');
+    expect(screen.queryByRole('link', { name: '返回裁判工具' })).not.toBeInTheDocument();
+    expect(screen.queryByText('按日查看进入过语音的成员，或打开某位成员的分日明细。')).not.toBeInTheDocument();
+    await userEvent.setup().click(dayLink);
+    expect(await screen.findByRole('heading', { name: '当天语音记录' })).toBeInTheDocument();
+    expect(api.getVoiceDay).toHaveBeenCalledOnce();
+    expect(within(header).getByRole('link', { name: '返回裁判工具' })).toHaveAttribute('href', '/tools');
+  });
+  it('keeps the daily-roster return destination in the header without the redundant introduction', async () => {
+    address('/tools/voice');render(page('voice', JUDGE));
+    await screen.findByRole('heading', { name: '当天语音记录' });
+    const header = screen.getByRole('heading', { name: '语音记录', level: 2 }).closest('header')!;
+    expect(within(header).getByRole('link', { name: '返回裁判工具' })).toHaveAttribute('href', '/tools');
+    expect(screen.queryByRole('link', { name: '按日汇总' })).not.toBeInTheDocument();
+    expect(screen.queryByText('按日查看进入过语音的成员，或打开某位成员的分日明细。')).not.toBeInTheDocument();
   });
   it.each(['voice', 'score'] as const)('rejects an empty or invalid %s subject without a read', tab => {
     address(`/tools/${tab}?user=`);render(page(tab));
