@@ -382,7 +382,9 @@ export class CommunityEngine {
               await this.discord.delete(channel.externalId);
             }); patch.status = 'closed';
           } else fail('invalid_input', '不支持此房间操作', 400);
-          await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version); executionRoom = null;
+          await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version);
+          if (action === 'managers') changed = true;
+          executionRoom = null;
           result = { roomRef: room.ref };
         } else if (this.options.executeExtra) { result = await effect(() => this.options.executeExtra!(op, checkedActor ?? actor, guard)); }
         else fail('invalid_input', '不支持此操作', 400);
