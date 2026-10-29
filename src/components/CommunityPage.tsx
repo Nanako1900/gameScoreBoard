@@ -106,7 +106,7 @@ type Submit=(work:()=>Promise<{operation:CommunityOperationView}>)=>Promise<void
 function Rooms({data,disabled,submit}:{data:Data;disabled:boolean;submit:Submit}) {
  const member=data.overview.me.member?.ref;const personal=data.overview.me.linked&&!!member;
  const enabled=data.overview.settings.enabled&&data.overview.settings.rooms.enabled;
- const rooms=data.rooms.filter(room=>room.status!=='closed'&&(data.overview.me.isAdmin||room.canManage||room.owner?.ref===member||room.members.some(person=>person.ref===member)||room.canClaim||room.transferTo?.ref===member));
+ const rooms=data.rooms.filter(room=>room.status!=='closed'&&(data.overview.me.isAdmin||room.kind==='fixed'&&room.canManage||room.owner?.ref===member||room.members.some(person=>person.ref===member)||room.canClaim||room.transferTo?.ref===member));
  const seconds=data.overview.settings.rooms.emptyGraceSeconds;const grace=seconds%60===0?`${seconds/60} 分钟`:`${seconds} 秒`;
  return <><div className="community-card"><div><h2>{!personal?'社区房间管理':enabled?'进入语音，房间就准备好了':'已有房间仍可管理'}</h2>{!personal?<p>这里保留全部受管房间，方便管理员处理。成员日常建房和管理都在 Discord 完成。</p>:enabled?<ol className="community-room-steps"><li>进入服务器指定的「新建临时房间」语音频道。</li><li>机器人自动建房并把你移入，房内聊天会出现控制卡。</li><li>改名、调整人数和访问方式，都可以直接在房内控制卡完成。</li></ol>:<p>自助建房暂未开放，已有房间仍可使用下方的网页辅助管理。</p>}<p className="community-muted">临时房间无人后 {grace}自动删除；有人回来就停止计时。</p></div></div>
  <div className="community-section-title"><h2>{data.overview.me.isAdmin?'受管房间':'与你有关的房间'}</h2></div>

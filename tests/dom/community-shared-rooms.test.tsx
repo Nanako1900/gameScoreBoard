@@ -36,7 +36,7 @@ beforeEach(()=>{
 });
 
 it('lets any authorized visible temporary-room member use all controls including confirmed occupied closure',async()=>{
- rooms=[fixed({kind:'temporary',name:'共享临时房',owner:{ref:otherRef,name:'创建者'},members:[{ref:otherRef,name:'创建者'}]})];
+ rooms=[fixed({kind:'temporary',name:'共享临时房',owner:{ref:otherRef,name:'创建者'},members:[{ref:otherRef,name:'创建者'},{ref:memberRef,name:'小明'}]})];
  render(<CommunityPage tab="rooms" accountKey="member"/>);await screen.findByText('共享临时房');
  fireEvent.click(screen.getByText('网页辅助管理'));expect(screen.getByRole('button',{name:'邀请接任房主'})).toBeInTheDocument();
  fireEvent.click(screen.getByRole('button',{name:'关闭有人房间…'}));expect(vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST')).toHaveLength(0);
@@ -59,6 +59,12 @@ it('keeps unassigned fixed-room viewers read-only even when currently inside',as
  rooms=[fixed({canManage:false,managers:[],members:[{ref:memberRef,name:'小明'}]})];
  render(<CommunityPage tab="rooms" accountKey="member"/>);await screen.findByText('固定私人房');
  expect(screen.getByText('房间管理员：尚未分配')).toBeInTheDocument();expect(screen.queryByText('网页辅助管理')).not.toBeInTheDocument();
+});
+
+it('shows an assigned fixed room outside voice while keeping unrelated temporary rooms out of the focused list',async()=>{
+ rooms=[fixed({name:'不在语音也可管理的固定房',members:[],owner:null}),fixed({ref:categoryRef,kind:'temporary',name:'与我无关的临时房',members:[],owner:{ref:otherRef,name:'另一位'}})];
+ render(<CommunityPage tab="rooms" accountKey="assigned-manager"/>);await screen.findByText('不在语音也可管理的固定房');
+ expect(screen.queryByText('与我无关的临时房')).not.toBeInTheDocument();fireEvent.click(screen.getByText('网页辅助管理'));expect(screen.getByRole('textbox',{name:'修改名字'})).toBeInTheDocument();
 });
 
 it('keeps fixed categories folded and saves only opaque category references',async()=>{
