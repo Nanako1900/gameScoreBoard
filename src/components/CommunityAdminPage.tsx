@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CommunityAuditView, CommunityOperationView, CommunityResourceKind, CommunityResourceView, CommunitySettings } from '@shared/community';
+import type { CommunityAuditView, CommunityOperationView, CommunityResourceKind, CommunityResourceView, CommunityRoomView, CommunitySettings } from '@shared/community';
 import { COMMUNITY_TOOLS, parseCommunitySettings } from '@shared/community';
 import { ApiError } from '../api';
 import { communityApi, type CommunityAdminData } from '../community-api';
@@ -23,7 +23,7 @@ export function CommunityAdminPage({me}:{me:User|null}) {
  if(!me?.is_admin)return <NotFound title={NOT_FOUND_TITLE}/>;
  return <CommunityAdminContent key={`${me.id}:${me.is_admin}`} />;
 }
-interface AdminState extends CommunityAdminData {resources:CommunityResourceView[];operations:CommunityOperationView[];audit:CommunityAuditView[]}
+interface AdminState extends CommunityAdminData {resources:CommunityResourceView[];operations:CommunityOperationView[];audit:CommunityAuditView[];rooms:CommunityRoomView[];roomsProblem:string|null}
 function CommunityAdminContent() {
  const [data,setData]=useState<AdminState|null>(null);const [draft,setDraft]=useState<CommunitySettings|null>(null);
  const [reviewRef,setReviewRef]=useState<string|null>(null);
@@ -46,8 +46,9 @@ function CommunityAdminContent() {
  useEffect(()=>{
   if(departing)return;
   const abort=new AbortController();const epoch=accessEpoch.current;setError(null);
-  void Promise.all([communityApi.admin(abort.signal),communityApi.resources('',true,abort.signal),communityApi.operations(abort.signal),communityApi.audit(abort.signal)])
-   .then(([admin,resources,operations,audit])=>{if(abort.signal.aborted||accessEpoch.current!==epoch)return;setStatus(0);setData({...admin,resources:resources.resources,operations:operations.operations,audit:audit.audit});if(!dirtyRef.current){baseline.current={json:JSON.stringify(admin.settings),version:admin.version};setDraft(structuredClone(admin.settings));setTagDraft({});setNewVersion(null);}else if(baseline.current?.version!==admin.version)setNewVersion(admin.version);})
+  const rooms=communityApi.rooms(abort.signal).then(result=>({rooms:Array.isArray(result.rooms)?result.rooms:[],roomsProblem:null as string|null})).catch(cause=>{if(cause instanceof ApiError&&[401,403].includes(cause.status))throw cause;return {rooms:[],roomsProblem:'固定房间列表暂不可用，请刷新后重试。'};});
+  void Promise.all([communityApi.admin(abort.signal),communityApi.resources('',true,abort.signal),communityApi.operations(abort.signal),communityApi.audit(abort.signal),rooms])
+   .then(([admin,resources,operations,audit,rooms])=>{if(abort.signal.aborted||accessEpoch.current!==epoch)return;setStatus(0);setData({...admin,resources:resources.resources,operations:operations.operations,audit:audit.audit,...rooms});if(!dirtyRef.current){baseline.current={json:JSON.stringify(admin.settings),version:admin.version};setDraft(structuredClone(admin.settings));setTagDraft({});setNewVersion(null);}else if(baseline.current?.version!==admin.version)setNewVersion(admin.version);})
    .catch(cause=>{if(!abort.signal.aborted){if(cause instanceof ApiError&&[401,403,404].includes(cause.status)){op.reset();inaccessible(cause);}else{setError(errorMessage(cause));setStatus(cause instanceof ApiError?cause.status:500);}}});
   return()=>abort.abort();
  },[refresh,departing]);
@@ -89,7 +90,13 @@ function CommunityAdminContent() {
      <NumberField label="建房冷却（秒）" value={draft.rooms.cooldownSeconds} min={0} max={3600} onChange={cooldownSeconds=>change('rooms',{cooldownSeconds})}/>
      <NumberField label="房主离开宽限（秒）" value={draft.rooms.ownerGraceSeconds} min={15} max={86400} onChange={ownerGraceSeconds=>change('rooms',{ownerGraceSeconds})}/>
      <NumberField label="房主可设人数上限" value={draft.rooms.maxUserLimit} min={1} max={99} onChange={maxUserLimit=>change('rooms',{maxUserLimit})}/>
-    </div><p className="community-muted">旧全局入口只用于集中打开社区工具，房内控制卡不需要单独配置频道。有人房间需前往房间管理，确认移动成员后再关闭；缺少等候区时不会强行删除。</p></details></section>
+    </div><p className="community-muted">旧全局入口只用于集中打开社区工具，房内控制卡不需要单独配置频道。有人房间需前往房间管理，确认移动成员后再关闭；缺少等候区时不会强行删除。</p></details>
+    <details className="community-room-advanced"><summary>固定房间控制卡</summary><p>选择已有私人房间所在的分类。保存后，机器人会登记其中的语音房并补上控制卡；固定房间不会自动删除。</p><div className="community-choice-grid">{data.resources.filter(resource=>resource.kind==='category').map(category=>{
+     const selected=draft.rooms.fixedCategoryRefs?.includes(category.ref)??false;
+     return <Toggle key={category.ref} label={`${category.name}${category.available?'':'（不可用）'}`} checked={selected} disabled={!category.available&&!selected} onChange={checked=>change('rooms',{fixedCategoryRefs:checked?[...(draft.rooms.fixedCategoryRefs??[]),category.ref]:(draft.rooms.fixedCategoryRefs??[]).filter(ref=>ref!==category.ref)})}/>;
+    })}</div>{(draft.rooms.fixedCategoryRefs??[]).filter(ref=>!data.resources.some(resource=>resource.kind==='category'&&resource.ref===ref)).map((ref,index)=><p key={ref}>已失效固定房间分类 {index+1} <button type="button" onClick={()=>change('rooms',{fixedCategoryRefs:(draft.rooms.fixedCategoryRefs??[]).filter(value=>value!==ref)})}>移除已失效分类 {index+1}</button></p>)}
+    <h3>房间管理员</h3><p className="community-muted">分配后可以使用该固定房间的控制卡；不会额外授予 Discord 频道查看或连接权限。用户 ID 仅用于本次校验，提交后清空。</p>{data.roomsProblem?<p role="alert">{data.roomsProblem}</p>:data.rooms.filter(room=>room.kind==='fixed').length?data.rooms.filter(room=>room.kind==='fixed').map(room=><FixedRoomManagers key={`${room.ref}:${room.version}`} room={room} disabled={!ready||op.busy||room.status!=='active'} submit={op.submit}/>):<p className="community-muted">尚未登记固定房间。选择分类保存后，等待机器人同步即可。</p>}
+    </details></section>
     <section className="community-card community-admin-section" id="community-welcome" aria-labelledby="community-welcome-title"><h2 id="community-welcome-title">入服欢迎</h2><div className="community-setting-grid">
      <Toggle label="启用入服欢迎" checked={draft.welcome.enabled} onChange={enabled=>change('welcome',{enabled})}/>
      <ResourceSelect label="欢迎频道" kind="text" value={draft.welcome.channelRef} resources={data.resources} onChange={channelRef=>change('welcome',{channelRef})}/>
@@ -127,6 +134,18 @@ function CommunityAdminContent() {
 }
 function Toggle({label,checked,onChange,disabled=false}:{label:string;checked:boolean;onChange:(value:boolean)=>void;disabled?:boolean}) {
  return <label className="community-choice"><input type="checkbox" checked={checked} disabled={disabled} onChange={e=>onChange(e.target.checked)}/><span>{label}</span></label>;
+}
+function FixedRoomManagers({room,disabled,submit}:{room:CommunityRoomView;disabled:boolean;submit:(work:()=>Promise<{operation:CommunityOperationView}>)=>Promise<void>}) {
+ const [ids,setIds]=useState('');const [error,setError]=useState<string|null>(null);const [confirmClear,setConfirmClear]=useState(false);
+ const apply=(discordIds:string[])=>{if(disabled)return;setIds('');setError(null);setConfirmClear(false);void submit(()=>communityApi.roomAction(room,'managers',{discordIds}));};
+ const save=()=>{
+  if(disabled)return;
+  const values=[...new Set(ids.split(/[\s,，;；]+/).filter(Boolean))];
+  if(values.length>20){setError('每次最多分配 20 位房间管理员。');setConfirmClear(false);return;}
+  if(values.some(value=>!/^\d{17,20}$/.test(value))){setError('请输入有效的 Discord 用户 ID；多个 ID 用换行或逗号分隔。');setConfirmClear(false);return;}
+  setError(null);if(!values.length){setConfirmClear(true);return;}apply(values);
+ };
+ return <details className="community-fixed-room"><summary>{room.name}</summary><p>当前管理员：{room.managers?.length?room.managers.map(manager=>manager.name).join('、'):'尚未分配'}</p><p className="community-muted">固定房间不会自动删除。一次最多 20 位，提交会替换完整管理员名单；留空可清空分配，Nanako 管理员仍可管理。</p>{room.panelProblem&&<p role="status">{room.panelProblem}</p>}<label>房间管理员 Discord 用户 ID<textarea autoComplete="off" rows={3} maxLength={2200} value={ids} disabled={disabled} onChange={event=>{setIds(event.target.value);setError(null);setConfirmClear(false);}}/></label>{error&&<p role="alert">{error}</p>}{confirmClear?<div className="community-danger-zone"><p>确认清空这个固定房间的管理员名单？</p><div className="community-actions"><button type="button" disabled={disabled} onClick={()=>apply([])}>确认清空管理员</button><button type="button" onClick={()=>setConfirmClear(false)}>保留当前管理员</button></div></div>:<button type="button" disabled={disabled||(!ids.trim()&&!room.managers?.length)} onClick={save}>保存房间管理员</button>}</details>;
 }
 function NumberField({label,value,min,max,onChange}:{label:string;value:number;min:number;max:number;onChange:(value:number)=>void}) {
  return <label>{label}<input type="number" required min={min} max={max} step={1} value={value} onChange={e=>onChange(Number(e.target.value))}/></label>;

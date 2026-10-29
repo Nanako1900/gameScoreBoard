@@ -35,4 +35,23 @@ describe('community settings and resource references', () => {
     expect(second.roles.allowedRefs).toEqual([]);
     expect(second.fun.topics.some(t => t.text === '新话题')).toBe(false);
   });
+  it('adds an empty fixed-category scope to legacy settings without changing existing room policy', () => {
+    const value = defaultCommunitySettings();
+    expect(value.rooms.fixedCategoryRefs).toEqual([]);
+    delete value.rooms.fixedCategoryRefs;
+    const parsed = parseCommunitySettings(value);
+    expect(parsed.rooms.fixedCategoryRefs).toEqual([]);
+    expect(parsed.rooms).toMatchObject({ emptyGraceSeconds: 120, maxPerMember: 1 });
+  });
+  it('validates fixed-room category selections as independent opaque-reference arrays', () => {
+    const value = defaultCommunitySettings();
+    value.rooms.fixedCategoryRefs = [REF, REF];
+    expect(parseCommunitySettings(value).rooms.fixedCategoryRefs).toEqual([REF]);
+    for (const invalid of [null, '1114391825336250432', ['1114391825336250432'], Array(101).fill(REF)]) {
+      expect(() => parseCommunitySettings({ ...value, rooms: { ...value.rooms, fixedCategoryRefs: invalid } })).toThrow();
+    }
+    const other = defaultCommunitySettings();
+    value.rooms.fixedCategoryRefs.push(REF);
+    expect(other.rooms.fixedCategoryRefs).toEqual([]);
+  });
 });

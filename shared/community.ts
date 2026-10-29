@@ -8,7 +8,7 @@ export interface CommunityTopic { ref: string; text: string; tags: string[] }
 export interface CommunitySettings {
   enabled: boolean;
   rooms: { enabled: boolean; categoryRef: string | null; creatorRef: string | null; waitingRef: string | null;
-    panelRef: string | null; visibility: CommunityVisibility; maxPerMember: number; maxRooms: number;
+    panelRef: string | null; fixedCategoryRefs?: string[]; visibility: CommunityVisibility; maxPerMember: number; maxRooms: number;
     cooldownSeconds: number; emptyGraceSeconds: number; ownerGraceSeconds: number; userLimit: number; maxUserLimit: number };
   welcome: { enabled: boolean; channelRef: string | null; template: string; rejoinCooldownHours: number };
   roles: { enabled: boolean; allowedRefs: string[]; maxChoices: number };
@@ -23,6 +23,7 @@ export interface CommunityRoomView {
   status: string; visibility: CommunityVisibility; userLimit: number; version: number;
   canManage: boolean; canClaim: boolean; transferTo: CommunityMemberView | null;
   cleanupAt: string | null; createdAt: string; updatedAt: string;
+  kind?: 'temporary' | 'fixed'; managers?: CommunityMemberView[]; panelProblem?: string | null;
 }
 export type CommunityOperationStatus = 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'failed' | 'conflict' | 'canceled' | 'needs_review';
 export type CommunityJson = null | boolean | number | string | CommunityJson[] | { [key: string]: CommunityJson };
@@ -47,7 +48,7 @@ export function isCommunityRef(value: unknown): value is string {
 export function defaultCommunitySettings(): CommunitySettings {
   return {
     enabled: false,
-    rooms: { enabled: false, categoryRef: null, creatorRef: null, waitingRef: null, panelRef: null,
+    rooms: { enabled: false, categoryRef: null, creatorRef: null, waitingRef: null, panelRef: null, fixedCategoryRefs: [],
       visibility: 'open', maxPerMember: 1, maxRooms: 25, cooldownSeconds: 30,
       emptyGraceSeconds: 120, ownerGraceSeconds: 120, userLimit: 0, maxUserLimit: 99 },
     welcome: { enabled: false, channelRef: null, template: '欢迎 {name} 来到 {server}！从社区中心选择兴趣身份，也可以创建自己的语音房。', rejoinCooldownHours: 24 },
@@ -82,7 +83,7 @@ function refs(value: unknown, max: number, path: string): string[] {
 }
 export function parseCommunitySettings(input: unknown): CommunitySettings {
   const c = object(input, ['enabled', 'rooms', 'welcome', 'roles', 'fun'], '根');
-  const r = object(c.rooms, ['enabled', 'categoryRef', 'creatorRef', 'waitingRef', 'panelRef', 'visibility', 'maxPerMember', 'maxRooms', 'cooldownSeconds', 'emptyGraceSeconds', 'ownerGraceSeconds', 'userLimit', 'maxUserLimit'], '房间');
+  const r = object(c.rooms, ['enabled', 'categoryRef', 'creatorRef', 'waitingRef', 'panelRef', 'fixedCategoryRefs', 'visibility', 'maxPerMember', 'maxRooms', 'cooldownSeconds', 'emptyGraceSeconds', 'ownerGraceSeconds', 'userLimit', 'maxUserLimit'], '房间');
   const w = object(c.welcome, ['enabled', 'channelRef', 'template', 'rejoinCooldownHours'], '欢迎');
   const roles = object(c.roles, ['enabled', 'allowedRefs', 'maxChoices'], '身份');
   const f = object(c.fun, ['enabled', 'enabledTools', 'cooldownSeconds', 'pollMaxHours', 'pollMaxOptions', 'maxParticipants', 'maxDiceCount', 'maxDiceSides', 'topics', 'ai'], '互动');
@@ -100,6 +101,7 @@ export function parseCommunitySettings(input: unknown): CommunitySettings {
   const result: CommunitySettings = {
     enabled: bool(c.enabled, '总开关'),
     rooms: { enabled: bool(r.enabled, '房间开关'), categoryRef: ref(r.categoryRef, '分类'), creatorRef: ref(r.creatorRef, '创建入口'), waitingRef: ref(r.waitingRef, '等候区'), panelRef: ref(r.panelRef, '控制面板'),
+      fixedCategoryRefs: refs(r.fixedCategoryRefs === undefined ? [] : r.fixedCategoryRefs, 100, '固定房间分类'),
       visibility: r.visibility as CommunityVisibility, maxPerMember: integer(r.maxPerMember, 1, 1, '每人房间数'), maxRooms: integer(r.maxRooms, 1, 100, '总房间数'),
       cooldownSeconds: integer(r.cooldownSeconds, 0, 3600, '创建冷却'), emptyGraceSeconds: integer(r.emptyGraceSeconds, 15, 86400, '空房宽限'), ownerGraceSeconds: integer(r.ownerGraceSeconds, 15, 86400, '房主宽限'),
       userLimit: integer(r.userLimit, 0, 99, '默认人数'), maxUserLimit: integer(r.maxUserLimit, 1, 99, '人数上限') },

@@ -38,7 +38,7 @@ it('explains the automatic Discord flow without a website creation form or join 
  expect(screen.getByText('进入服务器指定的「新建临时房间」语音频道。')).toBeInTheDocument();
  expect(screen.getByText('机器人自动建房并把你移入，房内聊天会出现控制卡。')).toBeInTheDocument();
  expect(screen.getByText('改名、调整人数和访问方式，都可以直接在房内控制卡完成。')).toBeInTheDocument();
- expect(screen.getByText('房间无人后 2 分钟自动删除；有人回来就停止计时。')).toBeInTheDocument();
+ expect(screen.getByText('临时房间无人后 2 分钟自动删除；有人回来就停止计时。')).toBeInTheDocument();
  expect(screen.queryByRole('textbox',{name:'房间名字'})).not.toBeInTheDocument();
  expect(screen.queryByRole('button',{name:'创建语音房'})).not.toBeInTheDocument();
  expect(screen.queryByRole('button',{name:'加入语音房'})).not.toBeInTheDocument();
