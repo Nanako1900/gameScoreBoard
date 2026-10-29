@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { defaultCommunitySettings, type CommunityJson } from '../../shared/community';
 import { CommunityDiscordError, type CommunityDiscord, type CommunityDiscordChannel, type CommunityDiscordMember, type CommunityDiscordResource } from '../../server/src/community/discord';
 import { CommunityEngine, type CommunityEngineOptions } from '../../server/src/community/engine';
+import { CommunityRoomPanels } from '../../server/src/community/room-panels';
 import { CommunityService } from '../../server/src/community/service';
 import { CommunityStore, type CommunityActor } from '../../server/src/community/store';
 import { seedUser } from '../worker/helpers';
@@ -61,6 +62,41 @@ function queue(kind: string, roomRef: string | null = null, payload: CommunityJs
 }
 async function room() { const value = await store.createRoom(ownerRef, '小屋', { channelRef }); return store.patchRoom(value.ref, { status: 'active' }, value.version); }
 const latest = (ref: string) => store.getOperation(ref);
+
+it('returns an owner from the creator to the existing room through a durable operation', async () => {
+  const value = await room(); await engine.onVoice(OWNER, CREATOR);
+  expect(discord.createVoice).not.toHaveBeenCalled(); expect(positions.get(OWNER)).toBe(CHANNEL);
+  const ops = await store.listOperations(); expect(ops).toHaveLength(1); expect(ops[0]).toMatchObject({kind: 'room.join', roomRef: value.ref, status: 'succeeded'});
+  expect(await store.listRooms()).toHaveLength(1);
+});
+
+it('does not replay an old creator return after the owner moves elsewhere or unlinks', async () => {
+  const value = await room(); const op = await queue('room.join', value.ref, {creatorOnly: true}, value.version);
+  positions.set(OWNER, WAITING); await engine.runOne(); expect((await latest(op.ref))!.status).toBe('conflict');
+  positions.set(OWNER, CREATOR); const other = await queue('room.join', value.ref, {creatorOnly: true}, value.version);
+  await pool.query("DELETE FROM discord_links WHERE user_id='owner'"); await engine.runOne();
+  expect((await latest(other.ref))!.status).toBe('conflict'); expect(discord.move).not.toHaveBeenCalled();
+});
+
+it('keeps a room active when its card fails and persists card identity separately without public IDs', async () => {
+  const errors = vi.fn(); discord.syncRoomPanel = vi.fn(async () => { throw new Error('panel failure'); });
+  const panels = new CommunityRoomPanels(store, discord, {now: () => clock, onError: errors});
+  engine = buildEngine({syncPanels: () => panels.sync()}); const op = await queue('room.create'); await engine.runOne();
+  await panels.sync(); const created = (await store.listRooms())[0]; expect(created.status).toBe('active'); expect((await latest(op.ref))!.status).toBe('succeeded');
+  discord.syncRoomPanel = vi.fn(async () => '121212121212121212'); clock += 30_000; await panels.sync();
+  const resource = (await store.resource(created.channelRef!, 'voice'))!;
+  expect(resource.metadata.roomPanelMessageId).toBe('121212121212121212'); expect((await store.getRoom(created.ref))!.version).toBe(created.version);
+  const publicViews = JSON.stringify([await service.rooms('owner'), await service.resources('admin')]);
+  expect(publicViews).not.toContain('121212121212121212'); expect(publicViews).not.toContain(CREATED); expect(publicViews).not.toContain('roomPanelMessageId');
+});
+
+it('preserves card identity across a fresh Gateway resource snapshot and uses it after restart', async () => {
+  await room(); await store.upsertResource('voice', CHANNEL, '小屋', {metadata: {parentId: CATEGORY, roomPanelMessageId: '121212121212121212'}});
+  await engine.sync(); expect((await store.resource(channelRef, 'voice'))!.metadata.roomPanelMessageId).toBe('121212121212121212');
+  discord.syncRoomPanel = vi.fn(async () => '121212121212121212');
+  await new CommunityRoomPanels(store, discord, {now: () => clock}).sync();
+  expect(discord.syncRoomPanel).toHaveBeenCalledWith(CHANNEL, expect.any(String), '121212121212121212', expect.any(Object), CATEGORY, expect.any(Function));
+});
 
 it('persists the create intent, adopts the returned channel and moves only a still-connected owner', async () => {
   const op = await queue('room.create'); await engine.runOne();

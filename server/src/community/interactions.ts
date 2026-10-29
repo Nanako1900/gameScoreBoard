@@ -68,9 +68,12 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
   const parts = customId.split(':').slice(2);
   // Showing a modal must be the very first interaction response. Submitted
   // values are untrusted and receive the complete authorization below.
-  if (interaction.isButton() && (parts[0] === 'edit' || parts[0] === 'tool' && ['poll', 'draw', 'ai'].includes(parts[1]))) {
-    const action = parts[1], edit = parts[0] === 'edit';
-    const modal = new ModalBuilder().setCustomId(edit ? `v1:community:submit:${action}:${parts[2] ?? ''}:${parts[3] ?? ''}` : `v1:community:toolsubmit:${action}`).setTitle(edit ? action === 'limit' ? '房间人数上限' : action === 'create' ? '创建我的房间' : '修改房间名' : action === 'poll' ? '发起投票' : action === 'draw' ? '抽签' : 'AI 房间名建议');
+  const panelEdit = parts[0] === 'panel' && ['rename', 'limit'].includes(parts[1]);
+  if (interaction.isButton() && (panelEdit || parts[0] === 'edit' || parts[0] === 'tool' && ['poll', 'draw', 'ai'].includes(parts[1]))) {
+    const action = parts[1], edit = panelEdit || parts[0] === 'edit';
+    // The shared card has no personal data or expiring version. The modal only
+    // collects explicit input; submission reads fresh ownership and version.
+    const modal = new ModalBuilder().setCustomId(panelEdit ? `v1:community:panelsubmit:${action}:${parts[2] ?? ''}` : edit ? `v1:community:submit:${action}:${parts[2] ?? ''}:${parts[3] ?? ''}` : `v1:community:toolsubmit:${action}`).setTitle(edit ? action === 'limit' ? '房间人数上限' : action === 'create' ? '创建我的房间' : '修改房间名' : action === 'poll' ? '发起投票' : action === 'draw' ? '抽签' : 'AI 房间名建议');
     const add = (id: string, label: string, max: number, paragraph = false) => modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short).setMaxLength(max).setRequired(true)));
     if (edit) add('value', action === 'limit' ? '0–99；0 表示不限人数' : '名字（最多 100 字）', 100);
     else if (action === 'poll') { add('question', '问题', 200); add('options', '每行一个选项，至少两个', 1100, true); }
@@ -96,16 +99,18 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
         const visible: StoredRoom[] = [];
         for (const room of await deps.service.store.listRooms()) { try { visible.push(await roomFor(room.ref)); } catch { /* Private and missing rooms have the same absence. */ } }
         const mine = visible.find(room => room.ownerRef === authority.memberRef); if (mine) return showRoom(mine.ref);
-        const entries = visible.slice(page * 25, (page + 1) * 25), rows: Row[] = [row([button('创建我的房间', 'v1:community:edit:create', 3), button('刷新', `v1:community:rooms:${page}`)])];
-        if (entries.length) rows.push(row([{ type: 3, custom_id: 'v1:community:roomselect', placeholder: '选择可以查看的房间', options: entries.map(room => ({ label: clean(room.name), value: room.ref })) }]));
-        if (visible.length > 25) rows.push(row([button('上一页', `v1:community:rooms:${Math.max(0, page - 1)}`), button('下一页', `v1:community:rooms:${Math.min(Math.ceil(visible.length / 25) - 1, page + 1)}`)]));
-        await respond(message(`社区语音房\n先进入任一语音频道，再创建或加入房间。\n当前可查看 ${visible.length} 个房间。`, rows)); return;
+        const position = deps.discord.channelOf(interaction.user.id);
+        for (const room of visible) {
+          const channel = room.channelRef ? await deps.service.store.resource(room.channelRef, 'voice') : null;
+          if (position && channel?.externalId === position) return showRoom(room.ref);
+        }
+        await respond(message('临时语音房\n进入服务器的「创建入口」语音频道，机器人会自动建房并把你移入。\n房内文字聊天有自动更新的控制卡；空房后会按设置时间自动删除。')); return;
       }
       const room = await roomFor(ref), access = await deps.service.store.roomAccess(ref), mine = room.ownerRef === authority.memberRef;
       const channel = room.channelRef ? await deps.service.store.resource(room.channelRef, 'voice') : null;
       const occupants = channel ? deps.discord.occupants(channel.externalId) : null;
       const prefix = (action: string) => `v1:community:act:${action}:${room.ref}:${room.version}`;
-      const rows: Row[] = [row([button('加入房间', prefix('join'), 3), button('刷新房间', `v1:community:room:${room.ref}`), button('房间列表', 'v1:community:rooms:0')])];
+      const rows: Row[] = [];
       if (mine || authority.isAdmin) {
         rows.push(row([button('改名', `v1:community:edit:rename:${room.ref}:${room.version}`), button('人数', `v1:community:edit:limit:${room.ref}:${room.version}`), button('可见性', `v1:community:visibility:${room.ref}:${room.version}`)]));
         rows.push(row([button('允许成员', `v1:community:target:grant:${room.ref}:${room.version}`), button('禁止成员', `v1:community:target:deny:${room.ref}:${room.version}`), button('移出成员', `v1:community:target:kick:${room.ref}:${room.version}`), button('转让房主', `v1:community:target:transfer:${room.ref}:${room.version}`)]));
@@ -171,7 +176,20 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
       else if (command === 'room_ai') await createFun('ai', { theme: interaction.options.getString('theme', true), purpose: interaction.options.getString('purpose') ?? 'room_name' });
       else if (command === 'teams') await respond(message('请选择明确参与分队的成员（最多 25 位）。', [row([{ type: 5, custom_id: `v1:community:teams:${interaction.options.getInteger('count') ?? 2}`, min_values: 2, max_values: Math.min(25, (await deps.service.store.settings()).settings.fun.maxParticipants) }])]));
     } else if (parts[0] === 'room' || parts[0] === 'rooms') await showRoom(parts[0] === 'room' ? parts[1] : undefined, parts[0] === 'rooms' ? Math.max(0, Number(parts[1]) || 0) : 0);
-    else if (parts[0] === 'roles' && parts[1] !== 'set') await showRoles(parts[1] === 'page' ? Math.max(0, Number(parts[2]) || 0) : 0);
+    else if (parts[0] === 'panel' && interaction.isButton()) {
+      const room = await roomFor(parts[2]);
+      if (room.status !== 'active') throw new CommunityStoreError(409, 'version_conflict', '房间当前暂不可操作。');
+      if (parts[1] === 'more') await showRoom(room.ref);
+      else if (parts[1] === 'visibility') {
+        if (!authority.isAdmin && room.ownerRef !== authority.memberRef) throw new CommunityStoreError(403, 'not_owner', '只有当前房主或管理员可以管理房间。');
+        await respond(message('选择房间访问方式。', [row([{ type: 3, custom_id: `v1:community:setvisibility:${room.ref}:${room.version}`, options: [{ label: '公开：所有成员可进入', value: 'open' }, { label: '锁门：仅允许的成员可进入', value: 'locked' }, { label: '隐藏：仅允许的成员可查看', value: 'hidden' }] }])]));
+      } else return missing();
+    } else if (parts[0] === 'panelsubmit' && interaction.isModalSubmit() && ['rename', 'limit'].includes(parts[1])) {
+      const room = await roomFor(parts[2]);
+      if (room.status !== 'active') throw new CommunityStoreError(409, 'version_conflict', '房间当前暂不可操作。');
+      if (!authority.isAdmin && room.ownerRef !== authority.memberRef) throw new CommunityStoreError(403, 'not_owner', '只有当前房主或管理员可以管理房间。');
+      await enqueue(`room.${parts[1]}`, room.ref, parts[1] === 'limit' ? { userLimit: Number(interaction.fields.getTextInputValue('value')) } : { name: interaction.fields.getTextInputValue('value') }, room.version);
+    } else if (parts[0] === 'roles' && parts[1] !== 'set') await showRoles(parts[1] === 'page' ? Math.max(0, Number(parts[2]) || 0) : 0);
     else if (parts[0] === 'roles' && parts[1] === 'set' && interaction.isStringSelectMenu()) {
       const roles = await deps.membership.readRoles(authority.memberRef), page = Math.max(0, Number(parts[2]) || 0), choices = roles.choices.slice(page * 25, (page + 1) * 25).map(role => role.ref);
       if (interaction.values.some(ref => !choices.includes(ref))) return missing();
