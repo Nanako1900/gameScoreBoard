@@ -1,6 +1,6 @@
 import { getUserById } from '../../../worker/db';
 import { linkByDiscordId, linkByUserId } from '../discord/links';
-import { isCommunityRef, parseCommunitySettings, type CommunityJson, type CommunityMemberView, type CommunityOverview,
+import { CommunitySettingsValidationError, isCommunityRef, parseCommunitySettings, type CommunitySettingsIssue, type CommunityJson, type CommunityMemberView, type CommunityOverview,
   type CommunityResourceKind, type CommunityResourceView, type CommunityRoomView, type CommunitySettings } from '../../../shared/community';
 import { canReadRoom, publicCommunityJson, publicCommunitySettings, safeCommunityText } from './security';
 import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
@@ -9,6 +9,15 @@ import { CommunityStore, CommunityStoreError, operationView, type CommunityActor
 
 export interface CommunityWebActor {
   userId: string | null; linked: boolean; memberRef: string | null; isAdmin: boolean; memberAvailable: boolean;
+}
+/** Only errors parsing the submitted settings document may expose field paths.
+ * Stored configuration and authentication failures retain the private boundary. */
+export class CommunitySettingsInputError extends CommunityStoreError {
+  readonly fieldErrors: CommunitySettingsIssue[];
+  constructor(issues: readonly CommunitySettingsIssue[]) {
+    super(400, 'invalid_input', '请检查标出的社区设置'); this.name = 'CommunitySettingsInputError';
+    this.fieldErrors = issues.map(issue => ({ ...issue }));
+  }
 }
 function fail(status: number, code: string, message: string): never { throw new CommunityStoreError(status, code, message); }
 const missing = (): never => fail(404, 'not_found', '内容不存在');
@@ -137,7 +146,8 @@ export class CommunityService {
       if (rooms && typeof rooms === 'object' && !Array.isArray(rooms) && !Object.hasOwn(rooms, 'fixedCategoryRefs'))
         candidate = { ...value, rooms: { ...rooms, fixedCategoryRefs: (await this.store.settings()).settings.rooms.fixedCategoryRefs ?? [] } };
     }
-    try { settings = parseCommunitySettings(candidate); } catch { return fail(400, 'invalid_input', '社区设置格式或范围无效'); }
+    try { settings = parseCommunitySettings(candidate); }
+    catch (error) { if (error instanceof CommunitySettingsValidationError) throw new CommunitySettingsInputError(error.issues); throw error; }
     await this.validateSettings(settings);
     const saved = await this.store.saveSettingsAndEnqueue(settings, expectedVersion, { source: 'web', userId, ...(actor.memberRef ? { memberRef: actor.memberRef } : {}) }, key);
     return { settings: publicCommunityJson(saved.settings as unknown as CommunityJson), version: saved.version, runtime: saved.runtime, operation: operationView(saved.operation) };

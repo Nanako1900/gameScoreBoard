@@ -151,6 +151,25 @@ describe('community Node API and authority',()=>{
     expect(await response.json()).toMatchObject({version:1,runtime:{appliedVersion:0},operation:{kind:'settings.apply',status:'queued'}});
     expect((await req('/api/admin/community','admin',body)).status).toBe(202);expect((await store.settings()).version).toBe(1);
   });
+  it('returns all safe field errors for invalid input without saving settings or queuing work', async () => {
+    const settings = defaultCommunitySettings(); settings.rooms.emptyGraceSeconds = 14; settings.fun.ai.prompt = '';
+    settings.fun.topics[0].text = ''; settings.roles.allowedRefs = [ALICE];
+    const response = await req('/api/admin/community', 'admin', { settings, expectedVersion: 0, requestKey: 'invalid-fields' });
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error: string; fieldErrors: Array<{ path: string; label: string; message: string }> };
+    expect(body.error).toBe('请检查标出的社区设置');
+    expect(body.fieldErrors.map(issue => issue.path)).toEqual(expect.arrayContaining(['rooms.emptyGraceSeconds', 'fun.ai.prompt', 'fun.topics.0.text', 'roles.allowedRefs.0']));
+    expect(JSON.stringify(body)).not.toContain(ALICE);
+    expect((await store.settings()).version).toBe(0); expect(await store.listOperations()).toEqual([]);
+  });
+  it('never exposes field errors before authorization or for invalid stored settings', async () => {
+    const settings = defaultCommunitySettings(); settings.fun.ai.prompt = '';
+    const denied = await req('/api/admin/community', 'alice', { settings, expectedVersion: 0, requestKey: 'denied-fields' });
+    expect(denied.status).toBe(403); expect(await denied.json()).not.toHaveProperty('fieldErrors');
+    await pool.query('UPDATE community_settings SET settings=$2 WHERE guild_id=$1', [GUILD, JSON.stringify(settings)]);
+    const stored = await req('/api/admin/community', 'admin');
+    expect(stored.status).toBe(500); expect(await stored.json()).toEqual({ error: '社区服务暂不可用', code: 'internal_error' });
+  });
   it('rejects unsafe role settings and raw IDs instead of accepting them as references',async()=>{
     const bad=await store.upsertResource('role','888888888888888888','管理员',{safe:false});const settings=defaultCommunitySettings();settings.roles.allowedRefs=[bad.ref];
     expect((await req('/api/admin/community','admin',{settings,expectedVersion:0,requestKey:'unsafe'})).status).toBe(400);

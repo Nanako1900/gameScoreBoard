@@ -7,7 +7,7 @@ import { allowedOrigins, cookieConfig, hasNulInUrl, isReadOnly, parseCsvList } f
 import { cookieNames, getCookie, verifySession } from '../../../worker/session';
 import type { Env } from '../../../worker/types';
 import type { CommunityFunView, CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
-import { CommunityService } from './service';
+import { CommunityService, CommunitySettingsInputError } from './service';
 import { CommunityStoreError, type CommunityStore } from './store';
 
 export interface CommunityRoleReadView { choices: CommunityResourceView[]; selectedRefs: string[]; maxChoices: number; enabled: boolean }
@@ -136,6 +136,7 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
   });
   app.notFound(c => c.json({ error: '内容不存在' }, 404));
   app.onError((error, c) => {
+    if (error instanceof CommunitySettingsInputError) return c.json({ error: '请检查标出的社区设置', fieldErrors: error.fieldErrors }, 400);
     let status = 500; let message = '社区服务暂不可用'; let code = 'internal_error';
     if (error instanceof CommunityStoreError) { status = error.status; message = error.message; code = error.code; }
     else if (error instanceof ApiError) { status = error.status; message = error.message; code = 'invalid_input'; }
