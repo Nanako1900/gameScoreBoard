@@ -99,20 +99,31 @@ function CommunityAdminContent() {
  useEffect(()=>{
   if(departing)return;
   const abort=new AbortController();const epoch=accessEpoch.current;setError(null);
-  const optional=async<T,>(read:()=>Promise<T>,fallback:T,problem:string):Promise<{value:T;problem:string|null}>=>{
-   try{return {value:await read(),problem:null};}catch(cause){if(cause instanceof ApiError&&[401,403].includes(cause.status))throw cause;return {value:fallback,problem};}
+  const active=()=>!abort.signal.aborted&&accessEpoch.current===epoch;
+  const checked=async<T,>(read:()=>Promise<T>,main=false):Promise<T>=>{
+   try{return await read();}catch(cause){
+    if(active()&&cause instanceof ApiError&&([401,403].includes(cause.status)||main&&cause.status===404)){op.reset();inaccessible(cause);}
+    throw cause;
+   }
   };
-  void Promise.all([communityApi.admin(abort.signal),communityApi.resources('',true,abort.signal),
-   optional(()=>communityApi.operations(abort.signal),{operations:[]},'操作记录暂不可用，请重试。'),
-   optional(()=>communityApi.audit(abort.signal),{audit:[]},'管理记录暂不可用，请重试。'),
-   optional(()=>communityApi.rooms(abort.signal),{rooms:[]},'固定房间列表暂不可用，请刷新后重试。')])
-   .then(([admin,resources,operations,audit,rooms])=>{
-    if(abort.signal.aborted||accessEpoch.current!==epoch)return;
-    setStatus(0);setData({...admin,resources:resources.resources,operations:operations.value.operations,audit:audit.value.audit,
-     rooms:Array.isArray(rooms.value.rooms)?rooms.value.rooms:[],roomsProblem:rooms.problem,operationsProblem:operations.problem,auditProblem:audit.problem,capabilities:communityBackendCapabilities(admin.settings)});
+  let diagnostics={operations:[] as CommunityOperationView[],audit:[] as CommunityAuditView[],rooms:[] as CommunityRoomView[],operationsProblem:'正在读取操作记录…' as string|null,auditProblem:'正在读取管理记录…' as string|null,roomsProblem:'正在读取固定房间…' as string|null};
+  const optional=async<T,>(read:()=>Promise<T>,apply:(value:T)=>Partial<typeof diagnostics>,fallback:Partial<typeof diagnostics>)=>{
+   let patch:Partial<typeof diagnostics>;
+   try{patch=apply(await checked(read));}catch{patch=fallback;}
+   if(!active())return;
+   diagnostics={...diagnostics,...patch};setData(current=>current?{...current,...patch}:current);
+  };
+  void optional(()=>communityApi.operations(abort.signal),value=>({operations:value.operations,operationsProblem:null}),{operations:[],operationsProblem:'操作记录暂不可用，请重试。'});
+  void optional(()=>communityApi.audit(abort.signal),value=>({audit:value.audit,auditProblem:null}),{audit:[],auditProblem:'管理记录暂不可用，请重试。'});
+  void optional(()=>communityApi.rooms(abort.signal),value=>({rooms:Array.isArray(value.rooms)?value.rooms:[],roomsProblem:null}),{rooms:[],roomsProblem:'固定房间列表暂不可用，请刷新后重试。'});
+  void Promise.all([checked(()=>communityApi.admin(abort.signal),true),checked(()=>communityApi.resources('',true,abort.signal))])
+   .then(([admin,resources])=>{
+    if(!active())return;
+    if(baseline.current&&admin.version<baseline.current.version)return;
+    setStatus(0);setData({...admin,resources:resources.resources,...diagnostics,capabilities:communityBackendCapabilities(admin.settings)});
     if(!dirtyRef.current){baseline.current={json:JSON.stringify(admin.settings),version:admin.version};setDraft(structuredClone(admin.settings));setTagDraft({});setNumbers({});setIssues([]);setNewVersion(null);}else if(baseline.current?.version!==admin.version)setNewVersion(admin.version);
    })
-   .catch(cause=>{if(!abort.signal.aborted&&accessEpoch.current===epoch){if(cause instanceof ApiError&&[401,403,404].includes(cause.status)){op.reset();inaccessible(cause);}else{setError(errorMessage(cause));setStatus(cause instanceof ApiError?cause.status:500);}}});
+   .catch(cause=>{if(active()){setError(errorMessage(cause));setStatus(cause instanceof ApiError?cause.status:500);}});
   return()=>abort.abort();
  },[refresh,departing]);
  const edited=()=>{setSavedVersion(null);setError(null);if(!op.busy)op.reset();};

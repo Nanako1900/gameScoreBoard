@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { CommunityAdminPage } from '../../src/components/CommunityAdminPage';
 import { defaultCommunitySettings } from '../../shared/community';
 import type { User } from '../../src/types';
@@ -95,4 +95,37 @@ it('summarizes changed groups and clears the previous save receipt when editing 
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('入服欢迎');fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'欢迎 {name}，玩得开心！'}});fireEvent.change(screen.getByRole('spinbutton',{name:'默认人数限制（0 为不限）'}),{target:{value:'4'}});
  expect(screen.getByLabelText('待保存分组')).toHaveTextContent('语音房间');expect(screen.getByLabelText('待保存分组')).toHaveTextContent('入服欢迎');fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(await screen.findByLabelText('最近保存结果')).toHaveTextContent('已保存');
  fireEvent.change(screen.getByRole('spinbutton',{name:'默认人数限制（0 为不限）'}),{target:{value:'5'}});expect(screen.queryByLabelText('最近保存结果')).not.toBeInTheDocument();expect(screen.getByLabelText('待保存分组')).toHaveTextContent('语音房间');
+});
+
+it('shows the core editor before optional diagnostics finish loading',async()=>{
+ const original=vi.mocked(fetch).getMockImplementation()!;let complete!:(response:Response)=>void;
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/operations')?new Promise(resolve=>{complete=resolve;}):original(input,init));
+ render(<CommunityAdminPage me={admin}/>);expect(await screen.findByRole('button',{name:'保存社区设置'})).toBeEnabled();
+ complete(Response.json({operations:[]}));
+});
+
+it('revokes already loaded private drafts when a late optional forbidden result follows a core failure',async()=>{
+ render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ const original=vi.mocked(fetch).getMockImplementation()!;let complete!:(response:Response)=>void;
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/resources')?Promise.resolve(Response.json({error:'目录暂不可用'},{status:503})):String(input).endsWith('/operations')?new Promise(resolve=>{complete=resolve;}):original(input,init));
+ fireEvent.focus(window);await screen.findByText('目录暂不可用');expect(screen.getByRole('button',{name:'保存社区设置'})).toBeInTheDocument();
+ complete(Response.json({error:'权限已撤销'},{status:403}));await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());
+ expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument();
+});
+
+it('ignores a former administrator account’s late diagnostic forbidden response',async()=>{
+ const original=vi.mocked(fetch).getMockImplementation()!;let complete!:(response:Response)=>void;let first=true;
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/operations')&&first?(first=false,new Promise(resolve=>{complete=resolve;})):original(input,init));
+ const view=render(<CommunityAdminPage me={admin}/>);view.rerender(<CommunityAdminPage me={{...admin,id:'another-admin'}}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ complete(Response.json({error:'旧账号无权限'},{status:403}));await waitFor(()=>expect(screen.getByRole('button',{name:'保存社区设置'})).toBeEnabled());
+});
+
+it('does not roll a saved version back when a previously started refresh returns an older version',async()=>{
+ version=1;operationStatus='queued';render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ fireEvent.change(screen.getByRole('spinbutton',{name:'默认人数限制（0 为不限）'}),{target:{value:'4'}});
+ const stale=structuredClone(settings);const original=vi.mocked(fetch).getMockImplementation()!;let complete!:(response:Response)=>void;let held=false;
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/admin/community'&&!init?.method&&!held?(held=true,new Promise(resolve=>{complete=resolve;})):original(input,init));
+ fireEvent.focus(window);fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(await screen.findByLabelText('最近保存结果')).toHaveTextContent('版本 2');
+ await act(async()=>complete(Response.json({settings:stale,version:1,runtime:{ready:true,appliedVersion:1,syncedAt:stamp,problem:null}})));
+ expect(screen.getByRole('spinbutton',{name:'默认人数限制（0 为不限）'})).toHaveValue(4);fireEvent.click(screen.getByText('查看运行与日志'));expect(screen.getByText(/已保存版本 2 ·/)).toBeInTheDocument();expect(screen.getByLabelText('待保存分组')).not.toHaveTextContent('待保存：');
 });
