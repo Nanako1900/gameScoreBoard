@@ -83,13 +83,47 @@ describe('community Node API and authority',()=>{
     expect(body.resources.filter(r=>r.kind==='role').map(r=>r.ref)).toEqual([safe.ref]);expect(body.resources.every(r=>['member','role'].includes(r.kind))).toBe(true);
     expect((await req('/api/community/resources?kind=voice')).status).toBe(403);
   });
-  it('authorizes the owner before queueing and requires an optimistic room version',async()=>{
+  it('allows every visible current member to control temporary rooms and still requires a room version',async()=>{
     await enableRooms();const room=await liveRoom();const body={action:'rename',name:'新名',expectedVersion:room.version,requestKey:'rename-1'};
-    expect((await req('/api/community/rooms/'+room.ref+'/actions','bob',body)).status).toBe(403);
+    expect((await req('/api/community/rooms/'+room.ref+'/actions','bob',body)).status).toBe(202);
     expect((await req('/api/community/rooms/'+room.ref+'/actions','alice',{...body,expectedVersion:undefined})).status).toBe(400);
     const response=await req('/api/community/rooms/'+room.ref+'/actions','alice',body);expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({operation:{kind:'room.rename',status:'queued',roomRef:room.ref}});
-    expect(await store.listOperations()).toHaveLength(1);
+    expect(await store.listOperations()).toHaveLength(2);
+  });
+  it('limits fixed room controls to assigned managers and Nanako administrators',async()=>{
+    let room=await liveRoom();room=await store.patchRoom(room.ref,{ownerRef:null,metadata:{kind:'fixed',managerRefs:[alice]}},room.version);
+    await store.setRoomAccess(room.ref,alice,{allowed:true});await store.setRoomAccess(room.ref,bob,{allowed:true});
+    expect(await service.room(room.ref,'alice')).toMatchObject({kind:'fixed',owner:null,managers:[{ref:alice,name:'Alice'}],canManage:true,canClaim:false,cleanupAt:null});
+    expect(await service.room(room.ref,'bob')).toMatchObject({canManage:false});
+    const body={action:'rename',name:'固定房新名',expectedVersion:room.version,requestKey:'fixed-rename'};
+    expect((await req('/api/community/rooms/'+room.ref+'/actions','bob',body)).status).toBe(403);
+    expect((await req('/api/community/rooms/'+room.ref+'/actions','alice',body)).status).toBe(202);
+  });
+  it('does not expose fixed rooms through a flattened open visibility without the fresh ACL projection',async()=>{
+    const room=await liveRoom();await store.patchRoom(room.ref,{ownerRef:null,metadata:{kind:'fixed',managerRefs:[]}},room.version);
+    expect((await req('/api/community/rooms/'+room.ref,'bob')).status).toBe(404);
+    expect((await req('/api/community/rooms/'+room.ref,'admin')).status).toBe(200);
+    await store.setRoomAccess(room.ref,bob,{present:true,allowed:false});
+    expect((await req('/api/community/rooms/'+room.ref,'bob')).status).toBe(404);
+  });
+  it('accepts administrator-entered manager IDs only for fixed rooms without echoing those IDs',async()=>{
+    let room=await liveRoom();room=await store.patchRoom(room.ref,{ownerRef:null,metadata:{kind:'fixed',managerRefs:[]}},room.version);
+    const body={action:'managers',discordIds:[ALICE,BOB],expectedVersion:room.version,requestKey:'assign-managers'};
+    const response=await req('/api/community/rooms/'+room.ref+'/actions','admin',body);expect(response.status).toBe(202);expect(await response.text()).not.toMatch(/\b\d{17,20}\b/);
+    await store.setRoomAccess(room.ref,alice,{allowed:true});expect((await req('/api/community/rooms/'+room.ref+'/actions','alice',body)).status).toBe(403);
+    for(const action of ['cleanup','dissolve','admin_delete','transfer','claim','accept'])expect((await req('/api/community/rooms/'+room.ref+'/actions','admin',{action,expectedVersion:room.version,requestKey:action,confirm:true})).status).toBeGreaterThanOrEqual(400);
+  });
+  it('lets an ordinary temporary-room operator read their safe-close receipt',async()=>{
+    const room=await liveRoom();const op=await store.enqueue('room.admin_delete',room.ref,{source:'web',userId:'bob',memberRef:bob},{confirm:true},'shared-close',room.version);
+    expect((await req('/api/community/operations/'+op.ref,'bob')).status).toBe(200);
+  });
+  it('preserves fixed categories when an older client saves settings without the new field',async()=>{
+    const category=await store.upsertResource('category','777777777777777777','私人房间');
+    const settings=defaultCommunitySettings();settings.rooms.fixedCategoryRefs=[category.ref];await store.saveSettings(settings,0);
+    const old=JSON.parse(JSON.stringify(settings));delete old.rooms.fixedCategoryRefs;old.welcome.template='旧客户端修改欢迎';
+    const response=await req('/api/admin/community','admin',{settings:old,expectedVersion:1,requestKey:'old-client'});expect(response.status).toBe(202);
+    expect((await store.settings()).settings.rooms.fixedCategoryRefs).toEqual([category.ref]);
   });
   it('preserves idempotence and reports stale versions without writing another operation',async()=>{
     await enableRooms();const room=await liveRoom();const body={action:'rename',name:'新名',expectedVersion:room.version,requestKey:'same'};

@@ -139,11 +139,13 @@ export class CommunityFunService {
     const member = await this.member(memberRef, client); if (!member) return false;
     // A personal AI request without a room is a private suggestion, not a public post.
     if (!row.room_ref) return row.kind !== 'ai' || row.creator_ref === memberRef;
-    const room = (await client.query('SELECT owner_ref,visibility,status FROM community_rooms WHERE guild_id=$1 AND ref=$2', [this.store.guildId, row.room_ref])).rows[0];
+    const room = (await client.query('SELECT owner_ref,visibility,status,metadata FROM community_rooms WHERE guild_id=$1 AND ref=$2', [this.store.guildId, row.room_ref])).rows[0];
     if (!room) return false;
+    if (room.metadata?.kind === 'fixed' && room.status !== 'active') return false;
     const access = (await client.query('SELECT member_ref,allowed,blocked,present FROM community_room_access WHERE room_ref=$1 AND member_ref=$2', [row.room_ref, memberRef])).rows
       .map(value => ({ memberRef: value.member_ref, allowed: value.allowed, blocked: value.blocked, present: value.present }));
-    return canReadRoom({ memberRef, isAdmin, memberAvailable: true }, { ownerRef: room.owner_ref, visibility: room.visibility, status: room.status }, access);
+    return canReadRoom({ memberRef, isAdmin, memberAvailable: true },
+      { ownerRef: room.owner_ref, visibility: room.visibility, status: room.status, metadata: room.metadata }, access);
   }
   private async view(row: FunRow, memberRef: string | null, client: Query = this.store.pool): Promise<CommunityFunView> {
     const creator = row.creator_ref ? (await client.query("SELECT ref,name FROM community_resources WHERE guild_id=$1 AND ref=$2 AND kind='member'", [this.store.guildId, row.creator_ref])).rows[0] : null;

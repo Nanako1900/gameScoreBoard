@@ -122,7 +122,14 @@ async function finishWelcome(): Promise<void> {
   const user = userEvent.setup();
   const heading = screen.getByRole('button', { name: /机器人怎么用/ });
   if (heading.getAttribute('aria-expanded') !== 'true') await user.click(heading);
-  await user.click(screen.getByRole('button', { name: '完成，去首页' }));
+  // The welcome heading can render before the binding read settles. That read
+  // may still move the expanded step; finish only once the real action is ready.
+  const complete = await waitFor(() => {
+    const button = screen.getByRole('button', { name: '完成，去首页' });
+    expect(button).toBeEnabled();
+    return button;
+  });
+  await user.click(complete);
 }
 
 const stored = (): unknown => {

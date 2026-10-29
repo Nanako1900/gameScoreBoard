@@ -115,3 +115,49 @@ it('uses the configured board offset for AI quota day boundaries',async()=>{
  const rows=(await pool.query('SELECT day::text AS "day",count FROM community_ai_usage ORDER BY day')).rows;
  expect(rows).toEqual([{day:'2026-10-28',count:1},{day:'2026-10-29',count:1}]);
 });
+
+describe('fixed-room interactive result visibility', () => {
+ async function fixedRoom() {
+  const owner = await member(), other = await member('333333333333333333', '其他人');
+  const category = await store.upsertResource('category', '666666666666666666', '固定分类');
+  const channel = await store.upsertResource('voice', '777777777777777777', '角色可见的房间');
+  let room = await store.ensureFixedRoom(channel.ref, '角色可见的房间', { categoryRef: category.ref, managerRefs: [owner.ref] });
+  room = await store.syncFixedRoomProjection(room.ref, room.version, { name: room.name, userLimit: 6, visibility: 'open',
+   categoryRef: category.ref, visibleMemberRefs: [owner.ref], presentMemberRefs: [owner.ref] });
+  const api = service(), actor = { memberRef: owner.ref, isAdmin: false };
+  const poll = await api.create('poll', { question: '私房投票', options: ['甲', '乙'] }, actor, room.ref);
+  const draw = await api.create('draw', { items: ['甲', '乙'], count: 1 }, actor, room.ref);
+  return { room, owner, other, api, poll, draw };
+ }
+ it.each([
+  ['active', 'none'], ['active', 'present'], ['closed', 'allowed'], ['needs_review', 'allowed'],
+ ] as const)('hides list/get/vote/redraw when fixed status is %s with %s access', async (status, access) => {
+  const s = await fixedRoom();
+  const target = access === 'allowed' ? s.owner : s.other;
+  if (access === 'present') await store.setRoomAccess(s.room.ref, target.ref, { allowed: false, present: true });
+  if (status !== 'active') await store.patchRoom(s.room.ref, { status }, s.room.version);
+  expect(await s.api.list(target.ref, false)).toEqual([]);
+  await expect(s.api.get(s.poll.ref, target.ref, false)).rejects.toMatchObject({ status: 404 });
+  await expect(s.api.vote(s.poll.ref, 999, { memberRef: target.ref, isAdmin: false })).rejects.toMatchObject({ status: 404 });
+  await expect(s.api.redraw(s.draw.ref, { memberRef: target.ref, isAdmin: false })).rejects.toMatchObject({ status: 404 });
+  await expect(s.api.close(s.poll.ref, { memberRef: target.ref, isAdmin: false })).rejects.toMatchObject({ status: 404 });
+  await expect(s.api.create('roll', {}, { memberRef: target.ref, isAdmin: false }, s.room.ref)).rejects.toMatchObject({ status: 404 });
+ });
+ it('continues to allow projected fixed members and existing administrator inspection', async () => {
+  const s = await fixedRoom();
+  expect(await s.api.list(s.owner.ref, false)).toHaveLength(2);
+  expect((await s.api.vote(s.poll.ref, 0, { memberRef: s.owner.ref, isAdmin: false })).data).toMatchObject({ myChoice: 0 });
+  expect((await s.api.redraw(s.draw.ref, { memberRef: s.owner.ref, isAdmin: false })).ref).not.toBe(s.draw.ref);
+  expect((await s.api.get(s.draw.ref, null, true)).ref).toBe(s.draw.ref);
+ });
+ it('keeps roomless AI suggestions private while other roomless tools remain public to members', async () => {
+  const one = await member(), other = await member('333333333333333333', '其他人');
+  const api = service({ env: {}, fetcher: vi.fn(async () => new Response('', { status: 500 })) });
+  const ai = await api.create('ai', { theme: '星空', purpose: 'topic' }, { memberRef: one.ref, isAdmin: false });
+  expect((await api.get(ai.ref, one.ref, false)).ref).toBe(ai.ref);
+  await expect(api.get(ai.ref, other.ref, false)).rejects.toMatchObject({ status: 404 });
+  expect(await api.list(other.ref, false)).toEqual([]);
+  const roll = await api.create('roll', {}, { memberRef: one.ref, isAdmin: false });
+  expect((await api.get(roll.ref, other.ref, false)).ref).toBe(roll.ref);
+ });
+});

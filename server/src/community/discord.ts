@@ -43,7 +43,7 @@ export interface CommunityDiscordSnapshot {
   members: CommunityDiscordMember[];
 }
 export interface CommunityDiscord {
-  snapshot(): Promise<CommunityDiscordSnapshot>;
+  snapshot(fixedCategoryIds?: readonly string[]): Promise<CommunityDiscordSnapshot>;
   member(id: string): Promise<CommunityDiscordMember | null>;
   channel(id: string): Promise<CommunityDiscordChannel | null>;
   /** null means the current state cannot safely be represented by our room model. */
@@ -59,6 +59,7 @@ export interface CommunityDiscord {
   rename(channelId: string, name: string): Promise<void>;
   setLimit(channelId: string, limit: number): Promise<void>;
   setVisibility(channelId: string, ownerId: string, visibility: CommunityVisibility): Promise<void>;
+  setFixedVisibility?(channelId: string, visibility: CommunityVisibility, managerIds: readonly string[]): Promise<void>;
   grant(channelId: string, memberId: string): Promise<void>;
   deny(channelId: string, memberId: string): Promise<void>;
   delete(channelId: string): Promise<void>;
@@ -83,7 +84,8 @@ const ID = /^\d{17,20}$/;
 const OP = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const ACCESS = P.ViewChannel | P.Connect;
 const CHANNEL_MANAGEMENT = P.ViewChannel | P.ManageChannels;
-const ROOM_PANEL_PERMISSIONS = P.ViewChannel | P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+const ROOM_PANEL_MESSAGE_PERMISSIONS = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+const ROOM_PANEL_PERMISSIONS = P.ViewChannel | ROOM_PANEL_MESSAGE_PERMISSIONS;
 const DANGEROUS = Object.entries(P).filter(([name]) => name.startsWith('Manage') || name.startsWith('Moderate') ||
   ['Administrator', 'KickMembers', 'BanMembers', 'ViewAuditLog', 'MentionEveryone', 'MoveMembers', 'MuteMembers', 'DeafenMembers'].includes(name))
   .reduce((all, [, bit]) => all | bit, 0n);
@@ -260,7 +262,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     return { name: channel.name, userLimit: channel.userLimit!, visibility, allowedMemberIds, blockedMemberIds };
   }
   async function managedChannel(channelId: string, required = CHANNEL_MANAGEMENT): Promise<{ ctx: Context; channel: Channel }> {
-    const ctx = await context(), channel = await readChannel(channelId);
+    assertReady(); const [ctx, channel] = await Promise.all([context(), readChannel(channelId)]);
     if (!channel) throw missing(); if (channel.kind !== 'voice' || !has(channelPermissions(ctx.self, channel, ctx, guildId), required)) throw forbidden();
     return { ctx, channel };
   }
@@ -294,7 +296,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     }
     throw new CommunityDiscordError(503, '成员目录尚未完整同步');
   }
-  function visibilityOverwrites(channel: Channel | null, ctx: Context, ownerId: string, visibility: CommunityVisibility): Overwrite[] {
+  function visibilityOverwrites(channel: Channel | null, ctx: Context, ownerId: string | undefined, visibility: CommunityVisibility): Overwrite[] {
     if (!['open', 'locked', 'hidden'].includes(visibility)) throw new CommunityDiscordError(400, '房间访问模式无效');
     const blocked = visibility === 'hidden' ? ACCESS : visibility === 'locked' ? P.Connect : 0n;
     const source = channel?.overwrites ?? [];
@@ -308,7 +310,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     };
     update(guildId, 0, visibility === 'hidden' ? 0n : visibility === 'locked' ? P.ViewChannel : ACCESS, blocked);
     update(ctx.selfId, 1, ACCESS, 0n);
-    update(ownerId, 1, ACCESS, 0n);
+    if (ownerId !== undefined) update(ownerId, 1, ACCESS, 0n);
     return output;
   }
   async function textChannel(channelId: string): Promise<{ ctx: Context; channel: Channel }> {
@@ -318,7 +320,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     return { ctx, channel };
   }
   async function access(memberId: string, channelId: string, connect: boolean): Promise<boolean> {
-    const ctx = await context(), [member, channel] = await Promise.all([readMember(memberId), readChannel(channelId)]);
+    assertReady(); const [ctx, member, channel] = await Promise.all([context(), readMember(memberId), readChannel(channelId)]);
     if (!member || !channel) return false;
     return has(channelPermissions(member, channel, ctx, guildId), P.ViewChannel | (connect ? P.Connect : 0n));
   }
@@ -329,22 +331,39 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     assertReady(); await request(remove ? 'delete' : 'put', Routes.guildMemberRole(guildId, memberId, roleId), { reason: 'community self-selected role' });
   }
   return {
-    async snapshot() {
+    async snapshot(fixedCategoryIds = []) {
+      const fixedCategories = new Set(fixedCategoryIds); for (const categoryId of fixedCategories) validateId(categoryId);
       if (!gateway()) return { ready: false, guildName: '', selfId: client.user?.id ?? '', resources: [], members: [] };
-      await context();
       const [channelsRaw, members] = await Promise.all([request('get', Routes.guildChannels(guildId)), memberList()]);
       if (!Array.isArray(channelsRaw)) throw invalid();
-      const ctx = await context(), channels = channelsRaw.map(value => parseChannel(value, guildId)).filter((value): value is Channel => value !== null);
-      const resources: CommunityDiscordResource[] = channels.map(channel => ({ id: channel.id, name: channel.name, kind: channel.kind,
-        available: has(channelPermissions(ctx.self, channel, ctx, guildId), P.ViewChannel), metadata: { parentId: channel.parentId,
+      const ctx = await context(), channels = channelsRaw.map(value => {
+        const channel = parseChannel(value, guildId);
+        if (channel?.kind === 'voice' && channel.parentId && fixedCategories.has(channel.parentId)) {
+          const limit = raw(value).user_limit;
+          if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 99) throw invalid();
+        }
+        return channel;
+      }).filter((value): value is Channel => value !== null);
+      const resources: CommunityDiscordResource[] = channels.map(channel => {
+        const metadata: Record<string, unknown> = { parentId: channel.parentId,
           ...(channel.kind === 'text' ? { publicView: has(channelPermissions({ id: '0', name: '', bot: false, roleIds: [], joinedAt: null }, channel, ctx, guildId), P.ViewChannel) } : {}),
-          ...(channel.kind === 'voice' ? { userLimit: channel.userLimit } : {}) } }));
+          ...(channel.kind === 'voice' ? { userLimit: channel.userLimit } : {}) };
+        if (channel.kind === 'voice' && channel.parentId && fixedCategories.has(channel.parentId)) {
+          const present = occupants(channel.id); if (present === null) throw unavailable();
+          const everyone = channelPermissions({ id: '0', name: '', bot: false, roleIds: [], joinedAt: null }, channel, ctx, guildId);
+          metadata.defaultVisibility = !has(everyone, P.ViewChannel) ? 'hidden' : has(everyone, P.Connect) ? 'open' : 'locked';
+          metadata.viewableMemberIds = members.filter(member => has(channelPermissions(member, channel, ctx, guildId), P.ViewChannel)).map(member => member.id);
+          metadata.presentMemberIds = [...present];
+        }
+        return { id: channel.id, name: channel.name, kind: channel.kind,
+          available: has(channelPermissions(ctx.self, channel, ctx, guildId), P.ViewChannel), metadata };
+      });
       for (const role of ctx.roles.values()) resources.push({ id: role.id, name: role.name, kind: 'role', available: true, safe: safeRole(role, ctx, guildId),
         metadata: { managed: role.managed, position: role.position, unsafePermissions: (role.permissions & DANGEROUS) !== 0n } });
       for (const member of members) resources.push({ id: member.id, name: member.name, kind: 'member', available: true });
       return { ready: true, guildName: ctx.guildName, selfId: ctx.selfId, resources, members: members.map(member => memberView(member, ctx, guildId)) };
     },
-    async member(memberId) { const ctx = await context(), member = await readMember(memberId); return member ? memberView(member, ctx, guildId) : null; },
+    async member(memberId) { assertReady(); const [ctx, member] = await Promise.all([context(), readMember(memberId)]); return member ? memberView(member, ctx, guildId) : null; },
     async channel(channelId) { assertReady(); const channel = await readChannel(channelId); return channel ? publicChannel(channel) : null; },
     inspectRoom,
     canView: (memberId, channelId) => access(memberId, channelId, false),
@@ -356,7 +375,14 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       if (!has(channelPermissions(ctx.self, parent, ctx, guildId), CHANNEL_MANAGEMENT | P.ManageRoles)
         || !has(guildPermissions(ctx.self, ctx, guildId), P.ViewAuditLog)) throw forbidden();
       const owner = await currentMember(ownerId, ctx); if (owner.bot) throw forbidden();
-      const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility); assertReady();
+      const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility);
+      // Discord's create-channel API only permits overwriting permissions the
+      // bot holds guild-wide. A category-only grant must not make the primary
+      // room creation fail; missing card permissions are diagnosed separately.
+      const bot = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === ctx.selfId)!;
+      const retained = channelPermissions(ctx.self, parent, ctx, guildId) & guildPermissions(ctx.self, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS;
+      bot.allow = (BigInt(bot.allow) | retained).toString();
+      assertReady();
       const created = raw(await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
         parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker }));
       if (created.type !== ChannelType.GuildVoice || created.guild_id !== guildId) throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true);
@@ -403,6 +429,26 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles);
       await currentMember(ownerId, ctx); const permission_overwrites = visibilityOverwrites(channel, ctx, ownerId, visibility);
       assertReady(); await request('patch', Routes.channel(channelId), { body: { permission_overwrites }, reason: 'community room visibility' });
+    },
+    async setFixedVisibility(channelId, visibility, managerIds) {
+      const ids = [...new Set(managerIds)]; for (const memberId of ids) validateId(memberId);
+      const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles);
+      // Fixed rooms have no owner. Keep every existing member overwrite; only
+      // retain access a named manager already has before changing the default.
+      const permission_overwrites = visibilityOverwrites(channel, ctx, undefined, visibility);
+      const managers = await Promise.all(ids.map(memberId => currentMember(memberId, ctx)));
+      for (const manager of managers) {
+        if (manager.bot) throw forbidden();
+        const permissions = channelPermissions(manager, channel, ctx, guildId);
+        const retained = has(permissions, P.ViewChannel) ? permissions & ACCESS : 0n;
+        if (retained === 0n) continue;
+        const previous = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === manager.id);
+        if (previous) {
+          previous.allow = (BigInt(previous.allow) | retained).toString();
+          previous.deny = (BigInt(previous.deny) & ~retained).toString();
+        } else permission_overwrites.push({ id: manager.id, type: 1, allow: retained.toString(), deny: '0' });
+      }
+      assertReady(); await request('patch', Routes.channel(channelId), { body: { permission_overwrites }, reason: 'community fixed room visibility' });
     },
     async grant(channelId, memberId) {
       const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles); const member = await currentMember(memberId, ctx);
@@ -505,12 +551,11 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
           }
         }
         if (!complete) throw new CommunityDiscordError(503, '控制卡消息历史尚未完整核对');
-        // Discord can return [] when ReadMessageHistory was revoked mid-scan.
-        // Such an empty response is not proof that posting a new card is safe.
-        await check();
         if (matches.length > 1) throw new CommunityDiscordError(409, '找到多张房间控制卡，请管理员检查');
         previous = matches[0] ?? null;
       }
+      // Discord can return [] when ReadMessageHistory was revoked mid-scan.
+      // Recheck once here, after all reads and immediately before any write.
       await check();
       assertReady();
       if (previous) {

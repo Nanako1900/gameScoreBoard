@@ -3,6 +3,8 @@ import { isCommunityRef, parseCommunitySettings, type CommunityJson, type Commun
 import { CommunityDiscordError, type CommunityDiscord } from './discord';
 import { planRoomMaintenance } from './room-plan';
 import { safeCommunityText } from './security';
+import { fixedManagerRefs, isFixedRoom, syncFixedRooms } from './fixed-rooms';
+import { canControlRoom } from './room-policy';
 import { CommunityStore, CommunityStoreError, type CommunityActor, type CommunityJsonObject, type RoomPatch, type StoredOperation, type StoredResource, type StoredRoom } from './store';
 
 export interface CommunityExecutionActor { memberRef: string | null; isAdmin: boolean }
@@ -27,6 +29,8 @@ export class CommunityEngine {
   private pending: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private lastSync = 0;
+  private snapshotRevision = 0;
+  private readonly pendingEntrances = new Map<string, string>();
   private panelWork: Promise<void> | undefined;
   private panelRequested = false;
   private readonly now: () => number;
@@ -50,14 +54,19 @@ export class CommunityEngine {
     this.stopped = false; await this.sync();
     if (!this.timer) { this.timer = setInterval(() => { void this.tick().catch(error => this.options.onError?.(error)); }, this.options.intervalMs ?? 5000); this.timer.unref?.(); }
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; this.pendingEntrances.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  /** Gateway resource changes invalidate even an already-running census. */
+  invalidateSnapshot(): void { this.snapshotRevision += 1; }
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
   private async syncNow(): Promise<boolean> {
+    const revision = this.snapshotRevision;
     try {
       if (this.options.isReadOnly?.()) { await this.store.setRuntime({ ready: false, problem: 'read_only' }); return false; }
       const continuous = this.lastSync !== 0 && (await this.store.runtime()).ready;
       if (!continuous) await this.store.setRuntime({ ready: false, problem: 'bot_offline' });
-      const snapshot = await this.discord.snapshot();
+      const configuration = (await this.store.settings()).settings;
+      const fixedCategories = (await Promise.all((configuration.rooms.fixedCategoryRefs ?? []).map(ref => this.store.resource(ref, 'category')))).filter((category): category is StoredResource => !!category?.available);
+      const snapshot = await this.discord.snapshot(fixedCategories.map(category => category.externalId));
       if (!snapshot.ready) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       const seen: string[] = [];
       const members = new Map(snapshot.members.map(member => [member.id, member]));
@@ -74,6 +83,7 @@ export class CommunityEngine {
       // Only a complete REST snapshot can make a former resource unavailable.
       await this.store.pool.query('UPDATE community_resources SET available=false WHERE guild_id=$1 AND NOT(ref=ANY($2::uuid[]))', [this.store.guildId, seen]);
       await this.store.recoverExpired();
+      if ((configuration.rooms.fixedCategoryRefs ?? []).length || (await this.store.listRooms()).some(isFixedRoom)) await syncFixedRooms(this.store, snapshot, configuration);
       // Expired executors may have changed access just before crashing. Hide
       // unconfirmed rooms before publishing a new ready snapshot.
       for (const room of await this.store.listRooms()) {
@@ -86,8 +96,11 @@ export class CommunityEngine {
         if (room.status === 'active' && (room.emptySince || room.cleanupAt || room.ownerLeftAt))
           await this.store.patchRoom(room.ref, { emptySince: null, cleanupAt: null, ownerLeftAt: null }, room.version);
       }
+      if (revision !== this.snapshotRevision) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       await this.store.setRuntime({ ready: true, syncedAt: iso(this.now()), problem: null });
+      if (revision !== this.snapshotRevision) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       this.lastSync = this.now();
+      await this.drainPendingEntrances();
       this.refreshPanels();
       return true;
     } catch (error) { await this.store.setRuntime({ ready: false, problem: error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'bot_offline' }); this.options.onError?.(error); return false; }
@@ -182,7 +195,9 @@ export class CommunityEngine {
       await this.store.patchRoom(room.ref, { status: 'closed', cleanupAt: null, transferToRef: null, transferExpiresAt: null }, room.version);
       return fail('resource_missing', '房间已在 Discord 删除');
     }
-    const category = await this.resource(settings.rooms.categoryRef, 'category');
+    const categoryRef = isFixedRoom(room) && typeof room.metadata.categoryRef === 'string' ? room.metadata.categoryRef : settings.rooms.categoryRef;
+    const category = await this.resource(categoryRef, 'category');
+    if (isFixedRoom(room) && !(settings.rooms.fixedCategoryRefs ?? []).includes(category.ref)) fail('resource_missing', '固定房已停止管理');
     if (channel.kind !== 'voice' || channel.parentId !== category.externalId) {
       if (room.status !== 'needs_review') await this.store.patchRoom(room.ref, { status: 'needs_review' }, room.version);
       return fail('resource_missing', '房间已移出受管范围');
@@ -210,12 +225,16 @@ export class CommunityEngine {
     const guard = async (): Promise<void> => {
       const current = await this.authority(op); checkedActor = current;
       if (requiredAdmin && !current.isAdmin) fail('not_owner', '管理员权限已变化', 403);
-      if (op.actor.source !== 'system' && current.memberRef) await this.member(current.memberRef);
+      if (op.actor.source !== 'system' && current.memberRef && (!executionRoom || current.isAdmin)) await this.member(current.memberRef);
       if (executionRoom) {
         const latest = await this.store.getRoom(executionRoom.ref);
         if (!latest || latest.status !== 'active' || latest.version !== executionRoom.version) fail('version_conflict', '房间已变化');
         const action = op.kind.slice(5);
-        if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !current.isAdmin && latest.ownerRef !== current.memberRef) fail('not_owner', '房主或权限已变化', 403);
+        if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !canControlRoom(current, latest)) fail('not_owner', '房间管理权限已变化', 403);
+        if (op.actor.source !== 'system' && !current.isAdmin) {
+          const member = await this.resource(current.memberRef, 'member'), channel = latest.channelRef ? await this.store.resource(latest.channelRef, 'voice') : null;
+          if (member.metadata.bot === true || !channel || !await this.discord.canView(member.externalId, channel.externalId)) fail('resource_missing', '房间已不可见', 404);
+        }
       }
     };
     const effect = async <T>(work: () => Promise<T>): Promise<T> => { await guard(); const result = await work(); changed = true; return result; };
@@ -264,11 +283,24 @@ export class CommunityEngine {
           if (op.expectedVersion !== null && room.version !== op.expectedVersion) fail('version_conflict', '房间已变化');
           executionRoom = { ...room };
           const action = op.kind.slice(5), channel = await this.managed(room, settings);
-          requiredAdmin = action === 'admin_delete';
+          requiredAdmin = action === 'managers';
           const current = actor.memberRef ? await this.member(actor.memberRef) : null;
-          if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !actor.isAdmin && room.ownerRef !== actor.memberRef) fail('not_owner', '当前账号没有房间管理权限', 403);
+          if (isFixedRoom(room) && ['cleanup', 'dissolve', 'admin_delete', 'transfer', 'accept', 'claim'].includes(action)) fail('invalid_input', '固定房不提供回收、解散或房主转让', 400);
+          if (action === 'managers' && (!actor.isAdmin || !isFixedRoom(room))) fail('not_owner', '只有网页管理员可分配固定房管理员', 403);
+          if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !canControlRoom(actor, room)) fail('not_owner', '当前账号没有房间管理权限', 403);
+          if (op.actor.source !== 'system' && !actor.isAdmin && (!current || !await this.discord.canView(current.id, channel.externalId))) fail('resource_missing', '房间已不可见', 404);
           let patch: RoomPatch = {};
-          if (action === 'join') {
+          if (action === 'managers') {
+            if (!Array.isArray(payload.discordIds) || payload.discordIds.length > 20 || payload.discordIds.some(id => typeof id !== 'string' || !/^\d{17,20}$/.test(id))) fail('invalid_input', 'Discord 用户 ID 无效', 400);
+            const managerRefs: string[] = [];
+            for (const id of [...new Set(payload.discordIds as string[])]) {
+              await guard(); const target = await this.discord.member(id);
+              if (!target || target.bot || !await this.discord.canView(id, channel.externalId)) fail('membership_required', '目标成员不在服务器内或无法查看固定房间', 400);
+              const member = await this.store.upsertResource('member', id, safeCommunityText(target.name), { available: true, metadata: { bot: false, protected: target.protected, roleIds: target.roleIds, joinedAt: target.joinedAt } });
+              managerRefs.push(member.ref);
+            }
+            patch = { metadata: { ...room.metadata, managerRefs } };
+          } else if (action === 'join') {
             if (!current || !this.discord.channelOf(current.id)) fail('membership_required', '请先连接语音频道', 403);
             if (payload.creatorOnly === true) {
               if (room.ownerRef !== actor.memberRef) fail('not_owner', '房主已变化', 403);
@@ -290,7 +322,17 @@ export class CommunityEngine {
             await effect(() => this.discord.setLimit(channel.externalId, payload.userLimit as number)); patch.userLimit = payload.userLimit;
           } else if (action === 'visibility') {
             if (!['open', 'locked', 'hidden'].includes(String(payload.visibility))) fail('invalid_input', '可见性无效', 400);
-            const owner = await this.member(room.ownerRef); await effect(() => this.discord.setVisibility(channel.externalId, owner.id, payload.visibility as StoredRoom['visibility'])); patch.visibility = payload.visibility as StoredRoom['visibility'];
+            if (isFixedRoom(room)) {
+              if (!this.discord.setFixedVisibility) fail('permissions_missing', '固定房访问控制暂不可用');
+              const managers = (await Promise.all(fixedManagerRefs(room).map(ref => this.store.resource(ref, 'member')))).filter(member => member?.available).map(member => member!.externalId);
+              if (current) managers.push(current.id);
+              await effect(() => this.discord.setFixedVisibility!(channel.externalId, payload.visibility as StoredRoom['visibility'], [...new Set(managers)]));
+            } else {
+              const anchor = await this.member(current?.resource.ref ?? room.ownerRef);
+              await effect(() => this.discord.setVisibility(channel.externalId, anchor.id, payload.visibility as StoredRoom['visibility']));
+              await this.store.setRoomAccess(room.ref, anchor.resource.ref, { allowed: true, blocked: false });
+            }
+            patch.visibility = payload.visibility as StoredRoom['visibility'];
           } else if (['grant', 'deny', 'kick', 'transfer'].includes(action)) {
             const target = await this.member(typeof payload.memberRef === 'string' ? payload.memberRef : null);
             if (['deny', 'kick'].includes(action) && (target.protected || target.resource.ref === room.ownerRef)) fail('not_owner', '不能移除此成员', 403);
@@ -322,7 +364,7 @@ export class CommunityEngine {
           } else if (['dissolve', 'admin_delete', 'cleanup'].includes(action)) {
             let occupants = this.discord.occupants(channel.externalId); if (!occupants) fail('bot_offline', '语音状态尚未就绪');
             if (action === 'admin_delete') {
-              if (!actor.isAdmin || payload.confirm !== true) fail('not_owner', '需要管理员明确确认', 403);
+              if (!canControlRoom(actor, room) || payload.confirm !== true) fail('not_owner', '需要明确确认', 403);
               const waiting = await this.resource(settings.rooms.waitingRef, 'voice');
               if (waiting.externalId === channel.externalId || settings.rooms.waitingRef === settings.rooms.creatorRef) fail('invalid_input', '等候区配置无效');
               for (const id of occupants) {
@@ -340,7 +382,9 @@ export class CommunityEngine {
               await this.discord.delete(channel.externalId);
             }); patch.status = 'closed';
           } else fail('invalid_input', '不支持此房间操作', 400);
-          await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version); executionRoom = null;
+          await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version);
+          if (action === 'managers') changed = true;
+          executionRoom = null;
           result = { roomRef: room.ref };
         } else if (this.options.executeExtra) { result = await effect(() => this.options.executeExtra!(op, checkedActor ?? actor, guard)); }
         else fail('invalid_input', '不支持此操作', 400);
@@ -376,12 +420,17 @@ export class CommunityEngine {
     }
     if (config.enabled && config.welcome.enabled) { const channel = await this.resource(config.welcome.channelRef, 'text'); if (channel.metadata.publicView !== true) fail('permissions_missing', '欢迎频道必须向全体成员公开'); }
     for (const ref of config.roles.allowedRefs) if (!(await this.resource(ref, 'role')).safe) fail('permissions_missing', '身份白名单包含不安全身份');
+    for (const ref of config.rooms.fixedCategoryRefs ?? []) await this.resource(ref, 'category');
   }
-  private async maintenance(): Promise<void> {
+  private async maintenance(channelIds?: ReadonlySet<string>): Promise<void> {
     if (!(await this.store.runtime()).ready) return;
     const settings = (await this.store.settings()).settings;
     for (let room of await this.store.listRooms()) {
-      if (room.status !== 'active') continue;
+      if (room.status !== 'active' || isFixedRoom(room)) continue;
+      if (channelIds) {
+        const channel = room.channelRef ? await this.store.resource(room.channelRef, 'voice') : null;
+        if (!channel || !channelIds.has(channel.externalId)) continue;
+      }
       let channel: StoredResource; try { channel = await this.managed(room, settings); } catch { continue; }
       const occupants = this.discord.occupants(channel.externalId); if (!occupants) continue;
       const refs: string[] = [];
@@ -396,25 +445,57 @@ export class CommunityEngine {
       if (room.transferExpiresAt && Date.parse(room.transferExpiresAt) <= this.now()) await this.store.patchRoom(room.ref, { transferToRef: null, transferExpiresAt: null }, room.version);
     }
   }
-  onVoice(memberId: string, channelId?: string | null): Promise<void> { return this.serial(async () => {
-    if (this.stopped || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
-    await this.maintenance();
-    this.refreshPanels();
-    const config = (await this.store.settings()).settings;
-    if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) return;
-    const creator = await this.resource(config.rooms.creatorRef, 'voice'); if (channelId !== creator.externalId || this.discord.channelOf(memberId) !== creator.externalId) return;
-    const member = await this.discord.member(memberId); if (!member || member.bot) return;
-    const resource = await this.store.upsertResource('member', member.id, safeCommunityText(member.name), { available: true, metadata: { bot: false, protected: member.protected, roleIds: member.roleIds, joinedAt: member.joinedAt } });
-    const rooms = await this.store.listRooms({ includeClosed: true }); const active = rooms.find(room => room.ownerRef === resource.ref && room.status !== 'closed');
-    if (active) {
-      if (active.status === 'active') {
-        await this.store.enqueue('room.join', active.ref, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-return:${resource.ref}:${randomUUID()}`, active.version);
-        await this.runNow();
+  private async admitCreator(memberId: string, channelId: string | null | undefined, config: CommunitySettings): Promise<void> {
+    if (config.enabled && config.rooms.enabled && config.rooms.creatorRef) {
+      const creator = await this.resource(config.rooms.creatorRef, 'voice');
+      if (channelId === creator.externalId && this.discord.channelOf(memberId) === creator.externalId) {
+        const member = await this.discord.member(memberId);
+        if (member && !member.bot) {
+          const resource = await this.store.upsertResource('member', member.id, safeCommunityText(member.name), { available: true, metadata: { bot: false, protected: member.protected, roleIds: member.roleIds, joinedAt: member.joinedAt } });
+          const rooms = await this.store.listRooms({ includeClosed: true }); const active = rooms.find(room => room.ownerRef === resource.ref && room.status !== 'closed');
+          if (active?.status === 'active') {
+            await this.store.enqueue('room.join', active.ref, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-return:${resource.ref}:${randomUUID()}`, active.version);
+            await this.runNow();
+          } else if (!active) {
+            await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
+            await this.runNow();
+          }
+        }
       }
+    }
+  }
+  private async drainPendingEntrances(): Promise<void> {
+    if (!this.pendingEntrances.size || this.stopped || this.options.isReadOnly?.()) return;
+    const config = (await this.store.settings()).settings;
+    if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) { this.pendingEntrances.clear(); return; }
+    const creator = await this.store.resource(config.rooms.creatorRef, 'voice');
+    if (!creator?.available) return;
+    const occupants = this.discord.occupants(creator.externalId); if (occupants === null) return;
+    // Retry only actual events received during invalidation. A startup census
+    // must not create rooms for everyone it happens to find in the entrance.
+    for (const [memberId, channelId] of this.pendingEntrances) {
+      if (this.stopped || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
+      this.pendingEntrances.delete(memberId);
+      if (channelId !== creator.externalId || !occupants.includes(memberId) || this.discord.channelOf(memberId) !== creator.externalId) continue;
+      try { await this.admitCreator(memberId, channelId, config); }
+      catch (error) { this.options.onError?.(error); }
+    }
+  }
+  onVoice(memberId: string, channelId?: string | null, previousChannelId?: string | null): Promise<void> { return this.serial(async () => {
+    this.pendingEntrances.delete(memberId);
+    if (this.stopped || this.options.isReadOnly?.()) return;
+    const config = (await this.store.settings()).settings;
+    if (!(await this.store.runtime()).ready) {
+      const creator = config.enabled && config.rooms.enabled && config.rooms.creatorRef ? await this.store.resource(config.rooms.creatorRef, 'voice') : null;
+      if (!this.stopped && creator && channelId === creator.externalId) this.pendingEntrances.set(memberId, channelId);
       return;
     }
-    await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
-    await this.runNow();
+    await this.admitCreator(memberId, channelId, config);
+    // A Gateway move only concerns its source and destination. The periodic
+    // sweep still checks every managed room and deletion always reads reality.
+    const affected = new Set([previousChannelId, channelId].filter((value): value is string => typeof value === 'string'));
+    if (affected.size) await this.maintenance(affected);
+    this.refreshPanels();
   }); }
   async onMemberJoin(memberId: string): Promise<void> { if (!this.stopped) await this.options.welcome?.(memberId); }
 }

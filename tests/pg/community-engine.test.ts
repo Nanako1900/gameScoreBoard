@@ -63,6 +63,16 @@ function queue(kind: string, roomRef: string | null = null, payload: CommunityJs
 async function room() { const value = await store.createRoom(ownerRef, '小屋', { channelRef }); return store.patchRoom(value.ref, { status: 'active' }, value.version); }
 const latest = (ref: string) => store.getOperation(ref);
 
+it('quarantines a manager assignment if Nanako administrator authority is revoked after its database write', async () => {
+  let fixed = await room(); fixed = await store.patchRoom(fixed.ref, {ownerRef: null, metadata: {kind: 'fixed', categoryRef: (await store.resourceByExternal('category', CATEGORY))!.ref, managerRefs: []}}, fixed.version);
+  const settings = (await store.settings()).settings; settings.rooms.fixedCategoryRefs = [fixed.metadata.categoryRef as string];
+  await store.saveSettings(settings, 1); await store.setRuntime({ready: true, appliedVersion: 2});
+  const patch = store.patchRoom.bind(store);
+  vi.spyOn(store, 'patchRoom').mockImplementationOnce(async (...args) => {const changed = await patch(...args); await pool.query("UPDATE users SET is_admin=0 WHERE id='admin'"); return changed;});
+  const op = await queue('room.managers', fixed.ref, {discordIds: [OTHER]}, fixed.version, {source: 'web', userId: 'admin', memberRef: adminRef});
+  await engine.runOne(); expect((await latest(op.ref))!.status).toBe('needs_review'); expect((await store.getRoom(fixed.ref))!.status).toBe('needs_review');
+});
+
 it('returns an owner from the creator to the existing room through a durable operation', async () => {
   const value = await room(); await engine.onVoice(OWNER, CREATOR);
   expect(discord.createVoice).not.toHaveBeenCalled(); expect(positions.get(OWNER)).toBe(CHANNEL);
@@ -151,11 +161,11 @@ it('retains an occupied room when a later waiting-room move fails during admin c
   expect(positions.get(OWNER)).toBe(WAITING); expect(positions.get(OTHER)).toBe(CHANNEL); expect(discord.delete).not.toHaveBeenCalled();
 });
 
-it.each(['admin', 'binding'])('rechecks current %s authority between every forced move', async change => {
+it.each(['visibility', 'binding'])('rechecks current %s authority between every forced move', async change => {
   const value = await room(); positions.set(OWNER, CHANNEL); positions.set(OTHER, CHANNEL);
   vi.mocked(discord.move).mockImplementationOnce(async (id, target) => {
     positions.set(id, target);
-    if (change === 'admin') await pool.query("UPDATE users SET is_admin=0 WHERE id='admin'");
+    if (change === 'visibility') { await pool.query("UPDATE users SET is_admin=0 WHERE id='admin'"); vi.mocked(discord.canView).mockResolvedValue(false); }
     else await pool.query("DELETE FROM discord_links WHERE user_id='admin'");
   });
   const op = await queue('room.admin_delete', value.ref, { confirm: true }, value.version, { source: 'web', userId: 'admin', memberRef: adminRef });

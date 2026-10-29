@@ -1,9 +1,11 @@
-import type { CommunityDiscord } from './discord';
+import { CommunityDiscordError, type CommunityDiscord } from './discord';
 import { renderRoomPanel } from './room-panel';
+import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
 import type { CommunityStore } from './store';
 
 interface PanelOptions { now?: () => number; isReadOnly?: () => boolean; onError?: (error: unknown) => void }
 interface LastPanel { fingerprint: string; checkedAt: number; retryAt: number }
+class PanelStateChanged extends Error {}
 
 /** Presentation has its own retry state. A missing card must never turn a
  * successful room creation into uncertain work or change its ownership/version.
@@ -20,25 +22,30 @@ export class CommunityRoomPanels {
     if (!this.discord.syncRoomPanel || this.options.isReadOnly?.()) return;
     const { settings, version, runtime } = await this.store.settings();
     if (!runtime.ready || runtime.appliedVersion !== version) return;
-    const category = settings.rooms.categoryRef ? await this.store.resource(settings.rooms.categoryRef, 'category') : null;
-    if (!category?.available) return;
     const rooms = await this.store.listRooms();
     const active = new Set(rooms.filter(room => room.status === 'active').map(room => room.ref));
     for (const ref of this.last.keys()) if (!active.has(ref)) this.last.delete(ref);
+    // New rooms get their first card before routine checks of older cards.
+    const channels = new Map(await Promise.all(rooms.map(async room => [room.ref, room.channelRef ? await this.store.resource(room.channelRef, 'voice') : null] as const)));
+    rooms.sort((a, b) => Number(!!channels.get(a.ref)?.metadata.roomPanelMessageId) - Number(!!channels.get(b.ref)?.metadata.roomPanelMessageId));
     for (const room of rooms) {
       if (room.status !== 'active' || !room.channelRef || this.options.isReadOnly?.()) continue;
       const previous = this.last.get(room.ref), now = this.now();
       if (previous && previous.retryAt > now) continue;
       try {
-        const channel = await this.store.resource(room.channelRef, 'voice');
+        const channel = channels.get(room.ref);
         if (!channel?.available) continue;
+        const categoryRef = isFixedRoom(room) && typeof room.metadata.categoryRef === 'string' ? room.metadata.categoryRef : settings.rooms.categoryRef;
+        if (isFixedRoom(room) && !(settings.rooms.fixedCategoryRefs ?? []).includes(categoryRef ?? '')) continue;
+        const category = categoryRef ? await this.store.resource(categoryRef, 'category') : null; if (!category?.available) continue;
         const people = this.discord.occupants(channel.externalId); if (people === null) continue;
         const owner = room.ownerRef ? await this.store.resource(room.ownerRef, 'member') : null;
         const body = renderRoomPanel({ roomRef: room.ref, name: room.name, ownerName: owner?.name ?? '房主暂不可用',
           occupantCount: people.length, userLimit: room.userLimit, visibility: room.visibility, cleanupAt: room.cleanupAt,
           emptyGraceSeconds: settings.rooms.emptyGraceSeconds, claimable: !!room.ownerLeftAt &&
             now >= Date.parse(room.ownerLeftAt) + settings.rooms.ownerGraceSeconds * 1000 && !!people.length && (!owner || !people.includes(owner.externalId)),
-          transferPending: !!room.transferToRef && !!room.transferExpiresAt && Date.parse(room.transferExpiresAt) > now });
+          transferPending: !!room.transferToRef && !!room.transferExpiresAt && Date.parse(room.transferExpiresAt) > now,
+          kind: isFixedRoom(room) ? 'fixed' : 'temporary', managerNames: (await Promise.all(fixedManagerRefs(room).map(ref => this.store.resource(ref, 'member')))).filter(member => member?.available).map(member => member!.name) });
         const fingerprint = JSON.stringify([channel.externalId, body]);
         if (previous?.fingerprint === fingerprint && now - previous.checkedAt < 60_000) continue;
         // A directory entry is only a read model. Never post into a manually
@@ -51,20 +58,28 @@ export class CommunityRoomPanels {
           const currentRoom = await this.store.getRoom(room.ref), config = await this.store.settings();
           if (this.options.isReadOnly?.() || !currentRoom || currentRoom.status !== 'active' || currentRoom.version !== room.version ||
             currentRoom.channelRef !== channel.ref || !config.runtime.ready || config.version !== version || config.runtime.appliedVersion !== version ||
-            config.settings.rooms.categoryRef !== category.ref) throw new Error('房间状态已变化，等待下一次同步');
+            (isFixedRoom(room) ? !(config.settings.rooms.fixedCategoryRefs ?? []).includes(category.ref) : config.settings.rooms.categoryRef !== category.ref)) throw new PanelStateChanged('房间状态已变化，等待下一次同步');
         };
         const messageId = await this.discord.syncRoomPanel(channel.externalId, room.ref,
           typeof channel.metadata.roomPanelMessageId === 'string' ? channel.metadata.roomPanelMessageId : null, body, category.externalId, beforeWrite);
-        if (channel.metadata.roomPanelMessageId !== messageId) {
+        if (channel.metadata.roomPanelMessageId !== messageId || channel.metadata.roomPanelProblem) {
           const latest = await this.store.resource(channel.ref, 'voice');
           if (!latest) continue;
           await this.store.upsertResource('voice', channel.externalId, latest.name, { available: latest.available,
-            metadata: { ...latest.metadata, roomPanelMessageId: messageId } });
+            metadata: { ...latest.metadata, roomPanelMessageId: messageId, roomPanelProblem: null } });
         }
         this.last.set(room.ref, { fingerprint, checkedAt: now, retryAt: 0 });
-      } catch {
-        this.last.set(room.ref, { fingerprint: previous?.fingerprint ?? '', checkedAt: previous?.checkedAt ?? 0, retryAt: now + 30_000 });
-        this.options.onError?.(new Error('房内控制卡暂未同步，将自动重试'));
+      } catch (error) {
+        const changed = error instanceof PanelStateChanged;
+        this.last.set(room.ref, { fingerprint: previous?.fingerprint ?? '', checkedAt: previous?.checkedAt ?? 0, retryAt: changed ? 0 : now + 30_000 });
+        if (changed || this.options.isReadOnly?.()) continue;
+        const code = error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : error instanceof CommunityDiscordError && error.status === 409 ? 'history_conflict' : 'unavailable';
+        const channel = channels.get(room.ref);
+        if (channel) try {
+          const latest = await this.store.resource(channel.ref, 'voice');
+          if (latest && latest.metadata.roomPanelProblem !== code) await this.store.upsertResource('voice', latest.externalId, latest.name, { available: latest.available, metadata: { ...latest.metadata, roomPanelProblem: code } });
+        } catch { /* Diagnostics cannot block a healthy room or overwrite its state. */ }
+        this.options.onError?.(new Error(code === 'permissions_missing' ? '房内控制卡缺少消息或历史权限，将自动重试' : '房内控制卡暂未同步，将自动重试'));
       }
     }
   }

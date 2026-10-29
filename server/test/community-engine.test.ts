@@ -32,6 +32,53 @@ function setup() {
 }
 
 describe('community room execution and reconciliation',()=>{
+  it('lets a visible ordinary member rename a temporary room without being its creator',async()=>{const s=setup();const r=await s.room();const op=await s.enqueue('room.rename',r.ref,{name:'共享房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(op.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledWith('channel','共享房')});
+  it('allows only assigned fixed-room managers and rejects the unassigned creator',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.other]};s.settings.rooms.fixedCategoryRefs=[s.category];const denied=await s.enqueue('room.rename',r.ref,{name:'拒绝'},r.version);await s.engine.runOne();expect(denied.status).toBe('failed');const allowed=await s.enqueue('room.rename',r.ref,{name:'固定房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(allowed.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledTimes(1)});
+  it('refuses every fixed-room deletion path including an old system cleanup',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.owner]};r.cleanupAt=new Date(s.now()-1000).toISOString();s.settings.rooms.fixedCategoryRefs=[s.category];s.setPresent([]);for(const action of ['cleanup','dissolve','admin_delete']){const op=await s.enqueue(`room.${action}`,r.ref,{confirm:true},r.version,action==='cleanup'?{source:'system'}:{source:'discord',memberRef:s.owner});await s.engine.runOne();expect(op.status).not.toBe('succeeded');}expect(s.discord.delete).not.toHaveBeenCalled()});
+  it('keeps a fixed empty room free of automatic cleanup and owner-absence timers',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[]};s.settings.rooms.fixedCategoryRefs=[s.category];s.setPresent([]);await s.engine.onVoice('owner','channel');expect(r.cleanupAt).toBeNull();expect(r.ownerLeftAt).toBeNull();expect(s.operations.some(op=>op.kind==='room.cleanup')).toBe(false)});
+  it('assigns fixed managers by administrator-entered Discord IDs and stores only mapped refs',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[]};s.settings.rooms.fixedCategoryRefs=[s.category];s.resources.get(s.other)!.externalId='333333333333333333';s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:true});const op=await s.enqueue('room.managers',r.ref,{discordIds:['333333333333333333']},r.version);await s.engine.runOne();expect(op.status).toBe('succeeded');expect(r.metadata.managerRefs).toEqual([s.other]);expect(JSON.stringify(op.result)).not.toContain('333333333333333333');expect(s.discord.grant).not.toHaveBeenCalled()});
+  it('retries a received entrance event after a fresh census restores readiness',async()=>{
+    const s=setup();let ready=false;
+    vi.mocked(s.store.runtime).mockImplementation(async()=>({ready}) as never);
+    vi.mocked(s.store.setRuntime).mockImplementation(async patch=>{if(patch.ready!==undefined)ready=patch.ready;});
+    await s.engine.onVoice('owner','creator','waiting');await s.engine.onVoice('owner','creator','waiting');
+    expect(s.discord.createVoice).not.toHaveBeenCalled();await s.engine.sync();
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();expect(s.discord.move).toHaveBeenCalledWith('owner','channel');
+  });
+  it('does not replay a pending entrance event after its member has left the entrance',async()=>{
+    const s=setup();let ready=false;
+    vi.mocked(s.store.runtime).mockImplementation(async()=>({ready}) as never);
+    vi.mocked(s.store.setRuntime).mockImplementation(async patch=>{if(patch.ready!==undefined)ready=patch.ready;});
+    await s.engine.onVoice('owner','creator','waiting');s.setPosition('waiting');s.setPresent([]);await s.engine.sync();
+    expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.discord.move).not.toHaveBeenCalled();
+  });
+  it('never treats everyone found in the entrance at startup as new entrance events',async()=>{
+    const s=setup();await s.engine.sync();expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.store.enqueue).not.toHaveBeenCalled();
+  });
+  it('creates from the entrance without looking up unrelated managed rooms first',async()=>{
+    const s=setup();await s.room();vi.mocked(s.discord.createVoice).mockResolvedValue('new-channel');
+    await s.engine.onVoice('other','creator','waiting');
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();
+    expect(s.discord.channel).not.toHaveBeenCalledWith('channel');
+    expect(s.discord.move).toHaveBeenCalledWith('other','new-channel');
+  });
+  it('does not scan unrelated rooms for a voice move outside managed rooms',async()=>{
+    const s=setup();await s.room();await s.engine.onVoice('other','waiting','creator');
+    expect(s.discord.channel).not.toHaveBeenCalled();expect(s.store.patchRoom).not.toHaveBeenCalled();
+  });
+  it('observes an affected room becoming empty and cancels its cleanup on a return',async()=>{
+    const s=setup();const room=await s.room();s.setPresent([]);s.setPosition(null);
+    await s.engine.onVoice('owner',null,'channel');
+    expect(room.emptySince).toBe(new Date(s.now()).toISOString());expect(Date.parse(room.cleanupAt!)).toBe(s.now()+120000);
+    s.setPresent(['owner']);s.setPosition('channel');await s.engine.onVoice('owner','channel','waiting');
+    expect(room.emptySince).toBeNull();expect(room.cleanupAt).toBeNull();
+  });
+  it('does not publish a census invalidated while its Discord snapshot was in flight',async()=>{
+    const s=setup();expect(s.engine.invalidateSnapshot).toBeTypeOf('function');const original=vi.mocked(s.discord.snapshot).getMockImplementation()!;
+    vi.mocked(s.discord.snapshot).mockImplementation(async()=>{s.engine.invalidateSnapshot();return original();});
+    expect(await s.engine.sync()).toBe(false);
+    expect(vi.mocked(s.store.setRuntime).mock.calls.some(([patch])=>patch.ready===true)).toBe(false);
+  });
   it('does not wait for a slow control card before creating a room',async()=>{const s=setup();let release!:()=>void;const pending=new Promise<void>(resolve=>{release=resolve});const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,now:s.now,syncPanels:()=>pending});const work=engine.onVoice('owner','creator');try{await vi.waitFor(()=>expect(s.discord.createVoice).toHaveBeenCalled(),{timeout:100,interval:5});}finally{release();await work;}});
   it('returns an owner entering the creator to their existing active room without creating again',async()=>{const s=setup();const r=await s.room();await s.engine.onVoice('owner','creator');expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.discord.move).toHaveBeenCalledWith('owner','channel');expect(s.operations[0]).toMatchObject({kind:'room.join',roomRef:r.ref,payload:{creatorOnly:true}})});
   it('does not execute a delayed return after the owner leaves the creator',async()=>{const s=setup();const r=await s.room();s.setPosition('waiting');const op=await s.enqueue('room.join',r.ref,{creatorOnly:true},r.version);await s.engine.runOne();expect(op.status).toBe('conflict');expect(s.discord.move).not.toHaveBeenCalled()});
@@ -56,7 +103,7 @@ describe('community room execution and reconciliation',()=>{
   it('stops further force-close effects if admin privileges are revoked mid-operation',async()=>{
     const s=setup();const room=await s.room();s.setPresent(['owner','other']);
     s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:true});
-    vi.mocked(s.discord.move).mockImplementation(async()=>{s.authorize.mockResolvedValue({memberRef:s.owner,isAdmin:false});});
+    vi.mocked(s.discord.move).mockImplementation(async()=>{s.authorize.mockResolvedValue({memberRef:null,isAdmin:false});});
     const op=await s.enqueue('room.admin_delete',room.ref,{confirm:true},room.version);await s.engine.runOne();
     expect(s.discord.move).toHaveBeenCalledTimes(1);expect(s.discord.delete).not.toHaveBeenCalled();expect(op.status).toBe('needs_review');
   });
