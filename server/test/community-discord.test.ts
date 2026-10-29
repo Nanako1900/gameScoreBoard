@@ -165,6 +165,41 @@ describe('community Discord resource adapter',()=>{
   it('rejects role overwrites that would bypass a lock rather than modifying manual role access',async()=>{
     const s=setup();s.channels.get(ROOM)!.permission_overwrites=[{id:FUN,type:0,allow:P.Connect.toString(),deny:'0'}];await expect(s.api.setVisibility(ROOM,OWNER,'locked')).rejects.toMatchObject({status:409});expect(s.patch).not.toHaveBeenCalled();
   });
+  it('updates fixed-room default access without inventing an owner or requiring an assigned manager', async () => {
+    const s = setup();
+    await s.api.setFixedVisibility!(ROOM, 'locked', []);
+    const overwrites = s.patch.mock.calls[0][1]!.body as { permission_overwrites: Array<{ id: string; type: number; allow: string; deny: string }> };
+    expect(overwrites.permission_overwrites.map(item => item.id).sort()).toEqual([G, SELF].sort());
+    expect(BigInt(overwrites.permission_overwrites.find(item => item.id === G)!.deny) & P.Connect).toBe(P.Connect);
+    expect(BigInt(overwrites.permission_overwrites.find(item => item.id === SELF)!.allow) & (P.ViewChannel | P.Connect)).toBe(P.ViewChannel | P.Connect);
+  });
+  it('preserves every original member override and only keeps a manager’s previous effective access', async () => {
+    const s = setup();
+    const original = { id: OTHER, type: 1, allow: P.ViewChannel.toString(), deny: (P.Connect | P.SendMessages).toString() };
+    s.channels.get(ROOM)!.permission_overwrites = [original];
+    await s.api.setFixedVisibility!(ROOM, 'hidden', [OWNER, OTHER]);
+    const { permission_overwrites: overwrites } = s.patch.mock.calls[0][1]!.body as { permission_overwrites: typeof original[] };
+    const owner = overwrites.find(item => item.id === OWNER)!;
+    expect(BigInt(owner.allow) & (P.ViewChannel | P.Connect)).toBe(P.ViewChannel | P.Connect);
+    const other = overwrites.find(item => item.id === OTHER)!;
+    expect(other).toEqual(original);
+    expect(BigInt(other.allow) & P.Connect).toBe(0n);
+    expect(BigInt(other.allow) & (P.ManageChannels | P.ManageRoles | P.Administrator)).toBe(0n);
+  });
+  it('does not grant an absent fixed-room manager new access or modify manual role rules', async () => {
+    const s = setup(); s.channels.get(ROOM)!.permission_overwrites = [{ id: OTHER, type: 1, allow: '0', deny: (P.ViewChannel | P.Connect).toString() }];
+    await s.api.setFixedVisibility!(ROOM, 'hidden', [OTHER]);
+    const { permission_overwrites: overwrites } = s.patch.mock.calls[0][1]!.body as { permission_overwrites: Array<{ id: string; allow: string; deny: string }> };
+    expect(overwrites.find(item => item.id === OTHER)).toMatchObject({ allow: '0', deny: (P.ViewChannel | P.Connect).toString() });
+    const t = setup(); t.channels.get(ROOM)!.permission_overwrites = [{ id: FUN, type: 0, allow: P.Connect.toString(), deny: '0' }];
+    await expect(t.api.setFixedVisibility!(ROOM, 'locked', [OWNER])).rejects.toMatchObject({ status: 409 });
+    expect(t.patch).not.toHaveBeenCalled();
+  });
+  it('requires fresh channel management permissions for a fixed visibility change', async () => {
+    const s = setup(); s.setBotPermissions(BASE);
+    await expect(s.api.setFixedVisibility!(ROOM, 'locked', [])).rejects.toMatchObject({ status: 403 });
+    expect(s.patch).not.toHaveBeenCalled();
+  });
   it('grants and denies only a current guild member’s view/connect access',async()=>{
     const s=setup();await s.api.grant(ROOM,OTHER);await s.api.deny(ROOM,OTHER);expect(s.put).toHaveBeenCalledTimes(2);
     expect((s.put.mock.calls[0] as unknown[])[1]).toMatchObject({body:{type:1,allow:(P.ViewChannel|P.Connect).toString()}});

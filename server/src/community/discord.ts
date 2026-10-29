@@ -59,6 +59,7 @@ export interface CommunityDiscord {
   rename(channelId: string, name: string): Promise<void>;
   setLimit(channelId: string, limit: number): Promise<void>;
   setVisibility(channelId: string, ownerId: string, visibility: CommunityVisibility): Promise<void>;
+  setFixedVisibility?(channelId: string, visibility: CommunityVisibility, managerIds: readonly string[]): Promise<void>;
   grant(channelId: string, memberId: string): Promise<void>;
   deny(channelId: string, memberId: string): Promise<void>;
   delete(channelId: string): Promise<void>;
@@ -295,7 +296,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     }
     throw new CommunityDiscordError(503, '成员目录尚未完整同步');
   }
-  function visibilityOverwrites(channel: Channel | null, ctx: Context, ownerId: string, visibility: CommunityVisibility): Overwrite[] {
+  function visibilityOverwrites(channel: Channel | null, ctx: Context, ownerId: string | undefined, visibility: CommunityVisibility): Overwrite[] {
     if (!['open', 'locked', 'hidden'].includes(visibility)) throw new CommunityDiscordError(400, '房间访问模式无效');
     const blocked = visibility === 'hidden' ? ACCESS : visibility === 'locked' ? P.Connect : 0n;
     const source = channel?.overwrites ?? [];
@@ -309,7 +310,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     };
     update(guildId, 0, visibility === 'hidden' ? 0n : visibility === 'locked' ? P.ViewChannel : ACCESS, blocked);
     update(ctx.selfId, 1, ACCESS, 0n);
-    update(ownerId, 1, ACCESS, 0n);
+    if (ownerId !== undefined) update(ownerId, 1, ACCESS, 0n);
     return output;
   }
   async function textChannel(channelId: string): Promise<{ ctx: Context; channel: Channel }> {
@@ -427,6 +428,26 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles);
       await currentMember(ownerId, ctx); const permission_overwrites = visibilityOverwrites(channel, ctx, ownerId, visibility);
       assertReady(); await request('patch', Routes.channel(channelId), { body: { permission_overwrites }, reason: 'community room visibility' });
+    },
+    async setFixedVisibility(channelId, visibility, managerIds) {
+      const ids = [...new Set(managerIds)]; for (const memberId of ids) validateId(memberId);
+      const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles);
+      // Fixed rooms have no owner. Keep every existing member overwrite; only
+      // retain access a named manager already has before changing the default.
+      const permission_overwrites = visibilityOverwrites(channel, ctx, undefined, visibility);
+      const managers = await Promise.all(ids.map(memberId => currentMember(memberId, ctx)));
+      for (const manager of managers) {
+        if (manager.bot) throw forbidden();
+        const permissions = channelPermissions(manager, channel, ctx, guildId);
+        const retained = has(permissions, P.ViewChannel) ? permissions & ACCESS : 0n;
+        if (retained === 0n) continue;
+        const previous = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === manager.id);
+        if (previous) {
+          previous.allow = (BigInt(previous.allow) | retained).toString();
+          previous.deny = (BigInt(previous.deny) & ~retained).toString();
+        } else permission_overwrites.push({ id: manager.id, type: 1, allow: retained.toString(), deny: '0' });
+      }
+      assertReady(); await request('patch', Routes.channel(channelId), { body: { permission_overwrites }, reason: 'community fixed room visibility' });
     },
     async grant(channelId, memberId) {
       const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles); const member = await currentMember(memberId, ctx);
