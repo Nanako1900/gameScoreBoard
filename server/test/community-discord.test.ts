@@ -85,6 +85,42 @@ describe('community Discord resource adapter',()=>{
     const bot=overwrites.find(o=>o.id===SELF)!;const owner=overwrites.find(o=>o.id===OWNER)!;const everyone=overwrites.find(o=>o.id===G)!;
     expect(BigInt(bot.allow)&(P.ViewChannel|P.Connect)).toBe(P.ViewChannel|P.Connect);expect(BigInt(owner.allow)&(P.ManageChannels|P.ManageRoles|P.Administrator)).toBe(0n);expect(BigInt(everyone.deny)&P.ViewChannel).toBe(P.ViewChannel);
   });
+  it('preserves message permissions granted to the bot only in the destination category', async () => {
+    const s = setup(), chat = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT & ~chat);
+    s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: chat.toString(), deny: '0' });
+    await s.api.createVoice(PARENT, '我的房间', OWNER, 'hidden', 6, OP);
+    const overwrites = s.post.mock.calls.find(([route]) => route === Routes.guildChannels(G))![1].body.permission_overwrites as Array<{ id: string; allow: string; deny: string }>;
+    expect(BigInt(overwrites.find(item => item.id === SELF)!.allow)).toBe(P.ViewChannel | P.Connect | chat);
+    expect(BigInt(overwrites.find(item => item.id === OWNER)!.allow)).toBe(P.ViewChannel | P.Connect);
+    expect(BigInt(overwrites.find(item => item.id === G)!.allow) & chat).toBe(0n);
+  });
+  it('copies only message permissions the bot effectively has in the category', async () => {
+    const s = setup(), chat = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+    s.roles.find(role => role.id === G)!.permissions = (BASE & ~chat).toString(); s.setBotPermissions(BOT & ~chat);
+    s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: P.SendMessages.toString(), deny: (P.ReadMessageHistory | P.EmbedLinks).toString() });
+    await s.api.createVoice(PARENT, '我的房间', OWNER, 'open', 0, OP);
+    const overwrites = s.post.mock.calls.find(([route]) => route === Routes.guildChannels(G))![1].body.permission_overwrites as Array<{ id: string; allow: string }>;
+    expect(BigInt(overwrites.find(item => item.id === SELF)!.allow) & chat).toBe(P.SendMessages);
+  });
+  it('reads the directory before one fresh context instead of fetching the same context twice', async () => {
+    const s = setup(); await s.api.snapshot();
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G))).toHaveLength(1);
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guild(G))).toHaveLength(1);
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildMember(G, SELF))).toHaveLength(1);
+    expect(s.get).toHaveBeenCalledTimes(5);
+  });
+  it.each(['member', 'managed', 'access'] as const)('starts independent %s reads while context is still in flight', async kind => {
+    const s = setup(), get = s.get.getMockImplementation()!;
+    let release!: () => void; const pendingContext = new Promise<void>(resolve => { release = resolve; });
+    s.get.mockImplementation(async (route, options) => { if (route === Routes.guild(G)) await pendingContext; return get(route, options); });
+    const work = kind === 'member' ? s.api.member(OWNER) : kind === 'managed' ? s.api.rename(ROOM, '新名字') : s.api.canConnect(OWNER, ROOM);
+    try {
+      if (kind !== 'managed') expect(s.get.mock.calls.some(([route]) => route === Routes.guildMember(G, OWNER))).toBe(true);
+      if (kind !== 'member') expect(s.get.mock.calls.some(([route]) => route === Routes.channel(ROOM))).toBe(true);
+    } finally { release(); await work; }
+    expect(s.get).toHaveBeenCalledTimes(kind === 'access' ? 5 : 4);
+  });
   it('refuses creation after fresh permission loss, with no Discord write',async()=>{
     const s=setup();s.setBotPermissions(BASE);await expect(s.api.createVoice(PARENT,'房间',OWNER,'open',0,OP)).rejects.toMatchObject({status:403});expect(s.post).not.toHaveBeenCalled();
   });
@@ -158,6 +194,12 @@ describe('voice-room persistent panel messages', () => {
     expect(s.get.mock.calls.some(([route]) => route === Routes.channelMessages(ROOM))).toBe(true);
     expect(s.post).toHaveBeenCalledWith(Routes.channelMessages(ROOM), { body });
     expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G)).length).toBeGreaterThanOrEqual(2);
+  });
+  it('uses one fresh context before and after history without an immediately duplicated check', async () => {
+    const s = roomPanelSetup(); await s.api.syncRoomPanel!(ROOM, OP, null, panel(), PARENT);
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G))).toHaveLength(2);
+    expect(s.get).toHaveBeenCalledTimes(9);
+    expect(s.post).toHaveBeenCalledTimes(1);
   });
   it('edits the previously recorded message and never posts a second card', async () => {
     const s = roomPanelSetup(); s.messages.set(MID, message());

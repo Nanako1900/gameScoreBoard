@@ -83,7 +83,8 @@ const ID = /^\d{17,20}$/;
 const OP = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const ACCESS = P.ViewChannel | P.Connect;
 const CHANNEL_MANAGEMENT = P.ViewChannel | P.ManageChannels;
-const ROOM_PANEL_PERMISSIONS = P.ViewChannel | P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+const ROOM_PANEL_MESSAGE_PERMISSIONS = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
+const ROOM_PANEL_PERMISSIONS = P.ViewChannel | ROOM_PANEL_MESSAGE_PERMISSIONS;
 const DANGEROUS = Object.entries(P).filter(([name]) => name.startsWith('Manage') || name.startsWith('Moderate') ||
   ['Administrator', 'KickMembers', 'BanMembers', 'ViewAuditLog', 'MentionEveryone', 'MoveMembers', 'MuteMembers', 'DeafenMembers'].includes(name))
   .reduce((all, [, bit]) => all | bit, 0n);
@@ -260,7 +261,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     return { name: channel.name, userLimit: channel.userLimit!, visibility, allowedMemberIds, blockedMemberIds };
   }
   async function managedChannel(channelId: string, required = CHANNEL_MANAGEMENT): Promise<{ ctx: Context; channel: Channel }> {
-    const ctx = await context(), channel = await readChannel(channelId);
+    assertReady(); const [ctx, channel] = await Promise.all([context(), readChannel(channelId)]);
     if (!channel) throw missing(); if (channel.kind !== 'voice' || !has(channelPermissions(ctx.self, channel, ctx, guildId), required)) throw forbidden();
     return { ctx, channel };
   }
@@ -318,7 +319,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     return { ctx, channel };
   }
   async function access(memberId: string, channelId: string, connect: boolean): Promise<boolean> {
-    const ctx = await context(), [member, channel] = await Promise.all([readMember(memberId), readChannel(channelId)]);
+    assertReady(); const [ctx, member, channel] = await Promise.all([context(), readMember(memberId), readChannel(channelId)]);
     if (!member || !channel) return false;
     return has(channelPermissions(member, channel, ctx, guildId), P.ViewChannel | (connect ? P.Connect : 0n));
   }
@@ -331,7 +332,6 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
   return {
     async snapshot() {
       if (!gateway()) return { ready: false, guildName: '', selfId: client.user?.id ?? '', resources: [], members: [] };
-      await context();
       const [channelsRaw, members] = await Promise.all([request('get', Routes.guildChannels(guildId)), memberList()]);
       if (!Array.isArray(channelsRaw)) throw invalid();
       const ctx = await context(), channels = channelsRaw.map(value => parseChannel(value, guildId)).filter((value): value is Channel => value !== null);
@@ -344,7 +344,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       for (const member of members) resources.push({ id: member.id, name: member.name, kind: 'member', available: true });
       return { ready: true, guildName: ctx.guildName, selfId: ctx.selfId, resources, members: members.map(member => memberView(member, ctx, guildId)) };
     },
-    async member(memberId) { const ctx = await context(), member = await readMember(memberId); return member ? memberView(member, ctx, guildId) : null; },
+    async member(memberId) { assertReady(); const [ctx, member] = await Promise.all([context(), readMember(memberId)]); return member ? memberView(member, ctx, guildId) : null; },
     async channel(channelId) { assertReady(); const channel = await readChannel(channelId); return channel ? publicChannel(channel) : null; },
     inspectRoom,
     canView: (memberId, channelId) => access(memberId, channelId, false),
@@ -356,7 +356,13 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       if (!has(channelPermissions(ctx.self, parent, ctx, guildId), CHANNEL_MANAGEMENT | P.ManageRoles)
         || !has(guildPermissions(ctx.self, ctx, guildId), P.ViewAuditLog)) throw forbidden();
       const owner = await currentMember(ownerId, ctx); if (owner.bot) throw forbidden();
-      const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility); assertReady();
+      const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility);
+      // Explicit room access overwrites replace category inheritance. Preserve
+      // only this bot's effective chat permissions so its control card remains
+      // usable when those permissions were granted in the category alone.
+      const bot = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === ctx.selfId)!;
+      bot.allow = (BigInt(bot.allow) | channelPermissions(ctx.self, parent, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS).toString();
+      assertReady();
       const created = raw(await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
         parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker }));
       if (created.type !== ChannelType.GuildVoice || created.guild_id !== guildId) throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true);
@@ -505,12 +511,11 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
           }
         }
         if (!complete) throw new CommunityDiscordError(503, '控制卡消息历史尚未完整核对');
-        // Discord can return [] when ReadMessageHistory was revoked mid-scan.
-        // Such an empty response is not proof that posting a new card is safe.
-        await check();
         if (matches.length > 1) throw new CommunityDiscordError(409, '找到多张房间控制卡，请管理员检查');
         previous = matches[0] ?? null;
       }
+      // Discord can return [] when ReadMessageHistory was revoked mid-scan.
+      // Recheck once here, after all reads and immediately before any write.
       await check();
       assertReady();
       if (previous) {
