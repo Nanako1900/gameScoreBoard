@@ -104,10 +104,13 @@ function CommunityContent({tab}:{tab:CommunityTab}) {
 }
 type Submit=(work:()=>Promise<{operation:CommunityOperationView}>)=>Promise<void>;
 function Rooms({data,disabled,submit}:{data:Data;disabled:boolean;submit:Submit}) {
- const [name,setName]=useState('');const personal=data.overview.me.linked&&!!data.overview.me.member;const own=data.rooms.find(room=>room.owner?.ref===data.overview.me.member?.ref);
- return <><div className={`community-card community-intro${!personal||own||!data.overview.settings.enabled||!data.overview.settings.rooms.enabled?' community-intro--single':''}`}><div><h2>{!personal?'社区房间管理':own?'你的房间在这里':'今晚，开一间房'}</h2><p>{!personal?'你可以管理已有房间。绑定 Discord 后，才能创建或加入语音房。':data.overview.settings.enabled&&data.overview.settings.rooms.enabled?`默认${{open:'公开可加入',locked:'锁门',hidden:'隐藏'}[data.overview.settings.rooms.visibility]}。每人最多一间`:'自助建房暂未开放，已有房间仍可管理'}；空房 {data.overview.settings.rooms.emptyGraceSeconds} 秒后回收。</p></div>{personal&&!own&&data.overview.settings.enabled&&data.overview.settings.rooms.enabled&&<form onSubmit={e=>{e.preventDefault();void submit(()=>communityApi.createRoom(name));}}><label>房间名字<input value={name} onChange={e=>setName(e.target.value)} maxLength={100} placeholder="例如：今晚随便玩"/></label><button className="community-button" disabled={disabled} type="submit">创建语音房</button><small>创建前请先连接服务器内的语音频道。</small></form>}</div>
- <div className="community-section-title"><h2>现在的房间</h2><span>{data.rooms.length} 间可见</span></div>
- {data.rooms.length===0?<div className="community-empty">还没有可见房间。也可以加入 Discord 的建房入口频道。</div>:<div className="community-room-grid">{data.rooms.map(room=><RoomCard key={room.ref} room={room} data={data} disabled={disabled} submit={submit}/>)}</div>}</>;
+ const member=data.overview.me.member?.ref;const personal=data.overview.me.linked&&!!member;
+ const enabled=data.overview.settings.enabled&&data.overview.settings.rooms.enabled;
+ const rooms=data.rooms.filter(room=>room.status!=='closed'&&(data.overview.me.isAdmin||room.owner?.ref===member||room.members.some(person=>person.ref===member)||room.canClaim||room.transferTo?.ref===member));
+ const seconds=data.overview.settings.rooms.emptyGraceSeconds;const grace=seconds%60===0?`${seconds/60} 分钟`:`${seconds} 秒`;
+ return <><div className="community-card"><div><h2>{!personal?'社区房间管理':enabled?'进入语音，房间就准备好了':'已有房间仍可管理'}</h2>{!personal?<p>这里保留全部受管房间，方便管理员处理。成员日常建房和管理都在 Discord 完成。</p>:enabled?<ol className="community-room-steps"><li>进入服务器指定的「新建临时房间」语音频道。</li><li>机器人自动建房并把你移入，房内聊天会出现控制卡。</li><li>改名、调整人数和访问方式，都可以直接在房内控制卡完成。</li></ol>:<p>自助建房暂未开放，已有房间仍可使用下方的网页辅助管理。</p>}<p className="community-muted">房间无人后 {grace}自动删除；有人回来就停止计时。</p></div></div>
+ <div className="community-section-title"><h2>{data.overview.me.isAdmin?'受管房间':'与你有关的房间'}</h2></div>
+ {rooms.length===0?<div className="community-empty">{data.overview.me.isAdmin?'目前没有受管房间。':'目前没有与你有关的房间。建房和加入房间都直接在 Discord 完成。'}</div>:<div className="community-room-grid">{rooms.map(room=><RoomCard key={room.ref} room={room} data={data} disabled={disabled} submit={submit}/>)}</div>}</>;
 }
 function RoomCard({room,data,disabled,submit}:{room:CommunityRoomView;data:Data;disabled:boolean;submit:Submit}) {
  const [name,setName]=useState(room.name);const [member,setMember]=useState('');const [limit,setLimit]=useState(room.userLimit);const [confirm,setConfirm]=useState(false);
@@ -117,10 +120,9 @@ function RoomCard({room,data,disabled,submit}:{room:CommunityRoomView;data:Data;
  return <article className="community-card"><div className="community-room-title"><h3>{room.name}</h3><span className="community-pill">{{open:'公开',locked:'已锁门',hidden:'已隐藏'}[room.visibility]}</span></div><p>房主 {room.owner?.name??'等待认领'} · {room.members.length} 人{room.userLimit?` / ${room.userLimit} 人上限`:''}</p>
   <p className="community-muted">{room.status==='active'?'房间已就绪':room.status==='needs_review'?'房间待管理员对账':room.status==='closed'?'已关闭':'正在处理'}</p>{room.members.length>0&&<p>{room.members.map(member=>member.name).join('、')}</p>}
   {room.cleanupAt&&<p>空房待回收：{new Date(room.cleanupAt).toLocaleTimeString('zh-CN')}</p>}
-  {personal&&room.status==='active'&&<div className="community-form"><button className="community-button" disabled={disabled} onClick={()=>action('join')}>加入语音房</button><small>先连接服务器内的语音频道，再加入此房间。</small></div>}
   {personal&&room.canClaim&&<button disabled={disabled} onClick={()=>action('claim')}>认领这个房间</button>}
   {personal&&room.transferTo?.ref===mine&&<div className="community-notice"><p>房主邀请你接管房间。接受后才会转让。</p><button disabled={disabled} onClick={()=>action('accept')}>接受房主转让</button></div>}
-  {room.canManage&&room.status==='active'&&<details><summary>管理房间</summary><div className="community-form">
+  {room.canManage&&room.status==='active'&&<details><summary>网页辅助管理</summary><div className="community-form">
    <label>修改名字<input maxLength={100} value={name} onChange={e=>setName(e.target.value)}/></label><button disabled={disabled||name===room.name||!name.trim()} onClick={()=>action('rename',{name})}>保存名字</button>
    <label>人数上限（0 为不限）<input type="number" min={0} max={data.overview.settings.rooms.maxUserLimit} value={limit} onChange={e=>setLimit(Number(e.target.value))}/></label><button disabled={disabled||limit===room.userLimit} onClick={()=>action('limit',{userLimit:limit})}>保存人数</button>
    <label>房间访问<select value={room.visibility} disabled={disabled} onChange={e=>action('visibility',{visibility:e.target.value})}><option value="open">公开可加入</option><option value="locked">锁门，允许的成员可加入</option><option value="hidden">隐藏，仅允许的成员可见</option></select></label>

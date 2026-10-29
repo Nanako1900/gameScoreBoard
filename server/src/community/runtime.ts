@@ -8,6 +8,7 @@ import {CommunityMembershipService} from './membership';
 import {CommunityFunService} from './fun-service';
 import {createCommunityDiscord} from './discord';
 import {CommunityEngine} from './engine';
+import {CommunityRoomPanels} from './room-panels';
 import {executeCommunityExtra} from './extra';
 import {wireCommunity} from './lifecycle';
 import {COMMUNITY_COMMANDS} from './commands';
@@ -17,7 +18,9 @@ export function createCommunityRuntime(options:{pool:pg.Pool;db:D1Database;clien
  const store=new CommunityStore(pool,guildId);const service=new CommunityService(store,db);const discord=createCommunityDiscord(client,guildId);
  const membership=new CommunityMembershipService(store,discord);
  const fun=new CommunityFunService(store,{db,env,offsetHours:resetOffsetHours(env.RESET_TZ_OFFSET)});
+ const panels=new CommunityRoomPanels(store,discord,{isReadOnly:options.isReadOnly,onError:options.onError});
  const engine=new CommunityEngine(store,discord,{authorize:actor=>service.actorForExecution(actor),isReadOnly:options.isReadOnly,onError:options.onError,
+  syncPanels:()=>panels.sync(),
   executeExtra:(op,actor,guard)=>executeCommunityExtra({membership,fun},op,actor,guard)});
  const unwire=wireCommunity(client,{guildId,engine,membership,isReadOnly:options.isReadOnly,onError:options.onError,
   onUnavailable:()=>store.setRuntime({ready:false,problem:'bot_offline'}),

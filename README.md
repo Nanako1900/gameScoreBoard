@@ -6,7 +6,7 @@
 
 新增自助语音房与自动房管、公开入服欢迎、自选兴趣身份，以及投票／分队／抽签／骰子／话题／AI 灵感。Discord 与网页共用状态，全局主导航的「设置」集中个人与管理入口；首页另有一个「社区中心」入口。社区功能独立于信誉分。
 
-本 PR 已融合 main 的 `3119a96`（[#43](https://github.com/Nanako1900/gameScoreBoard/pull/43)，S6 清爽总览），沿用四项主导航、集中设置和整页详情，不再保留另一套账号设置外壳。合并后的全量验证另记于 [社区验证记录](docs/community-bot/validation.md)。
+网页沿用 [#43](https://github.com/Nanako1900/gameScoreBoard/pull/43) 的四项主导航、集中设置和整页详情。临时房的日常入口为 Discord：进入指定语音入口后自动建房并移入，房内文字聊天只有一张自动更新的控制卡，空房按配置时间删除；已有房间再次进入入口会送回原房。管理员网页默认只展开五项常用房间设置，高级与诊断折叠。C4 计划与验证见 [临时房简化计划](docs/community-bot/plan-c4.md)、[验证记录](docs/community-bot/validation-c4.md)。
 
 功能开关、权限、备份迁移与真实验收见 [社区使用与上线说明](docs/community-bot/operations.md)；需求和确认记录见 [community-bot/requirements.md](docs/community-bot/requirements.md)。本模块为 Node/PG 专属，旧 D1 隐藏入口。
 
@@ -133,7 +133,7 @@ AI 挂了不会卡住案件：超时 / 非 2xx / 解析失败一律回退到基�
 | `/` | 问候与榜单入口 → 独立入户提示 → 我的分数、待办摘要 → 最近三条判决 → 一行战报链接；访客显示紧凑欢迎卡 |
 | `/board` | 全部上榜成员、分数与本周变化；每周恢复倒计时放在榜单页 |
 | `/cases` | 已登录默认「我的待办」，访客默认「公开记录」；`?view=public` 可直达公开记录与状态筛选 |
-| `/community` | 社区房间：我的房间、可见房间与当前可执行的控制；成员网页操作需绑定 Discord 且在服务器内 |
+| `/community` | Discord 自动建房指引、本人相关房间及折叠的网页辅助管理；管理员可管理全部受管房间；成员网页操作需绑定 Discord 且在服务器内 |
 | `/community/roles` | 社区兴趣身份白名单、多选与退出 |
 | `/community/play` | 社区趣味工具及当前有权查看的结果 |
 | `/settings` | 默认显示个人资料设置，与 `/settings/profile` 相同 |

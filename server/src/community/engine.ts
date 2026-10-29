@@ -11,6 +11,7 @@ export interface CommunityEngineOptions {
   isReadOnly?: () => boolean;
   executeExtra?: (operation: StoredOperation, actor: CommunityExecutionActor, beforeEffect: () => Promise<void>) => Promise<CommunityJson>;
   welcome?: (memberId: string) => Promise<void>;
+  syncPanels?: () => Promise<void>;
   now?: () => number; onError?: (error: unknown) => void; intervalMs?: number;
 }
 function fail(code: string, message: string, status = 409): never { throw new CommunityStoreError(status, code, message); }
@@ -26,14 +27,30 @@ export class CommunityEngine {
   private pending: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private lastSync = 0;
+  private panelWork: Promise<void> | undefined;
+  private panelRequested = false;
   private readonly now: () => number;
   constructor(private readonly store: CommunityStore, private readonly discord: CommunityDiscord, private readonly options: CommunityEngineOptions) { this.now = options.now ?? Date.now; }
   private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.pending.then(work); this.pending = next.catch(() => undefined); return next; }
+  private refreshPanels(): void {
+    if (this.stopped || this.options.isReadOnly?.() || !this.options.syncPanels) return;
+    this.panelRequested = true;
+    if (this.panelWork) return;
+    // Card REST/history requests have their own coalesced queue. They cannot
+    // hold the room executor while someone is waiting in the creator channel.
+    this.panelWork = Promise.resolve().then(async () => {
+      do {
+        this.panelRequested = false;
+        if (this.stopped || this.options.isReadOnly?.()) return;
+        await this.options.syncPanels!();
+      } while (this.panelRequested);
+    }).catch(error => { this.options.onError?.(error); }).finally(() => { this.panelWork = undefined; });
+  }
   async start(): Promise<void> {
     this.stopped = false; await this.sync();
     if (!this.timer) { this.timer = setInterval(() => { void this.tick().catch(error => this.options.onError?.(error)); }, this.options.intervalMs ?? 5000); this.timer.unref?.(); }
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
   private async syncNow(): Promise<boolean> {
     try {
@@ -71,6 +88,7 @@ export class CommunityEngine {
       }
       await this.store.setRuntime({ ready: true, syncedAt: iso(this.now()), problem: null });
       this.lastSync = this.now();
+      this.refreshPanels();
       return true;
     } catch (error) { await this.store.setRuntime({ ready: false, problem: error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'bot_offline' }); this.options.onError?.(error); return false; }
   }
@@ -142,6 +160,7 @@ export class CommunityEngine {
     if (this.options.isReadOnly?.()) return;
     await this.maintenance();
     for (let i = 0; i < 10; i += 1) if (!await this.runNow()) break;
+    this.refreshPanels();
   }); }
   runOne(): Promise<boolean> { return this.serial(() => this.runNow()); }
   private async resource(ref: string | null | undefined, kind: CommunityResourceKind): Promise<StoredResource> {
@@ -251,6 +270,11 @@ export class CommunityEngine {
           let patch: RoomPatch = {};
           if (action === 'join') {
             if (!current || !this.discord.channelOf(current.id)) fail('membership_required', '请先连接语音频道', 403);
+            if (payload.creatorOnly === true) {
+              if (room.ownerRef !== actor.memberRef) fail('not_owner', '房主已变化', 403);
+              const creator = await this.resource(settings.rooms.creatorRef, 'voice');
+              if (this.discord.channelOf(current.id) !== creator.externalId) fail('version_conflict', '已离开创建入口');
+            }
             const access = await this.store.roomAccess(room.ref);
             if (access.some(item => item.memberRef === actor.memberRef && item.blocked) || !await this.discord.canConnect(current.id, channel.externalId)) fail('resource_missing', '房间不可加入', 404);
             const source = this.discord.channelOf(current.id);
@@ -341,6 +365,7 @@ export class CommunityEngine {
       if (await this.store.finish(op.ref, op.claimToken!, { status, error: code })) await this.store.addAudit(op.actor, op.kind, op.roomRef ?? createdRoom?.ref ?? null, status);
       this.options.onError?.(error);
     }
+    this.refreshPanels();
     return true;
   }
   private async validateSettings(config: CommunitySettings): Promise<void> {
@@ -374,14 +399,20 @@ export class CommunityEngine {
   onVoice(memberId: string, channelId?: string | null): Promise<void> { return this.serial(async () => {
     if (this.stopped || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
     await this.maintenance();
+    this.refreshPanels();
     const config = (await this.store.settings()).settings;
     if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) return;
     const creator = await this.resource(config.rooms.creatorRef, 'voice'); if (channelId !== creator.externalId || this.discord.channelOf(memberId) !== creator.externalId) return;
     const member = await this.discord.member(memberId); if (!member || member.bot) return;
     const resource = await this.store.upsertResource('member', member.id, safeCommunityText(member.name), { available: true, metadata: { bot: false, protected: member.protected, roleIds: member.roleIds, joinedAt: member.joinedAt } });
     const rooms = await this.store.listRooms({ includeClosed: true }); const active = rooms.find(room => room.ownerRef === resource.ref && room.status !== 'closed');
-    if (active) return;
-    const last = rooms.filter(room => room.ownerRef === resource.ref).at(-1);
+    if (active) {
+      if (active.status === 'active') {
+        await this.store.enqueue('room.join', active.ref, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-return:${resource.ref}:${randomUUID()}`, active.version);
+        await this.runNow();
+      }
+      return;
+    }
     await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
     await this.runNow();
   }); }

@@ -38,7 +38,7 @@ it('groups all configuration and shows safe resource names with opaque selection
 });
 it('saves one versioned complete draft and distinguishes saved from applied',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
- fireEvent.change(screen.getByRole('spinbutton',{name:'空房回收宽限（秒）'}),{target:{value:'180'}});
+ fireEvent.change(screen.getByRole('spinbutton',{name:'空房多久删除（分钟）'}),{target:{value:'3'}});
  fireEvent.change(screen.getByRole('textbox',{name:'社区 AI 提示词'}),{target:{value:'给出友好的短建议'}});
  fireEvent.click(screen.getByRole('checkbox',{name:'游戏同好'}));fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));
  expect(await screen.findByText('已保存待应用')).toBeInTheDocument();expect(screen.getByText('已提交，等待机器人执行')).toBeInTheDocument();
@@ -62,6 +62,7 @@ it('supports topic text and tags without editing raw JSON',async()=>{
 });
 it('shows reconciliation cases and sends refresh as a queued operation',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ fireEvent.click(screen.getByText('查看运行与日志'));
  expect(screen.getByText('执行结果待管理员对账')).toBeInTheDocument();expect(screen.getByText(/不能确定 Discord 执行结果/)).toBeInTheDocument();
  fireEvent.click(screen.getByRole('button',{name:'刷新服务器目录'}));await screen.findByText('已提交，等待机器人执行');
  expect(vi.mocked(fetch).mock.calls.some(call=>String(call[0]).endsWith('/sync')&&call[1]?.method==='POST')).toBe(true);
@@ -108,6 +109,7 @@ it('clears a loaded private configuration when a later refresh returns not found
 
 it('queues panel refreshing separately from directory synchronization',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ fireEvent.click(screen.getByText('查看运行与日志'));
  fireEvent.click(screen.getByRole('button',{name:'刷新控制面板'}));await screen.findByText('已提交，等待机器人执行');
  const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({kind:'panel.refresh'});
 });
@@ -115,13 +117,14 @@ it('requires a separate human review confirmation and only cancels the old uncer
  const original=vi.mocked(fetch).getMockImplementation()!;let reviewed=false;
  vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/operations')&&reviewed?Promise.resolve(Response.json({operations:[{...operation,status:'canceled',result:{reviewed:true}}]})):String(input).endsWith(`/operations/${ref}/review`)?(reviewed=true,Promise.resolve(Response.json({operation:{...operation,status:'canceled',result:{reviewed:true}}}))):original(input,init));
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ fireEvent.click(screen.getByText('查看运行与日志'));
  fireEvent.click(screen.getByRole('button',{name:'人工核对并取消旧任务'}));expect(screen.getByText(/^先在 Discord 检查此任务/)).toBeInTheDocument();expect(vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST')).toHaveLength(0);
  fireEvent.click(screen.getByRole('button',{name:'确认已人工核对，取消旧任务'}));expect(await screen.findByText('旧任务已取消，已记录人工核对')).toBeInTheDocument();
  const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');expect(String(post?.[0])).toBe(`/api/admin/community/operations/${ref}/review`);expect(JSON.parse(String(post?.[1]?.body))).toEqual({confirm:true,requestKey:expect.any(String)});
  expect(screen.queryByText('已恢复 Discord 状态')).not.toBeInTheDocument();expect(screen.queryByText('任务将自动重试')).not.toBeInTheDocument();
 });
 it('lets administrators back out of manual review without sending any mutation',async()=>{
- render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});fireEvent.click(screen.getByRole('button',{name:'人工核对并取消旧任务'}));fireEvent.click(screen.getByRole('button',{name:'暂不取消旧任务'}));
+ render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});fireEvent.click(screen.getByText('查看运行与日志'));fireEvent.click(screen.getByRole('button',{name:'人工核对并取消旧任务'}));fireEvent.click(screen.getByRole('button',{name:'暂不取消旧任务'}));
  expect(screen.queryByRole('button',{name:'确认已人工核对，取消旧任务'})).not.toBeInTheDocument();expect(vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST')).toHaveLength(0);
 });
 it('keeps unsaved editing across focus refresh and failed saves',async()=>{
