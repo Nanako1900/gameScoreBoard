@@ -32,6 +32,30 @@ function setup() {
 }
 
 describe('community room execution and reconciliation',()=>{
+  it('creates from the entrance without looking up unrelated managed rooms first',async()=>{
+    const s=setup();await s.room();vi.mocked(s.discord.createVoice).mockResolvedValue('new-channel');
+    await s.engine.onVoice('other','creator','waiting');
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();
+    expect(s.discord.channel).not.toHaveBeenCalledWith('channel');
+    expect(s.discord.move).toHaveBeenCalledWith('other','new-channel');
+  });
+  it('does not scan unrelated rooms for a voice move outside managed rooms',async()=>{
+    const s=setup();await s.room();await s.engine.onVoice('other','waiting','creator');
+    expect(s.discord.channel).not.toHaveBeenCalled();expect(s.store.patchRoom).not.toHaveBeenCalled();
+  });
+  it('observes an affected room becoming empty and cancels its cleanup on a return',async()=>{
+    const s=setup();const room=await s.room();s.setPresent([]);s.setPosition(null);
+    await s.engine.onVoice('owner',null,'channel');
+    expect(room.emptySince).toBe(new Date(s.now()).toISOString());expect(Date.parse(room.cleanupAt!)).toBe(s.now()+120000);
+    s.setPresent(['owner']);s.setPosition('channel');await s.engine.onVoice('owner','channel','waiting');
+    expect(room.emptySince).toBeNull();expect(room.cleanupAt).toBeNull();
+  });
+  it('does not publish a census invalidated while its Discord snapshot was in flight',async()=>{
+    const s=setup();expect(s.engine.invalidateSnapshot).toBeTypeOf('function');const original=vi.mocked(s.discord.snapshot).getMockImplementation()!;
+    vi.mocked(s.discord.snapshot).mockImplementation(async()=>{s.engine.invalidateSnapshot();return original();});
+    expect(await s.engine.sync()).toBe(false);
+    expect(vi.mocked(s.store.setRuntime).mock.calls.some(([patch])=>patch.ready===true)).toBe(false);
+  });
   it('does not wait for a slow control card before creating a room',async()=>{const s=setup();let release!:()=>void;const pending=new Promise<void>(resolve=>{release=resolve});const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,now:s.now,syncPanels:()=>pending});const work=engine.onVoice('owner','creator');try{await vi.waitFor(()=>expect(s.discord.createVoice).toHaveBeenCalled(),{timeout:100,interval:5});}finally{release();await work;}});
   it('returns an owner entering the creator to their existing active room without creating again',async()=>{const s=setup();const r=await s.room();await s.engine.onVoice('owner','creator');expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.discord.move).toHaveBeenCalledWith('owner','channel');expect(s.operations[0]).toMatchObject({kind:'room.join',roomRef:r.ref,payload:{creatorOnly:true}})});
   it('does not execute a delayed return after the owner leaves the creator',async()=>{const s=setup();const r=await s.room();s.setPosition('waiting');const op=await s.enqueue('room.join',r.ref,{creatorOnly:true},r.version);await s.engine.runOne();expect(op.status).toBe('conflict');expect(s.discord.move).not.toHaveBeenCalled()});

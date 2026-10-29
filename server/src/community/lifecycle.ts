@@ -1,7 +1,7 @@
 import {Events,type Client,type Guild,type GuildMember,type PartialGuildMember,type VoiceState,type Role} from 'discord.js';
 interface LifecycleDeps {
  guildId:string;
- engine:{start():Promise<void>;sync():Promise<boolean>;onVoice(memberId:string,channelId?:string|null):Promise<void>};
+ engine:{start():Promise<void>;sync():Promise<boolean>;invalidateSnapshot?():void;onVoice(memberId:string,channelId?:string|null,previousChannelId?:string|null):Promise<void>};
  membership:{welcome(memberId:string):Promise<void>};
  onUnavailable:()=>Promise<void>;
  onMemberRemoved:(memberId:string)=>Promise<void>;
@@ -13,13 +13,45 @@ interface LifecycleDeps {
 export function wireCommunity(client:Client,deps:LifecycleDeps):()=>void {
  let active=true;
  const run=(work:()=>Promise<unknown>)=>{if(active)void Promise.resolve().then(()=>active?work():undefined).catch(error=>deps.onError?.(error));};
+ let invalidation:Promise<void>|undefined;
+ let syncWork:Promise<boolean>|undefined;
+ let syncRequested=false;
+ const markUnavailable=():Promise<void>=>{
+  deps.engine.invalidateSnapshot?.();
+  if(!invalidation){
+   const work=Promise.resolve().then(deps.onUnavailable);invalidation=work;
+   const clear=()=>{if(invalidation===work)invalidation=undefined;};
+   void work.then(clear,clear);
+  }
+  return invalidation;
+ };
+ const requestSync=(invalidate=true):Promise<boolean>=>{
+  if(!active)return Promise.resolve(false);
+  syncRequested=true;
+  const invalidated=invalidate?markUnavailable():invalidation;
+  if(syncWork)return syncWork;
+  const work=Promise.resolve().then(async()=>{
+   let ready=false;
+   do{
+    syncRequested=false;
+    await (invalidation??invalidated);
+    if(!active)return false;
+    ready=await deps.engine.sync();
+   }while(active&&syncRequested);
+   return ready;
+  });
+  syncWork=work;
+  const finished=()=>{if(syncWork===work)syncWork=undefined;if(active&&syncRequested)run(()=>requestSync());};
+  void work.then(finished,finished);
+  return work;
+ };
  const ready=()=>run(()=>deps.engine.start());
- const sync=()=>run(async()=>{await deps.onUnavailable();await deps.engine.sync();});
- const unavailable=()=>run(deps.onUnavailable);
+ const sync=()=>run(()=>requestSync());
+ const unavailable=()=>run(markUnavailable);
  const available=(guild:Guild)=>{if(guild.id===deps.guildId&&guild.available)sync();};
- const voice=(_prev:VoiceState,next:VoiceState)=>{if(next.guild.id===deps.guildId)run(()=>deps.engine.onVoice(next.id,next.channelId));};
- const join=(member:GuildMember)=>{if(member.guild.id===deps.guildId&&!deps.isReadOnly?.())run(async()=>{await deps.engine.sync();if(active)await deps.membership.welcome(member.id);});};
- const leave=(member:GuildMember|PartialGuildMember)=>{if(member.guild.id===deps.guildId)run(async()=>{await deps.onUnavailable();await deps.onMemberRemoved(member.id);await deps.engine.sync();});};
+ const voice=(prev:VoiceState,next:VoiceState)=>{if(next.guild.id===deps.guildId&&prev.channelId!==next.channelId)run(()=>deps.engine.onVoice(next.id,next.channelId,prev.channelId));};
+ const join=(member:GuildMember)=>{if(member.guild.id===deps.guildId&&!deps.isReadOnly?.())run(async()=>{await requestSync();if(active)await deps.membership.welcome(member.id);});};
+ const leave=(member:GuildMember|PartialGuildMember)=>{if(member.guild.id===deps.guildId)run(async()=>{await markUnavailable();await deps.onMemberRemoved(member.id);await requestSync(false);});};
  const memberUpdate=(_prev:GuildMember|PartialGuildMember,next:GuildMember)=>{if(next.guild.id===deps.guildId)sync();};
  const channel=(value:unknown)=>{const channel=value as {guild?:{id:string}}|null;if(channel?.guild?.id===deps.guildId)sync();};
  const channelUpdate=(_prev:unknown,next:unknown)=>channel(next);
