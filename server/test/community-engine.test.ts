@@ -32,6 +32,24 @@ function setup() {
 }
 
 describe('community room execution and reconciliation',()=>{
+  it('retries a received entrance event after a fresh census restores readiness',async()=>{
+    const s=setup();let ready=false;
+    vi.mocked(s.store.runtime).mockImplementation(async()=>({ready}) as never);
+    vi.mocked(s.store.setRuntime).mockImplementation(async patch=>{if(patch.ready!==undefined)ready=patch.ready;});
+    await s.engine.onVoice('owner','creator','waiting');await s.engine.onVoice('owner','creator','waiting');
+    expect(s.discord.createVoice).not.toHaveBeenCalled();await s.engine.sync();
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();expect(s.discord.move).toHaveBeenCalledWith('owner','channel');
+  });
+  it('does not replay a pending entrance event after its member has left the entrance',async()=>{
+    const s=setup();let ready=false;
+    vi.mocked(s.store.runtime).mockImplementation(async()=>({ready}) as never);
+    vi.mocked(s.store.setRuntime).mockImplementation(async patch=>{if(patch.ready!==undefined)ready=patch.ready;});
+    await s.engine.onVoice('owner','creator','waiting');s.setPosition('waiting');s.setPresent([]);await s.engine.sync();
+    expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.discord.move).not.toHaveBeenCalled();
+  });
+  it('never treats everyone found in the entrance at startup as new entrance events',async()=>{
+    const s=setup();await s.engine.sync();expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.store.enqueue).not.toHaveBeenCalled();
+  });
   it('creates from the entrance without looking up unrelated managed rooms first',async()=>{
     const s=setup();await s.room();vi.mocked(s.discord.createVoice).mockResolvedValue('new-channel');
     await s.engine.onVoice('other','creator','waiting');

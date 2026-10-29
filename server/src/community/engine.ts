@@ -28,6 +28,7 @@ export class CommunityEngine {
   private stopped = false;
   private lastSync = 0;
   private snapshotRevision = 0;
+  private readonly pendingEntrances = new Map<string, string>();
   private panelWork: Promise<void> | undefined;
   private panelRequested = false;
   private readonly now: () => number;
@@ -51,7 +52,7 @@ export class CommunityEngine {
     this.stopped = false; await this.sync();
     if (!this.timer) { this.timer = setInterval(() => { void this.tick().catch(error => this.options.onError?.(error)); }, this.options.intervalMs ?? 5000); this.timer.unref?.(); }
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; this.pendingEntrances.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
   /** Gateway resource changes invalidate even an already-running census. */
   invalidateSnapshot(): void { this.snapshotRevision += 1; }
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
@@ -94,6 +95,7 @@ export class CommunityEngine {
       await this.store.setRuntime({ ready: true, syncedAt: iso(this.now()), problem: null });
       if (revision !== this.snapshotRevision) { await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); return false; }
       this.lastSync = this.now();
+      await this.drainPendingEntrances();
       this.refreshPanels();
       return true;
     } catch (error) { await this.store.setRuntime({ ready: false, problem: error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'bot_offline' }); this.options.onError?.(error); return false; }
@@ -406,9 +408,7 @@ export class CommunityEngine {
       if (room.transferExpiresAt && Date.parse(room.transferExpiresAt) <= this.now()) await this.store.patchRoom(room.ref, { transferToRef: null, transferExpiresAt: null }, room.version);
     }
   }
-  onVoice(memberId: string, channelId?: string | null, previousChannelId?: string | null): Promise<void> { return this.serial(async () => {
-    if (this.stopped || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
-    const config = (await this.store.settings()).settings;
+  private async admitCreator(memberId: string, channelId: string | null | undefined, config: CommunitySettings): Promise<void> {
     if (config.enabled && config.rooms.enabled && config.rooms.creatorRef) {
       const creator = await this.resource(config.rooms.creatorRef, 'voice');
       if (channelId === creator.externalId && this.discord.channelOf(memberId) === creator.externalId) {
@@ -426,6 +426,34 @@ export class CommunityEngine {
         }
       }
     }
+  }
+  private async drainPendingEntrances(): Promise<void> {
+    if (!this.pendingEntrances.size || this.stopped || this.options.isReadOnly?.()) return;
+    const config = (await this.store.settings()).settings;
+    if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) { this.pendingEntrances.clear(); return; }
+    const creator = await this.store.resource(config.rooms.creatorRef, 'voice');
+    if (!creator?.available) return;
+    const occupants = this.discord.occupants(creator.externalId); if (occupants === null) return;
+    // Retry only actual events received during invalidation. A startup census
+    // must not create rooms for everyone it happens to find in the entrance.
+    for (const [memberId, channelId] of this.pendingEntrances) {
+      if (this.stopped || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
+      this.pendingEntrances.delete(memberId);
+      if (channelId !== creator.externalId || !occupants.includes(memberId) || this.discord.channelOf(memberId) !== creator.externalId) continue;
+      try { await this.admitCreator(memberId, channelId, config); }
+      catch (error) { this.options.onError?.(error); }
+    }
+  }
+  onVoice(memberId: string, channelId?: string | null, previousChannelId?: string | null): Promise<void> { return this.serial(async () => {
+    this.pendingEntrances.delete(memberId);
+    if (this.stopped || this.options.isReadOnly?.()) return;
+    const config = (await this.store.settings()).settings;
+    if (!(await this.store.runtime()).ready) {
+      const creator = config.enabled && config.rooms.enabled && config.rooms.creatorRef ? await this.store.resource(config.rooms.creatorRef, 'voice') : null;
+      if (!this.stopped && creator && channelId === creator.externalId) this.pendingEntrances.set(memberId, channelId);
+      return;
+    }
+    await this.admitCreator(memberId, channelId, config);
     // A Gateway move only concerns its source and destination. The periodic
     // sweep still checks every managed room and deletion always reads reality.
     const affected = new Set([previousChannelId, channelId].filter((value): value is string => typeof value === 'string'));
