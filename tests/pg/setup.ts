@@ -5,6 +5,10 @@ import { beforeEach } from 'vitest';
 import { pool } from './cloudflare-test';
 
 const TABLES = [
+  'community_agent_requests',
+  'community_agent_usage',
+  'community_agent_documents',
+  'community_agent_settings',
   'community_welcomes',
   'community_role_choices',
   'community_ai_usage',

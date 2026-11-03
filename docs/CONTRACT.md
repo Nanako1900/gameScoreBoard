@@ -880,4 +880,27 @@ C5 新房仅将 Bot 在服务器与分类均已持有的 SendMessages／ReadMess
 
 新 PG 表均由可重复执行的 `0012_community.sql` 创建：settings、resources、rooms、room_access、operations、audit、fun、poll_votes、ai_usage、role_choices、welcomes（均带 `community_` 前缀）。不删除或复用约局／历史／语音证据表。
 
-社区页面为 `/community`、`/community/roles`，旧 `/community/play` 只显示停用说明；管理页使用既有集中设置中的 `/settings/community`，`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。独立知识库问答Agent为后续一期，不复用退休趣味模块。
+社区页面为 `/community`、`/community/roles`，旧 `/community/play` 只显示停用说明；管理页使用既有集中设置中的 `/settings/community`，`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。
+
+### C9 社区知识问答
+
+Node/PG社区宿主启用时提供独立Agent设置，默认关闭；不扩CommunitySettings、不复用fun或其AI用量。指定guild的已配置普通GuildText频道，只有真人新消息中的字面Bot mention触发。隐式回复提及、机器人、webhook、system、私信、线程与公告不受理；忽略附件／链接资源，不抓取历史。增加非特权GuildMessages，不申请MessageContent或Presence。
+
+调用必须有当前Nanako用户、绑定代次、实际非Bot服务器成员及频道访问／发送权限。绑定只限制调用资格，频道回答对其他可见成员仍可见；未绑定只提示/link，不公开账户名。问题只在内存中用于本次处理，不把私人案件、语音证据或个人资料送给模型。
+
+独立设置为`enabled/channelRefs/userDailyLimit/guildDailyLimit/cooldownSeconds`，最多10个随机频道ref。默认20／200次每日额度、10秒冷却；每日按UTC，以Nanako账户原子计量，已受理失败也计入。最多20项活动请求，独立串行模型队列，90秒租约；不等待房间执行槽或语音记录器。按guild＋源消息持久去重，原始问题／答案不入请求表，超过30天的诊断及用量每小时及受理／读取时清理。
+
+| 管理员接口 | 行为 |
+|---|---|
+| `GET /api/admin/community/agent` | `{settings,version,knowledgeVersion,documents,usage,requests,provider}`；提供商仅ready／固定reason |
+| `POST /api/admin/community/agent` | `{settings,expectedVersion}`，独立版本保存，200回完整管理结构 |
+| `POST /api/admin/community/agent/documents` | `{ref?,title,content,published,expectedVersion}`，初建0，200回完整管理结构 |
+| `POST /api/admin/community/agent/documents/:ref/delete` | `{expectedVersion}`，软删除，200回完整管理结构 |
+
+全部沿用session、当前管理员、Origin／JSON、READ_ONLY及no-store；旧D1仍404。资料最多50篇，标题100、正文8000字符，默认草稿，仅明确发布才检索；稳定随机首建ref的同内容重试不重复创建。资料与设置分别保存，乐观版本防覆盖；资料改变递增独立知识版本，旧上下文待答取消。DTO、错误、来源、审计均不含原始Discord标识、频道链接、密钥、问题或答案。
+
+中文bigram／英文词与标题权重召回最多5个来源、总片段12000字符。无相关资料直接说明不足，不调用模型。使用现有端点、模型、温度与加密密钥，但忽略量刑enabled和量刑提示词；Agent固定安全提示词，没有工具或任意API入口。一次模型调用25秒、64KB响应、原答案4800 UTF16单位以内后净化为最多1200码点；来源必须属于本次选集，服务器拼标题／版本，剥除模型URL／提及／原始标识并在全部文本转换后再次精确脱敏active key。
+
+首次POST进度后只PATCH同一已知消息；每次显式禁提及。发送意图先单独提交，再短事务锁绑定／设置／请求，实时REST鉴权后紧邻写入复查租约；已确认回复ID内部持久化，不进DTO。模型不持数据库锁。Agent专用REST无自动重试，10秒超时、限流保守失败；稳定nonce仅辅助短时防重。未知发送／写回失败隔离，不补发、不重放；到期sending为isolated，其他失效请求取消。解绑／换绑（含同账户ABA）、权限或设置／知识版本变化后不发旧答案，已知进度可安全清理。
+
+迁移`0013_community_agent.sql`可重复，新增四张独立Agent表和discord_links.binding_id；不删除既有数据。集中管理区在`/settings/community`折叠加载、单独保存，未知后端404只提示升级，401/403清除草稿；与原设置共用离开保护。

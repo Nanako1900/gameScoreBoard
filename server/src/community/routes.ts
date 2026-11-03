@@ -7,8 +7,11 @@ import { allowedOrigins, cookieConfig, hasNulInUrl, isReadOnly, parseCsvList } f
 import { cookieNames, getCookie, verifySession } from '../../../worker/session';
 import type { Env } from '../../../worker/types';
 import type { CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
+import { AgentValidationError, parseAgentDocumentInput, parseAgentSettings, type AgentAdminData } from '../../../shared/community-agent';
+import { loadAiConfig } from '../../../worker/ai/config';
 import { CommunityService, CommunitySettingsInputError } from './service';
 import { CommunityStoreError, type CommunityStore } from './store';
+import { CommunityAgentStore } from './agent-store';
 
 export interface CommunityRoleReadView { choices: CommunityResourceView[]; selectedRefs: string[]; maxChoices: number; enabled: boolean }
 export interface CommunityRouteDeps {
@@ -44,6 +47,7 @@ function withoutMeta(input: Record<string, unknown>): Record<string, unknown> {
 /** Node-only HTTP boundary. The app process has no Discord token and only queues operations. */
 export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> {
   const { store, db, env } = deps; const service = new CommunityService(store, db); const app = new Hono<RouteEnv>();
+  const agent = new CommunityAgentStore(store.pool, store.guildId, { offsetHours: 0 });
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store'); c.header('X-Content-Type-Options', 'nosniff');
     if (hasNulInUrl(c.req.url)) fail(400, 'invalid_input', '请求包含非法字符');
@@ -66,6 +70,17 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     await service.actorFromWeb(session.sub); c.set('communityUserId', session.sub); await next();
   });
   const user = (c: Context<RouteEnv>) => c.get('communityUserId');
+  const requireAgentAdmin = async (c: Context<RouteEnv>) => {
+    if (!(await service.actorFromWeb(user(c))).isAdmin) fail(403, 'forbidden', '需要管理员权限');
+  };
+  const agentAdmin = async (c: Context<RouteEnv>): Promise<AgentAdminData> => {
+    await requireAgentAdmin(c);
+    const [data, provider] = await Promise.all([agent.diagnostics(), loadAiConfig(db, env)]);
+    const reason = provider.apiKeyError === 'master_key_missing' ? '服务端缺少 AI 主密钥，请检查部署配置' :
+      provider.apiKeyError ? 'AI 凭据不可用，请在 AI 模型与密钥设置中重新配置' :
+      !provider.baseUrl || !provider.model || !provider.apiKey ? '请先在 AI 模型与密钥设置中配置端点、模型和 API Key' : null;
+    return { ...data, provider: { ready: reason === null, reason } };
+  };
   const accepted = (c: Context<RouteEnv>, operation: unknown) => c.json({ operation }, 202);
   app.get('/api/community', async c => c.json(await service.overview(user(c))));
   app.get('/api/community/rooms', async c => c.json({ rooms: await service.rooms(user(c)) }));
@@ -111,6 +126,25 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     if (requested !== undefined && !['category', 'voice', 'text', 'role', 'member'].includes(requested)) fail(400, 'invalid_input', '资源类型无效');
     return c.json({ resources: await service.resources(user(c), requested as CommunityResourceKind | undefined) });
   });
+  app.get('/api/admin/community/agent', async c => c.json(await agentAdmin(c)));
+  app.post('/api/admin/community/agent', async c => {
+    await requireAgentAdmin(c);
+    const input = await body(c); exact(input, ['settings', 'expectedVersion']);
+    await agent.saveSettings(parseAgentSettings(input.settings), version(input), user(c));
+    return c.json(await agentAdmin(c));
+  });
+  app.post('/api/admin/community/agent/documents', async c => {
+    await requireAgentAdmin(c);
+    const input = parseAgentDocumentInput(await body(c));
+    await agent.saveDocument(input, user(c));
+    return c.json(await agentAdmin(c));
+  });
+  app.post('/api/admin/community/agent/documents/:ref/delete', async c => {
+    await requireAgentAdmin(c);
+    const input = await body(c); exact(input, ['expectedVersion']);
+    await agent.deleteDocument(c.req.param('ref'), version(input), user(c));
+    return c.json(await agentAdmin(c));
+  });
   app.get('/api/admin/community/operations', async c => c.json({ operations: await service.operations(user(c)) }));
   app.post('/api/admin/community/operations/:ref/review', async c => {
     const input = await body(c); exact(input, ['confirm', 'requestKey']); key(input);
@@ -126,6 +160,7 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
   app.notFound(c => c.json({ error: '内容不存在' }, 404));
   app.onError((error, c) => {
     if (error instanceof CommunitySettingsInputError) return c.json({ error: '请检查标出的社区设置', fieldErrors: error.fieldErrors }, 400);
+    if (error instanceof AgentValidationError) return c.json({ error: error.message, code: 'invalid_input' }, 400);
     let status = 500; let message = '社区服务暂不可用'; let code = 'internal_error';
     if (error instanceof CommunityStoreError) { status = error.status; message = error.message; code = error.code; }
     else if (error instanceof ApiError) { status = error.status; message = error.message; code = 'invalid_input'; }

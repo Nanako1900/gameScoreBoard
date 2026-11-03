@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultCommunitySettings } from '../../shared/community';
 import { ApiError } from '../../src/api';
 import { communityApi, type CommunityAdminData } from '../../src/community-api';
+import { communityAgentApi } from '../../src/community-agent-api';
 import { CommunityAdminPage } from '../../src/components/CommunityAdminPage';
 import { Link } from '../../src/components/Link';
 import { bootRouter, navigate, requestNavigation, useLocation } from '../../src/lib/router';
@@ -47,6 +48,16 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); departed.mockReset(); });
 
 describe('community administrator uses the shared page leave guard', () => {
+  it('also protects an unsaved Agent document with the same page confirmation', async () => {
+    vi.spyOn(communityAgentApi, 'read').mockResolvedValue({ settings: { enabled: false, channelRefs: [], userDailyLimit: 20, guildDailyLimit: 200, cooldownSeconds: 10 }, version: 0, knowledgeVersion: 0, documents: [], usage: { day: '2026-11-03', total: 0 }, requests: [], provider: { ready: false, reason: '模型未配置' } });
+    await start();
+    await userEvent.click(screen.getByText('AI 助理与社区资料'));
+    await userEvent.click(await screen.findByRole('button', { name: '新增资料' }));
+    await userEvent.type(screen.getByLabelText('资料标题'), '尚未保存的社区资料');
+    await askToLeave();
+    await userEvent.click(screen.getByRole('button', { name: '继续编辑' }));
+    expect(screen.getByLabelText('资料标题')).toHaveValue('尚未保存的社区资料');
+  });
   it('allows clean navigation from the main header without confirmation', async () => {
     await start();
     await userEvent.setup().click(screen.getByRole('link', { name: '信誉榜' }));
