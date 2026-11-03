@@ -95,7 +95,7 @@ function parseAnswer(text: string, sources: readonly AgentSource[], key: string)
   try { parsed = JSON.parse(text); } catch { throw new AgentAnswerError('invalid_response'); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new AgentAnswerError('invalid_response');
   const value = parsed as Record<string, unknown>, refs = new Set(sources.map(source => source.ref));
-  if (Object.keys(value).length !== 3 || typeof value.answer !== 'string' || typeof value.insufficient !== 'boolean'
+  if (Object.keys(value).length !== 3 || typeof value.answer !== 'string' || value.answer.length > 4800 || typeof value.insufficient !== 'boolean'
     || !Array.isArray(value.sourceRefs) || value.sourceRefs.length > sources.length
     || value.sourceRefs.some(ref => typeof ref !== 'string' || !refs.has(ref)) || new Set(value.sourceRefs).size !== value.sourceRefs.length) throw new AgentAnswerError('invalid_response');
   if (value.insufficient) return { ...INSUFFICIENT, sourceRefs: [] };

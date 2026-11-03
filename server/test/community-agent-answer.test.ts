@@ -110,6 +110,10 @@ describe('community Agent bounded model boundary', () => {
     expect([...result.answer].length).toBeLessThanOrEqual(1200);
     expect(result.answer).not.toMatch(/[\uD800-\uDBFF]$/);
   });
+  it('rejects an excessive raw answer before running formatting cleanup on it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ ...valid, answer: '['.repeat(62000) })));
+    await expect(answerAgentQuestion({ question: '房间', sources: [rooms], config })).rejects.toMatchObject({ code: 'invalid_response' });
+  });
   it('uses the same 2000-code-point question limit as the message admission boundary', async () => {
     const fetch = vi.fn().mockResolvedValue(response(valid)); vi.stubGlobal('fetch', fetch);
     await expect(answerAgentQuestion({ question: '房间😀'.repeat(660), sources: [rooms], config })).resolves.toEqual(valid);
