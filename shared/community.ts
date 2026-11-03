@@ -2,8 +2,8 @@
 // inside the Node community adapter/store and never become browser DTO fields.
 export type CommunityVisibility = 'open' | 'locked' | 'hidden';
 export type CommunityResourceKind = 'category' | 'voice' | 'text' | 'role' | 'member';
+/** Legacy values describe saved configuration only; no tool is executable. */
 export type CommunityTool = 'poll' | 'teams' | 'draw' | 'roll' | 'topic' | 'ai';
-export const COMMUNITY_TOOLS: readonly CommunityTool[] = ['poll', 'teams', 'draw', 'roll', 'topic', 'ai'];
 export interface CommunityTopic { ref: string; text: string; tags: string[] }
 export interface CommunitySettings {
   enabled: boolean;
@@ -40,8 +40,6 @@ export interface CommunityPublicSettings {
   fun: Omit<CommunitySettings['fun'], 'ai' | 'topics'> & { ai: Omit<CommunitySettings['fun']['ai'], 'prompt'>; tags: string[] };
 }
 export interface CommunityOverview { settings: CommunityPublicSettings; version: number; runtime: CommunityRuntimeView; me: CommunityMeView }
-export interface CommunityFunView { ref: string; kind: CommunityTool; title: string; data: CommunityJson; status: 'open' | 'closed';
-  roomRef: string | null; createdAt: string; closesAt: string | null; creator: CommunityMemberView | null }
 
 export function isCommunityRef(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
