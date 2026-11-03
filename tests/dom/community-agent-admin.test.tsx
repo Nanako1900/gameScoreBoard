@@ -48,6 +48,7 @@ describe('community agent administration', () => {
     vi.mocked(communityAgentApi.saveDocument).mockResolvedValue(saved);
     render(<CommunityAgentAdmin resources={resources}/>); await open();
     await userEvent.click(screen.getByRole('button', { name: '新增资料' }));
+    expect(screen.getByLabelText('资料标题')).toHaveFocus();
     expect(screen.getByLabelText('发布到 AI 问答')).not.toBeChecked();
     await userEvent.type(screen.getByLabelText('资料标题'), '如何创建房间');
     await userEvent.type(screen.getByLabelText('资料正文'), '进入创建房间的语音入口即可。');

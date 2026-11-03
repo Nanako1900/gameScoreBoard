@@ -32,10 +32,12 @@ export function CommunityAgentAdmin({ resources, onUnavailable, onDirtyChange }:
   const [confirm, setConfirm] = useState<'reload' | 'editor' | 'delete' | null>(null);
   const [deleting, setDeleting] = useState<AgentDocument | null>(null);
   const epoch = useRef(0);
+  const titleInput = useRef<HTMLInputElement>(null);
   const callbacks = useRef({ onUnavailable, onDirtyChange }); callbacks.current = { onUnavailable, onDirtyChange };
   const settingsDirty = !!data && !!settings && !!numbers && (JSON.stringify(settings) !== JSON.stringify(data.settings) || JSON.stringify(numbers) !== JSON.stringify(numbersFor(data.settings)));
   const documentDirty = editor !== null && JSON.stringify(editor) !== editorBaseline;
   const dirty = settingsDirty || documentDirty;
+  useEffect(() => { if (editor) titleInput.current?.focus(); }, [editor?.ref]);
   useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
   useEffect(() => () => { epoch.current++; callbacks.current.onDirtyChange?.(false); }, []);
   const clearPrivate = (cause: ApiError) => {
@@ -126,7 +128,7 @@ export function CommunityAgentAdmin({ resources, onUnavailable, onDirtyChange }:
             {!data.documents.length ? <p>还没有资料。先新增并发布，助理才有回答依据。</p> : <ul className="community-admin-log">{data.documents.map(document => <li key={document.ref}><strong>{document.title}</strong><span>{document.published ? '已发布' : '草稿'} · 版本 {document.version}</span><div className="community-actions"><button type="button" disabled={busy || documentDirty} aria-label={`编辑 ${document.title}`} onClick={() => edit(document)}>编辑</button><button type="button" disabled={busy || documentDirty} aria-label={`删除 ${document.title}`} onClick={() => { setDeleting(document); setConfirm('delete'); }}>删除</button></div></li>)}</ul>}
             {editor && <form noValidate className="community-agent-editor" onSubmit={event => { event.preventDefault(); saveDocument(); }}><fieldset className="community-admin-fields" disabled={busy}>
               <h4>{editor.expectedVersion === 0 ? '新增社区资料' : '编辑社区资料'}</h4>
-              <label className="community-setting-field">资料标题<input maxLength={100} value={editor.title} onChange={event => setEditor({ ...editor, title: event.target.value })}/></label>
+              <label className="community-setting-field">资料标题<input ref={titleInput} maxLength={100} value={editor.title} onChange={event => setEditor({ ...editor, title: event.target.value })}/></label>
               <label className="community-setting-field">资料正文<textarea maxLength={8000} rows={10} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })}/></label>
               <p className="community-muted">可粘贴纯文本或 Markdown；仅作为资料文字使用，不执行 HTML 或链接。请勿填写密钥、个人信息或私人案件记录。</p>
               <label className="community-choice"><input type="checkbox" checked={editor.published} onChange={event => setEditor({ ...editor, published: event.target.checked })}/><span>发布到 AI 问答</span></label>
