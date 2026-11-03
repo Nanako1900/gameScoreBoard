@@ -107,16 +107,16 @@ it('does not mix transient manager IDs into the full settings save and clears th
 
 it('isolates a failed fixed-room read while preserving the unsaved configuration',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
- fireEvent.change(screen.getByRole('textbox',{name:'社区 AI 提示词'}),{target:{value:'仍然保留的设置草稿'}});
+ fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'仍然保留的设置草稿'}});
  vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/rooms')?Promise.resolve(Response.json({error:'同步暂不可用'},{status:503})):original(input,init));fireEvent.focus(window);
- expect(await screen.findByText('固定房间列表暂不可用，请刷新后重试。')).toBeInTheDocument();expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue('仍然保留的设置草稿');expect(screen.getByRole('button',{name:'保存社区设置'})).toBeInTheDocument();
+ expect(await screen.findByText('固定房间列表暂不可用，请刷新后重试。')).toBeInTheDocument();expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue('仍然保留的设置草稿');expect(screen.getByRole('button',{name:'保存社区设置'})).toBeInTheDocument();
 });
 
 it('clears private configuration and transient IDs if the room read revokes administrator access',async()=>{
  rooms=[fixed()];const original=vi.mocked(fetch).getMockImplementation()!;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});fireEvent.click(screen.getByText('固定房间控制卡'));fireEvent.click(screen.getByText('固定私人房'));
  fireEvent.change(screen.getByRole('textbox',{name:'房间管理员 Discord 用户 ID'}),{target:{value:discordId}});
  vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/rooms')?Promise.resolve(Response.json({error:'无权访问'},{status:403})):original(input,init));fireEvent.focus(window);
- await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());expect(screen.queryByDisplayValue(discordId)).not.toBeInTheDocument();expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument();
+ await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());expect(screen.queryByDisplayValue(discordId)).not.toBeInTheDocument();expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument();
 });
 
 it('limits a fixed-room replacement to twenty managers and shows the safe panel diagnostic',async()=>{

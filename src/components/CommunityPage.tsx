@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CommunityOperationView, CommunityOverview, CommunityResourceView, CommunityRoomView, CommunityTool } from '@shared/community';
+import type { CommunityOperationView, CommunityOverview, CommunityResourceView, CommunityRoomView } from '@shared/community';
 import { ApiError } from '../api';
 import { communityApi, type CommunityRoles } from '../community-api';
 import { saveWelcomeReturn } from '../lib/welcomeReturn';
@@ -7,7 +7,6 @@ import { Link } from './Link';
 import { LoginLink } from './LoginLink';
 import './community.css';
 export type CommunityTab='rooms'|'roles'|'play';
-export const toolNames:Record<CommunityTool,string>={poll:'投票',teams:'随机分队',draw:'抽签',roll:'骰子',topic:'话题卡',ai:'AI 灵感'};
 export const operationLabels:Record<string,string>={queued:'已提交，等待机器人执行',running:'机器人正在处理',retry_wait:'暂时未完成，等待重试',succeeded:'已执行，请查看最新状态',failed:'执行失败',conflict:'状态已变化，请刷新后重试',canceled:'操作已取消或过期',needs_review:'执行结果待管理员对账'};
 const terminal=new Set(['succeeded','failed','conflict','canceled','needs_review']);
 const message=(error:unknown)=>error instanceof Error?error.message:'社区暂不可用，请重试';

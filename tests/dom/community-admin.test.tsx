@@ -29,21 +29,24 @@ it('does not request or expose settings to visitors or non-administrators',()=>{
 it('groups all configuration and shows safe resource names with opaque selections',async()=>{
  render(<CommunityAdminPage me={admin}/>);
  await screen.findByRole('button',{name:'保存社区设置'});expect(screen.getByRole('heading',{name:'社区管理'})).toBeInTheDocument();
- for(const name of ['语音房间','入服欢迎','兴趣身份','趣味互动与 AI','运行与日志'])expect(screen.getByRole('heading',{name})).toBeInTheDocument();
+ for(const name of ['语音房间','入服欢迎','兴趣身份','运行与日志'])expect(screen.getByRole('heading',{name})).toBeInTheDocument();
  expect(screen.getByRole('option',{name:'房间分类'})).toHaveValue(ref);
  expect(screen.getByRole('checkbox',{name:'游戏同好'})).toBeEnabled();expect(screen.getByRole('checkbox',{name:'服务器管理（不可自选）'})).toBeDisabled();
  expect(screen.getByRole('spinbutton',{name:'每人最多兴趣身份'})).toHaveAttribute('max','5');
- expect(screen.getByRole('link',{name:'管理模型与密钥'})).toHaveAttribute('href','/settings/ai');
+ expect(screen.queryByRole('heading',{name:'趣味互动与 AI'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('link',{name:'管理模型与密钥'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('button',{name:'添加话题'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('spinbutton',{name:/AI 配额|骰子|投票|互动冷却/})).not.toBeInTheDocument();
  expect(screen.queryByText(/111111111111111111/)).not.toBeInTheDocument();
 });
 it('saves one versioned complete draft and distinguishes saved from applied',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
  fireEvent.change(screen.getByRole('spinbutton',{name:'空房多久删除（分钟）'}),{target:{value:'3'}});
- fireEvent.change(screen.getByRole('textbox',{name:'社区 AI 提示词'}),{target:{value:'给出友好的短建议'}});
+ fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'给出友好的短建议'}});
  fireEvent.click(screen.getByRole('checkbox',{name:'游戏同好'}));fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));
  expect(await screen.findByText('已保存待应用')).toBeInTheDocument();expect(screen.getByText('已提交，等待机器人执行')).toBeInTheDocument();
  const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');const body=JSON.parse(String(post?.[1]?.body));
- expect(body).toMatchObject({expectedVersion:2,settings:{rooms:{emptyGraceSeconds:180},roles:{allowedRefs:[safeRole]},fun:{ai:{prompt:'给出友好的短建议'}}}});expect(body.requestKey).toMatch(/[a-f0-9-]{36}/);
+ expect(body).toMatchObject({expectedVersion:2,settings:{rooms:{emptyGraceSeconds:180},roles:{allowedRefs:[safeRole]},welcome:{template:'给出友好的短建议'},fun:{enabled:false,enabledTools:[],ai:{enabled:false}}}});expect(body.requestKey).toMatch(/[a-f0-9-]{36}/);
  expect(screen.queryByText('已在 Discord 生效')).not.toBeInTheDocument();
 });
 it('previews welcoming text safely without a request or mentions',async()=>{
@@ -53,12 +56,16 @@ it('previews welcoming text safely without a request or mentions',async()=>{
  expect(screen.getByLabelText('欢迎预览').textContent).not.toMatch(/@everyone|<@|123456789012345678/);
  expect(document.querySelector('img')).toBeNull();expect(vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST')).toHaveLength(0);
 });
-it('supports topic text and tags without editing raw JSON',async()=>{
+it('saves retained settings despite malformed legacy fun fields and never reopens retired tools',async()=>{
+ settings.fun={enabled:true,enabledTools:['poll','ai'],topics:null,ai:{enabled:true,prompt:'',userDailyLimit:0,guildDailyLimit:0}} as unknown as typeof settings.fun;
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
- fireEvent.click(screen.getByRole('button',{name:'添加话题'}));const topics=screen.getAllByRole('textbox',{name:/话题正文/});
- fireEvent.change(topics[topics.length-1],{target:{value:'今晚想玩什么？'}});const tags=screen.getAllByRole('textbox',{name:/话题标签/});fireEvent.change(tags[tags.length-1],{target:{value:'游戏, 晚间'}});
+ expect(screen.getByLabelText('待保存分组')).not.toHaveTextContent('待保存：');
+ fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'欢迎 {name}，一起相聚！'}});
+ expect(screen.getByLabelText('待保存分组')).toHaveTextContent('待保存：入服欢迎');
  fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('已保存待应用');
- const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');const body=JSON.parse(String(post?.[1]?.body));expect(body.settings.fun.topics.at(-1)).toMatchObject({text:'今晚想玩什么？',tags:['游戏','晚间']});
+ const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');const body=JSON.parse(String(post?.[1]?.body));
+ expect(body).toMatchObject({expectedVersion:2,settings:{welcome:{template:'欢迎 {name}，一起相聚！'},fun:{enabled:false,enabledTools:[],topics:[],ai:{enabled:false}}}});
+ expect(screen.queryByRole('alert',{name:'社区设置需要修改'})).not.toBeInTheDocument();
 });
 it('shows reconciliation cases and sends refresh as a queued operation',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
@@ -75,7 +82,7 @@ it('reports backend failure without claiming a saved or applied version',async()
 it('drops an old administrator request after changing accounts',async()=>{
  let complete!:(response:Response)=>void;vi.mocked(fetch).mockImplementation(()=>new Promise(resolve=>{complete=resolve}));
  const view=render(<CommunityAdminPage me={admin}/>);view.rerender(<CommunityAdminPage me={null}/>);complete(Response.json({settings,version:1,runtime:{ready:true}}));
- await waitFor(()=>expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument());
+ await waitFor(()=>expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument());
 });
 
 it('polls queued saves until an actual execution receipt arrives',async()=>{
@@ -87,12 +94,12 @@ it('polls queued saves until an actual execution receipt arrives',async()=>{
 it('removes private admin configuration immediately after a forbidden save',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
  vi.mocked(fetch).mockResolvedValue(Response.json({error:'需要管理员权限'},{status:403}));fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));
- await waitFor(()=>expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument());expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument();
+ await waitFor(()=>expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument());expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument();
 });
 it('removes private admin configuration if a queued operation becomes inaccessible',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('已保存待应用');
  vi.mocked(fetch).mockResolvedValue(Response.json({error:'记录不存在'},{status:404}));
- await waitFor(()=>expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument(),{timeout:3500});
+ await waitFor(()=>expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument(),{timeout:3500});
  expect(screen.queryByText('已提交，等待机器人执行')).not.toBeInTheDocument();
 });
 it('offers removal of configured roles that have disappeared from the resource directory',async()=>{
@@ -104,7 +111,7 @@ it('offers removal of configured roles that have disappeared from the resource d
 it('clears a loaded private configuration when a later refresh returns not found',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
  vi.mocked(fetch).mockResolvedValue(Response.json({error:'当前服务未提供管理'},{status:404}));fireEvent.focus(window);
- expect(await screen.findByText('当前服务暂未提供社区管理')).toBeInTheDocument();expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument();
+ expect(await screen.findByText('当前服务暂未提供社区管理')).toBeInTheDocument();expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument();
 });
 
 it('queues panel refreshing separately from directory synchronization',async()=>{
@@ -130,15 +137,15 @@ it('lets administrators back out of manual review without sending any mutation',
 it('keeps unsaved editing across focus refresh and failed saves',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
- const prompt=screen.getByRole('textbox',{name:'社区 AI 提示词'});fireEvent.change(prompt,{target:{value:'编辑到一半的新提示词'}});fireEvent.focus(window);
- await waitFor(()=>expect(vi.mocked(fetch).mock.calls.filter(call=>String(call[0])==='/api/admin/community')).toHaveLength(2));expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue('编辑到一半的新提示词');
- vi.mocked(fetch).mockImplementation((input,init)=>init?.method==='POST'?Promise.resolve(Response.json({error:'暂时无法保存'},{status:503})):original(input,init));fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('暂时无法保存');expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue('编辑到一半的新提示词');
+ const prompt=screen.getByRole('textbox',{name:'欢迎文案'});fireEvent.change(prompt,{target:{value:'编辑到一半的新提示词'}});fireEvent.focus(window);
+ await waitFor(()=>expect(vi.mocked(fetch).mock.calls.filter(call=>String(call[0])==='/api/admin/community')).toHaveLength(2));expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue('编辑到一半的新提示词');
+ vi.mocked(fetch).mockImplementation((input,init)=>init?.method==='POST'?Promise.resolve(Response.json({error:'暂时无法保存'},{status:503})):original(input,init));fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('暂时无法保存');expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue('编辑到一半的新提示词');
 });
 it('retains the draft original version after a background update and requires explicit reload',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
- fireEvent.change(screen.getByRole('textbox',{name:'社区 AI 提示词'}),{target:{value:'我的未保存修改'}});
+ fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'我的未保存修改'}});
  vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/admin/community'&&init?.method!=='POST'?Promise.resolve(Response.json({settings,version:4,runtime:{ready:true,appliedVersion:4,syncedAt:null,problem:null}})):init?.method==='POST'?Promise.resolve(Response.json({error:'版本已更新'},{status:409})):original(input,init));fireEvent.focus(window);
- expect(await screen.findByText('已有新的社区设置版本')).toBeInTheDocument();expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue('我的未保存修改');
+ expect(await screen.findByText('已有新的社区设置版本')).toBeInTheDocument();expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue('我的未保存修改');
  fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('版本已更新');const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');expect(JSON.parse(String(post?.[1]?.body)).expectedVersion).toBe(2);
- fireEvent.click(screen.getByRole('button',{name:'载入最新设置'}));fireEvent.click(screen.getByRole('button',{name:'确认放弃修改并载入'}));expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue(settings.fun.ai.prompt);
+ fireEvent.click(screen.getByRole('button',{name:'载入最新设置'}));fireEvent.click(screen.getByRole('button',{name:'确认放弃修改并载入'}));expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue(settings.welcome.template);
 });
