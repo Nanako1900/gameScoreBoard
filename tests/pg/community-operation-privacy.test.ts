@@ -16,7 +16,11 @@ beforeEach(async()=>{
 });
 async function operation(kind='fun.create',roomRef:string|null=null){
  const op=await store.enqueue(kind,roomRef,{source:'web',userId:'alice',memberRef},{kind:'ai'},'privacy-'+kind);
- const claimed=await store.claim();await store.finish(op.ref,claimed!.claimToken!,{status:'succeeded',result:{item:{title:'仅原成员可见的主题',kind:'ai'}}});return op;
+ const result={item:{title:'仅原成员可见的主题',kind:'ai'}};
+ // Seed historical completed tool work directly: retired jobs can no longer run.
+ if(kind.startsWith('fun.'))await pool.query("UPDATE community_operations SET status='succeeded',finished_at=now(),result=$2 WHERE ref=$1",[op.ref,JSON.stringify(result)]);
+ else {const claimed=await store.claim();await store.finish(op.ref,claimed!.claimToken!,{status:'succeeded',result});}
+ return op;
 }
 describe('community operation receipts follow current identity and access',()=>{
  it('does not reveal a roomless AI result after unlinking, despite the same Nanako user id',async()=>{

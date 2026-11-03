@@ -219,6 +219,13 @@ export class CommunityEngine {
   private async runNow(): Promise<boolean> {
     if (this.stopped) return false;
     const op = await this.store.claim(300); if (!op) return false;
+    // Normally retired jobs are canceled before claim. Also guard old/custom
+    // queue adapters here without evaluating their former actor or room state.
+    if (op.kind.startsWith('fun.')) {
+      if (await this.store.finish(op.ref, op.claimToken!, { status: 'canceled', error: 'feature_retired' }))
+        await this.store.addAudit({ source: 'system' }, 'operation.cancel', op.ref, 'canceled');
+      return true;
+    }
     let changed = false, createdRoom: StoredRoom | null = null;
     let executionRoom: StoredRoom | null = null, requiredAdmin = false;
     let checkedActor: CommunityExecutionActor | null = null;

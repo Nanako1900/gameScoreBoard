@@ -32,6 +32,15 @@ function setup() {
 }
 
 describe('community room execution and reconciliation',()=>{
+  it('cancels a claimed retired task without invoking authorization, extra execution or room quarantine',async()=>{
+    const s=setup();const room=await s.room();const extra=vi.fn(async()=>({item:{title:'private'}}));
+    s.authorize.mockRejectedValue(new Error('retired actors must not be re-executed'));
+    const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,executeExtra:extra,now:s.now});
+    const op=await s.enqueue('fun.create',room.ref,{kind:'ai',input:{theme:'private'}});await engine.runOne();
+    expect(op.status).toBe('canceled');expect(op.error).toBe('feature_retired');
+    expect(s.authorize).not.toHaveBeenCalled();expect(extra).not.toHaveBeenCalled();expect(s.store.patchRoom).not.toHaveBeenCalled();
+    expect(s.store.addAudit).toHaveBeenCalledWith({source:'system'},'operation.cancel',op.ref,'canceled');
+  });
   it('lets a visible ordinary member rename a temporary room without being its creator',async()=>{const s=setup();const r=await s.room();const op=await s.enqueue('room.rename',r.ref,{name:'共享房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(op.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledWith('channel','共享房')});
   it('allows only assigned fixed-room managers and rejects the unassigned creator',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.other]};s.settings.rooms.fixedCategoryRefs=[s.category];const denied=await s.enqueue('room.rename',r.ref,{name:'拒绝'},r.version);await s.engine.runOne();expect(denied.status).toBe('failed');const allowed=await s.enqueue('room.rename',r.ref,{name:'固定房'},r.version,{source:'discord',memberRef:s.other});await s.engine.runOne();expect(allowed.status).toBe('succeeded');expect(s.discord.rename).toHaveBeenCalledTimes(1)});
   it('refuses every fixed-room deletion path including an old system cleanup',async()=>{const s=setup();const r=await s.room();r.ownerRef=null;r.metadata={kind:'fixed',categoryRef:s.category,managerRefs:[s.owner]};r.cleanupAt=new Date(s.now()-1000).toISOString();s.settings.rooms.fixedCategoryRefs=[s.category];s.setPresent([]);for(const action of ['cleanup','dissolve','admin_delete']){const op=await s.enqueue(`room.${action}`,r.ref,{confirm:true},r.version,action==='cleanup'?{source:'system'}:{source:'discord',memberRef:s.owner});await s.engine.runOne();expect(op.status).not.toBe('succeeded');}expect(s.discord.delete).not.toHaveBeenCalled()});
@@ -162,7 +171,7 @@ describe('community room execution and reconciliation',()=>{
   it('passes freshly checked administrator privileges to the extra executor',async()=>{
     const s=setup();const extra=vi.fn(async(_op:unknown,_actor:{isAdmin:boolean})=>({done:true}));
     let checks=0;s.authorize.mockImplementation(async actor=>({memberRef:actor.memberRef??null,isAdmin:checks++===0}));
-    const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,executeExtra:extra,now:s.now});await s.enqueue('fun.close',null,{ref:s.other});await engine.runOne();expect(extra).toHaveBeenCalled();expect(extra.mock.calls[0][1].isAdmin).toBe(false);
+    const engine=new CommunityEngine(s.store,s.discord,{authorize:s.authorize,executeExtra:extra,now:s.now});await s.enqueue('roles.set',null,{roleRefs:[]});await engine.runOne();expect(extra).toHaveBeenCalled();expect(extra.mock.calls[0][1].isAdmin).toBe(false);
   });
 
   it('keeps reviewed rooms quarantined when a member ACL cannot be fully mapped',async()=>{

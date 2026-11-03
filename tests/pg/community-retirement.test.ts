@@ -94,3 +94,68 @@ describe('retired community tools boundaries', () => {
     expect((await pool.query('SELECT result FROM community_operations WHERE ref=$1', [op.ref])).rows[0].result.item.ref).toBe(item);
   });
 });
+
+describe('retired community operations do not block active room work', () => {
+  async function queuedRoomWork() {
+    const room = await store.createRoom(memberRef, '保留的语音房');
+    const active = await store.patchRoom(room.ref, { status: 'active' }, room.version);
+    const old = await store.enqueue('fun.create', room.ref, { source: 'web', userId: 'alice', memberRef }, { kind: 'ai' }, 'old-tool');
+    const next = await store.enqueue('room.rename', room.ref, { source: 'web', userId: 'alice', memberRef }, { name: '正常改名' }, 'room-after-tool', active.version);
+    return { room: active, old, next };
+  }
+
+  it.each(['queued', 'retry_wait', 'expired-running', 'missing-lease', 'needs_review'] as const)
+  ('retires %s tool work before claiming the room operation behind it', async state => {
+    const { room, old, next } = await queuedRoomWork();
+    if (state === 'retry_wait') await pool.query("UPDATE community_operations SET status='retry_wait',available_at=now()+interval '1 day' WHERE ref=$1", [old.ref]);
+    if (state === 'expired-running') await pool.query("UPDATE community_operations SET status='running',claim_token=gen_random_uuid(),lease_until=now()-interval '1 second' WHERE ref=$1", [old.ref]);
+    if (state === 'missing-lease') await pool.query("UPDATE community_operations SET status='running',claim_token=gen_random_uuid(),lease_until=NULL WHERE ref=$1", [old.ref]);
+    if (state === 'needs_review') await pool.query("UPDATE community_operations SET status='needs_review',error_code='execution_uncertain' WHERE ref=$1", [old.ref]);
+    const claimed = await store.claim();
+    expect(claimed?.ref).toBe(next.ref);
+    expect(await store.getOperation(old.ref)).toMatchObject({ status: 'canceled', errorCode: 'feature_retired', claimToken: null });
+    expect((await store.getOperation(old.ref))?.finishedAt).not.toBeNull();
+    expect((await store.getRoom(room.ref))?.status).toBe('active');
+    expect(await store.audit()).toEqual([expect.objectContaining({ action: 'operation.cancel', target: old.ref, outcome: 'canceled' })]);
+    await store.recoverExpired(); expect(await store.audit()).toHaveLength(1);
+  });
+
+  it('preserves a valid running tool lease and does not claim its blocked scope', async () => {
+    const { old } = await queuedRoomWork(); const token = crypto.randomUUID();
+    await pool.query("UPDATE community_operations SET status='running',claim_token=$2,lease_until=now()+interval '5 minutes' WHERE ref=$1", [old.ref, token]);
+    await store.recoverExpired(); expect(await store.claim()).toBeNull();
+    expect(await store.getOperation(old.ref)).toMatchObject({ status: 'running', claimToken: token });
+    expect(await store.audit()).toEqual([]);
+    await pool.query("UPDATE community_operations SET lease_until=now()-interval '1 second' WHERE ref=$1", [old.ref]);
+    await store.recoverExpired();
+    expect(await store.getOperation(old.ref)).toMatchObject({ status: 'canceled', claimToken: null });
+    expect(await store.finish(old.ref, token, { status: 'succeeded' })).toBe(false);
+  });
+
+  it('preserves unrelated review barriers and never restores a quarantined room without inspection', async () => {
+    const { room, old, next } = await queuedRoomWork();
+    await pool.query("UPDATE community_operations SET status='needs_review' WHERE ref=ANY($1::uuid[])", [[old.ref, next.ref]]);
+    await store.patchRoom(room.ref, { status: 'needs_review' }, room.version);
+    await store.recoverExpired();
+    expect((await store.getOperation(old.ref))?.status).toBe('canceled');
+    expect((await store.getOperation(next.ref))?.status).toBe('needs_review');
+    expect((await store.getRoom(room.ref))?.status).toBe('needs_review');
+    expect(await store.claim()).toBeNull();
+  });
+
+  it('retains completed results, votes and quota history while canceling only this guild’s pending tools', async () => {
+    const result = await legacyResult();
+    await pool.query('INSERT INTO community_ai_usage(guild_id,day,member_ref,count) VALUES($1,current_date,$2,3)', [GUILD, memberRef]);
+    await pool.query('INSERT INTO community_poll_votes(fun_ref,member_ref,choice) VALUES($1,$2,0)', [result, memberRef]);
+    const done = await store.enqueue('fun.create', null, { source: 'web', userId: 'alice', memberRef }, { kind: 'ai' }, 'old-done');
+    await pool.query("UPDATE community_operations SET status='succeeded',finished_at=now(),result=$2 WHERE ref=$1", [done.ref, JSON.stringify({ item: { ref: result } })]);
+    const elsewhere = new CommunityStore(pool, '333333333333333333');
+    const foreign = await elsewhere.enqueue('fun.vote', null, { source: 'system' }, {}, 'foreign');
+    await store.recoverExpired();
+    expect((await store.getOperation(done.ref))?.status).toBe('succeeded');
+    expect((await elsewhere.getOperation(foreign.ref))?.status).toBe('queued');
+    expect((await pool.query('SELECT count(*) FROM community_fun')).rows[0].count).toBe(1);
+    expect((await pool.query('SELECT count(*) FROM community_poll_votes')).rows[0].count).toBe(1);
+    expect((await pool.query('SELECT count FROM community_ai_usage')).rows[0].count).toBe(3);
+  });
+});
