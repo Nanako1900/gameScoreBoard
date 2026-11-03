@@ -242,7 +242,17 @@ describe('community Discord resource adapter',()=>{
   it('never pings from welcome text or the fixed community panel',async()=>{
     const s=setup();await s.api.sendText(TEXT,'欢迎 @everyone');await s.api.sendPanel(TEXT);
     for(const [,options]of s.post.mock.calls)expect(options.body.allowed_mentions).toEqual({parse:[]});
-    const panel=s.post.mock.calls[1][1].body;const serialized=JSON.stringify(panel);expect(serialized).toContain('v1:community:room');expect(serialized).toContain('v1:community:roles');expect(serialized).toContain('v1:community:play');
+    const panel=s.post.mock.calls[1][1].body;const serialized=JSON.stringify(panel);expect(serialized).toContain('v1:community:room');expect(serialized).toContain('v1:community:roles');expect(serialized).not.toContain('v1:community:play');expect(serialized).not.toContain('趣味');
+  });
+  it('removes retired tools by editing the existing owned community entry instead of posting another',async()=>{
+    const s=setup();const messageId='900000000000000001';const original=s.get.getMockImplementation()!;
+    s.get.mockImplementation(async(route,options)=>route===Routes.channelMessage(TEXT,messageId)?{id:messageId,author:{id:SELF},content:'旧趣味入口'}:original(route,options));
+    expect(await s.api.sendPanel(TEXT,messageId)).toBe(messageId);
+    expect(s.post).not.toHaveBeenCalled();expect(s.patch).toHaveBeenCalledTimes(1);
+    const [route,options]=s.patch.mock.calls[0];expect(route).toBe(Routes.channelMessage(TEXT,messageId));
+    const body=options!.body as {content:string;components:Array<{components:Array<{custom_id:string}>}>;allowed_mentions:{parse:string[]}};
+    expect(body.components.flatMap(group=>group.components.map(component=>component.custom_id))).toEqual(['v1:community:room','v1:community:roles']);
+    expect(body.content).not.toContain('趣味');expect(body.allowed_mentions).toEqual({parse:[]});
   });
   it('edits an existing panel only when it is a message authored by this bot',async()=>{
     const s=setup();
