@@ -126,7 +126,7 @@ async function boundedBody(response: Response, signal: AbortSignal): Promise<str
     }
     const buffer = new Uint8Array(bytes); let offset = 0;
     for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { throw new AgentAnswerError('invalid_response'); }
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(buffer); } catch { throw new AgentAnswerError('invalid_response'); }
   } finally { signal.removeEventListener('abort', cancel); }
 }
 
