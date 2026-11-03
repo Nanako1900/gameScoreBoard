@@ -132,6 +132,27 @@ describe('retired community operations do not block active room work', () => {
     expect(await store.finish(old.ref, token, { status: 'succeeded' })).toBe(false);
   });
 
+  it('never sends a tool lease that expires between retirement and ordinary recovery to room review', async () => {
+    const { room, old, next } = await queuedRoomWork();
+    await pool.query("UPDATE community_operations SET status='running',claim_token=gen_random_uuid(),lease_until=now()+interval '5 minutes' WHERE ref=$1", [old.ref]);
+    const execute = pool.query.bind(pool);
+    let expired = false;
+    const query = vi.spyOn(pool, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+      const result = await execute(sql, values);
+      if (!expired && sql.includes('WITH retired AS')) {
+        expired = true;
+        await execute("UPDATE community_operations SET lease_until=now()-interval '1 second' WHERE ref=$1", [old.ref]);
+      }
+      return result;
+    }) as typeof pool.query);
+    try { await store.recoverExpired(); } finally { query.mockRestore(); }
+    expect(expired).toBe(true);
+    expect((await store.getOperation(old.ref))?.status).toBe('running');
+    expect((await store.getRoom(room.ref))?.status).toBe('active');
+    expect((await store.claim())?.ref).toBe(next.ref);
+    expect((await store.getOperation(old.ref))?.status).toBe('canceled');
+  });
+
   it('preserves unrelated review barriers and never restores a quarantined room without inspection', async () => {
     const { room, old, next } = await queuedRoomWork();
     await pool.query("UPDATE community_operations SET status='needs_review' WHERE ref=ANY($1::uuid[])", [[old.ref, next.ref]]);

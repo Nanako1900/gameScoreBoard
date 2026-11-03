@@ -414,8 +414,10 @@ export class CommunityStore {
       ) RETURNING ref
     ) INSERT INTO community_audit(guild_id,actor_source,actor_label,action,target_ref,outcome)
       SELECT $1,'system','系统','operation.cancel',ref,'canceled' FROM retired`, [this.guildId]);
+    // A live tool lease can expire after the statement above. Leave it for the
+    // next retirement pass instead of turning it into a room-review barrier.
     await this.pool.query(`UPDATE community_operations SET status='needs_review',claim_token=NULL,lease_until=NULL,error_code='execution_uncertain'
-      WHERE guild_id=$1 AND status='running' AND lease_until<now()`, [this.guildId]);
+      WHERE guild_id=$1 AND kind NOT LIKE 'fun.%' AND status='running' AND lease_until<now()`, [this.guildId]);
     await this.pool.query(`UPDATE community_operations SET status='canceled',finished_at=now(),error_code='operation_expired'
       WHERE guild_id=$1 AND status IN ('queued','retry_wait') AND expires_at<now()`, [this.guildId]);
   }
