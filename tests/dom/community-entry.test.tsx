@@ -7,6 +7,7 @@ describe('one community home entry',()=>{
   render(<CommunityEntry accountKey="a"/>);
   expect(await screen.findByRole('link',{name:'进入社区'})).toHaveAttribute('href','/community');
   expect(screen.getByRole('link',{name:'社区管理'})).toHaveAttribute('href','/settings/community');
+  expect(screen.getByText('语音房间与兴趣身份，让同好更容易相聚。')).toBeInTheDocument();
  });
  it('hides the feature on D1 and does not show a broken entry',async()=>{
   const fetcher=vi.fn().mockResolvedValue(Response.json({error:'Not found'},{status:404}));vi.stubGlobal('fetch',fetcher);
