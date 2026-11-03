@@ -301,6 +301,51 @@ describe('verified voice creation and source-bound movement', () => {
     expect(s.get.mock.calls.some(([route]) => route === Routes.channel(ROOM))).toBe(false);
     expect(s.post.mock.calls[0][1].reason).toBe(`community-room:${OP}`);
   });
+  it.each(['open', 'locked', 'hidden'] as const)('accepts reordered, numerically equivalent explicit creation overwrites for %s', async visibility => {
+    const s = setup(), post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => {
+      const response = await post(route, options), overwrites = options.body.permission_overwrites as Array<{ id: string; type: number; allow: string; deny: string }>;
+      return { ...response, permission_overwrites: [...overwrites].reverse().map(overwrite => ({
+        ...overwrite, allow: `000${overwrite.allow}`, deny: `000${overwrite.deny}`,
+      })) };
+    });
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, visibility, 6, OP, ROOM, async () => {})).resolves.toMatchObject({ id: ROOM });
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.get).toHaveBeenCalledTimes(5);
+  });
+  it.each([G, SELF, OWNER])('rejects a creation receipt missing the explicit overwrite for %s', async missingId => {
+    const s = setup(), post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => {
+      const response = await post(route, options), overwrites = options.body.permission_overwrites as Array<{ id: string }>;
+      return { ...response, permission_overwrites: overwrites.filter(overwrite => overwrite.id !== missingId) };
+    });
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 6, OP, ROOM, async () => {})).rejects.toMatchObject({ uncertain: true });
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each([
+    [G, 'allow', P.ViewChannel], [G, 'deny', P.ViewChannel], [SELF, 'allow', P.Connect], [SELF, 'deny', P.Connect],
+    [OWNER, 'allow', P.Connect], [OWNER, 'deny', P.ViewChannel], [SELF, 'allow', P.ManageRoles],
+  ] as const)('rejects a creation receipt changing explicit %s %s permission bits', async (targetId, field, bit) => {
+    const s = setup(), post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => {
+      const response = await post(route, options), overwrites = options.body.permission_overwrites as Array<{ id: string; allow: string; deny: string }>;
+      return { ...response, permission_overwrites: overwrites.map(overwrite => overwrite.id === targetId
+        ? { ...overwrite, [field]: (BigInt(overwrite[field]) ^ bit).toString() } : { ...overwrite }) };
+    });
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 6, OP, ROOM, async () => {})).rejects.toMatchObject({ uncertain: true });
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each(['duplicate', 'type', 'extra-role'] as const)('rejects a creation receipt with a changed overwrite identity: %s', async changed => {
+    const s = setup(), post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => {
+      const response = await post(route, options), overwrites = (options.body.permission_overwrites as Array<{ id: string; type: number; allow: string; deny: string }>).map(overwrite => ({ ...overwrite }));
+      if (changed === 'duplicate') overwrites.push({ ...overwrites[0] });
+      if (changed === 'type') overwrites.find(overwrite => overwrite.id === OWNER)!.type = 0;
+      if (changed === 'extra-role') overwrites.push({ id: FUN, type: 0, allow: (P.ViewChannel | P.Connect).toString(), deny: '0' });
+      return { ...response, permission_overwrites: overwrites };
+    });
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 6, OP, ROOM, async () => {})).rejects.toMatchObject({ uncertain: true });
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.patch).not.toHaveBeenCalled();
+  });
   it.each(['initial', 'reads', 'guard'] as const)('does not create after the owner leaves the expected entrance during %s', async stage => {
     const s = setup(), get = s.get.getMockImplementation()!;
     if (stage === 'initial') s.voices.delete(OWNER);

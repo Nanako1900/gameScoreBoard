@@ -136,6 +136,11 @@ function parseChannel(value: unknown, guildId: string): Channel | null {
 function publicChannel(channel: Channel): CommunityDiscordChannel {
   const { overwrites: _overwrites, ...out } = channel; return out;
 }
+function overwriteSignature(overwrites: readonly Overwrite[]): string {
+  return JSON.stringify(overwrites.map(overwrite => ({ id: overwrite.id, type: overwrite.type,
+    allow: BigInt(overwrite.allow).toString(), deny: BigInt(overwrite.deny).toString(),
+  })).sort((a, b) => a.id.localeCompare(b.id) || a.type - b.type));
+}
 function guildPermissions(member: Member, ctx: Context, guildId: string): bigint {
   if (member.id === ctx.ownerId) return -1n;
   let value = ctx.roles.get(guildId)?.permissions ?? 0n;
@@ -336,7 +341,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     assertReady(); await request(remove ? 'delete' : 'put', Routes.guildMemberRole(guildId, memberId, roleId), { reason: 'community self-selected role' });
   }
   async function createVoiceRequest(parentId: string, name: string, ownerId: string, visibility: CommunityVisibility, userLimit: number,
-    operationRef: string, expectedSourceId?: string, beforeWrite?: () => Promise<void>): Promise<unknown> {
+    operationRef: string, expectedSourceId?: string, beforeWrite?: () => Promise<void>): Promise<{ response: unknown; expectedOverwrites: string }> {
     validateName(name); validateLimit(userLimit); const marker = reason(operationRef);
     const checkSource = (): void => {
       assertReady();
@@ -359,8 +364,10 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     const retained = channelPermissions(ctx.self, parent, ctx, guildId) & guildPermissions(ctx.self, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS;
     bot.allow = (BigInt(bot.allow) | retained).toString();
     checkSource(); await beforeWrite?.(); checkSource();
-    return request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
+    const expectedOverwrites = overwriteSignature(permission_overwrites);
+    const response = await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
       parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker });
+    return { response, expectedOverwrites };
   }
   async function moveMember(memberId: string, channelId: string | null, expectedSourceId?: string, beforeWrite?: () => Promise<void>): Promise<boolean> {
     assertReady(); validateId(memberId); if (channelId !== null) validateId(channelId);
@@ -428,7 +435,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     canConnect: (memberId, channelId) => access(memberId, channelId, true),
     occupants, channelOf,
     async createVoice(parentId, name, ownerId, visibility, userLimit, operationRef) {
-      const response = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef);
+      const { response } = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef);
       try {
         const created = raw(response);
         if (created.type !== ChannelType.GuildVoice || created.guild_id !== guildId) throw invalid();
@@ -436,11 +443,14 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       } catch { throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true); }
     },
     async createVoiceVerified(parentId, name, ownerId, visibility, userLimit, operationRef, expectedSourceId, beforeWrite) {
-      const response = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef, expectedSourceId, beforeWrite);
+      const { response, expectedOverwrites } = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef, expectedSourceId, beforeWrite);
       try {
         const actual = raw(response), channel = parseChannel(actual, guildId);
+        // The receipt replaces a follow-up GET, so it must prove the explicit
+        // owner, bot and everyone ACL, regardless of Discord's array ordering.
         if (!channel || channel.kind !== 'voice' || channel.parentId !== parentId || channel.name !== name.trim()
-          || typeof actual.user_limit !== 'number' || !Number.isInteger(actual.user_limit) || actual.user_limit !== userLimit) throw invalid();
+          || typeof actual.user_limit !== 'number' || !Number.isInteger(actual.user_limit) || actual.user_limit !== userLimit
+          || overwriteSignature(channel.overwrites) !== expectedOverwrites) throw invalid();
         return publicChannel(channel);
       } catch { throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true); }
     },
