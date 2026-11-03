@@ -5,6 +5,7 @@ import { planRoomMaintenance } from './room-plan';
 import { safeCommunityText } from './security';
 import { fixedManagerRefs, isFixedRoom, syncFixedRooms } from './fixed-rooms';
 import { canControlRoom } from './room-policy';
+import { creationDuration, reportCreationTiming, type CreationObserver, type CreationOutcome } from './creation-timing';
 import { CommunityStore, CommunityStoreError, type CommunityActor, type CommunityJsonObject, type RoomPatch, type StoredOperation, type StoredResource, type StoredRoom } from './store';
 
 export interface CommunityExecutionActor { memberRef: string | null; isAdmin: boolean }
@@ -14,6 +15,8 @@ export interface CommunityEngineOptions {
   executeExtra?: (operation: StoredOperation, actor: CommunityExecutionActor, beforeEffect: () => Promise<void>) => Promise<CommunityJson>;
   welcome?: (memberId: string) => Promise<void>;
   syncPanels?: () => Promise<void>;
+  onCreationTiming?: CreationObserver;
+  timingNow?: () => number;
   now?: () => number; onError?: (error: unknown) => void; intervalMs?: number;
 }
 function fail(code: string, message: string, status = 409): never { throw new CommunityStoreError(status, code, message); }
@@ -33,11 +36,17 @@ export class CommunityEngine {
   private snapshotRevision = 0;
   private snapshotInvalidated = false;
   private readonly pendingEntrances = new Map<string, string>();
+  private readonly pendingEntranceTimes = new Map<string, number>();
+  private readonly creationEntries = new Map<string, { receivedAt: number; trace: string }>();
   private panelWork: Promise<void> | undefined;
   private panelRequested = false;
   private readonly now: () => number;
   constructor(private readonly store: CommunityStore, private readonly discord: CommunityDiscord, private readonly options: CommunityEngineOptions) { this.now = options.now ?? Date.now; }
   private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.pending.then(work); this.pending = next.catch(() => undefined); return next; }
+  private measureNow(): number {
+    try { const value = this.options.timingNow?.() ?? performance.now(); return Number.isFinite(value) ? value : performance.now(); }
+    catch { return performance.now(); }
+  }
   private refreshPanels(): void {
     if (this.stopped || this.options.isReadOnly?.() || !this.options.syncPanels) return;
     this.panelRequested = true;
@@ -56,7 +65,7 @@ export class CommunityEngine {
     this.stopped = false; await this.sync();
     if (!this.timer) { this.timer = setInterval(() => { void this.tick().catch(error => this.options.onError?.(error)); }, this.options.intervalMs ?? 5000); this.timer.unref?.(); }
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.tickWork?.catch(() => undefined); await this.pending; this.pendingEntrances.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.tickWork?.catch(() => undefined); await this.pending; this.pendingEntrances.clear(); this.pendingEntranceTimes.clear(); this.creationEntries.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
   /** Gateway resource changes invalidate even an already-running census. */
   invalidateSnapshot(): void { this.snapshotRevision += 1; this.snapshotInvalidated = true; }
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
@@ -243,6 +252,18 @@ export class CommunityEngine {
         await this.store.addAudit({ source: 'system' }, 'operation.cancel', op.ref, 'canceled');
       return true;
     }
+    const began = this.measureNow(), entry = this.creationEntries.get(op.ref);
+    const observation = op.kind === 'room.create' && this.options.onCreationTiming ? {
+      trace: entry?.trace ?? randomUUID().replace(/-/g, '').slice(0, 12), receivedAt: entry?.receivedAt ?? null,
+      queueMs: entry ? creationDuration(entry.receivedAt, began) : null,
+      createMs: null as number | null, moveMs: null as number | null, createdAt: null as number | null,
+      movedAt: null as number | null, finalizingAt: null as number | null, outcome: 'unconfirmed' as CreationOutcome,
+    } : null;
+    const measure = async <T>(stage: 'createMs' | 'moveMs', work: () => Promise<T>): Promise<T> => {
+      if (!observation) return work();
+      const start = this.measureNow();
+      try { return await work(); } finally { observation[stage] = creationDuration(start, this.measureNow()); }
+    };
     const snapshotRevision = this.snapshotRevision;
     let changed = false, createdRoom: StoredRoom | null = null;
     let executionRoom: StoredRoom | null = null, requiredAdmin = false;
@@ -309,23 +330,31 @@ export class CommunityEngine {
           };
           let actual: CommunityDiscordChannel | null;
           if (native) {
-            actual = await this.discord.createVoiceVerified!(category.externalId, name, owner.id, settings.rooms.visibility, settings.rooms.userLimit, op.ref, source, () => beforeCreationWrite(true));
+            actual = await measure('createMs', () => this.discord.createVoiceVerified!(category.externalId, name, owner.id, settings.rooms.visibility, settings.rooms.userLimit, op.ref, source, () => beforeCreationWrite(true)));
             changed = true;
             if (!actual || typeof actual.id !== 'string' || !actual.id || actual.name !== name || actual.userLimit !== settings.rooms.userLimit)
               throw new CommunityDiscordError(409, '创建结果需要对账', true);
           } else {
-            const channelId = await effect(() => this.discord.createVoice(category.externalId, name, owner.id, settings.rooms.visibility, settings.rooms.userLimit, op.ref));
+            const channelId = await measure('createMs', () => effect(() => this.discord.createVoice(category.externalId, name, owner.id, settings.rooms.visibility, settings.rooms.userLimit, op.ref)));
             actual = await this.discord.channel(channelId);
           }
           if (!actual || actual.kind !== 'voice' || actual.parentId !== category.externalId) throw new CommunityDiscordError(409, '创建结果需要对账', true);
+          if (observation) observation.createdAt = this.measureNow();
           const channelId = actual.id;
           const resource = await this.store.upsertResource('voice', channelId, name, { available: true, metadata: { parentId: category.externalId } });
           createdRoom = await this.store.patchRoom(createdRoom.ref, { channelRef: resource.ref, status: 'active' }, createdRoom.version);
           executionRoom = { ...createdRoom };
           // A delayed create must never pull a disconnected member back into voice.
           if (native) {
-            if (this.discord.channelOf(owner.id) === source) await this.discord.moveFrom!(owner.id, channelId, source, () => beforeCreationWrite(false));
-          } else if (this.discord.channelOf(owner.id) === source && await this.discord.canConnect(owner.id, channelId)) await effect(() => this.discord.move(owner.id, channelId));
+            if (this.discord.channelOf(owner.id) === source) {
+              const moved = await measure('moveMs', () => this.discord.moveFrom!(owner.id, channelId, source, () => beforeCreationWrite(false)));
+              if (moved && observation) observation.movedAt = this.measureNow();
+            }
+          } else if (this.discord.channelOf(owner.id) === source && await this.discord.canConnect(owner.id, channelId)) {
+            await measure('moveMs', () => effect(() => this.discord.move(owner.id, channelId)));
+            if (observation) observation.movedAt = this.measureNow();
+          }
+          if (observation) observation.finalizingAt = this.measureNow();
           result = { roomRef: createdRoom.ref };
         } else if (op.kind.startsWith('room.')) {
           const room = op.roomRef ? await this.store.getRoom(op.roomRef) : null;
@@ -440,7 +469,10 @@ export class CommunityEngine {
         else fail('invalid_input', '不支持此操作', 400);
       }
       await guard();
-      if (await this.store.finish(op.ref, op.claimToken!, { status: 'succeeded', result })) await this.store.addAudit(op.actor, op.kind, op.roomRef ?? createdRoom?.ref ?? null, 'succeeded');
+      if (await this.store.finish(op.ref, op.claimToken!, { status: 'succeeded', result })) {
+        await this.store.addAudit(op.actor, op.kind, op.roomRef ?? createdRoom?.ref ?? null, 'succeeded');
+        if (observation) observation.outcome = 'succeeded';
+      }
     } catch (error) {
       const uncertain = changed || error instanceof CommunityDiscordError && error.uncertain;
       if (createdRoom && !changed && (error instanceof CommunityStoreError || error instanceof CommunityDiscordError && !error.uncertain)) {
@@ -456,8 +488,24 @@ export class CommunityEngine {
       }
       const code = uncertain ? 'execution_uncertain' : error instanceof CommunityStoreError ? error.code : error instanceof CommunityDiscordError && error.status === 403 ? 'permissions_missing' : 'discord_error';
       const status = uncertain ? 'needs_review' : error instanceof CommunityStoreError && ['version_conflict', 'room_exists', 'room_limit'].includes(error.code) ? 'conflict' : 'failed';
-      if (await this.store.finish(op.ref, op.claimToken!, { status, error: code })) await this.store.addAudit(op.actor, op.kind, op.roomRef ?? createdRoom?.ref ?? null, status);
+      if (await this.store.finish(op.ref, op.claimToken!, { status, error: code })) {
+        await this.store.addAudit(op.actor, op.kind, op.roomRef ?? createdRoom?.ref ?? null, status);
+        if (observation) observation.outcome = status;
+      }
       this.options.onError?.(error);
+    } finally {
+      this.creationEntries.delete(op.ref);
+      if (observation) {
+        const end = this.measureNow();
+        reportCreationTiming(this.options.onCreationTiming, {
+          trace: observation.trace, outcome: observation.outcome, queue_ms: observation.queueMs,
+          create_ms: observation.createMs, move_ms: observation.moveMs,
+          to_created_ms: observation.receivedAt === null || observation.createdAt === null ? null : creationDuration(observation.receivedAt, observation.createdAt),
+          to_moved_ms: observation.receivedAt === null || observation.movedAt === null ? null : creationDuration(observation.receivedAt, observation.movedAt),
+          finalize_ms: observation.finalizingAt === null ? null : creationDuration(observation.finalizingAt, end),
+          total_ms: creationDuration(observation.receivedAt ?? began, end),
+        });
+      }
     }
     this.refreshPanels();
     return true;
@@ -498,7 +546,7 @@ export class CommunityEngine {
       if (room.transferExpiresAt && Date.parse(room.transferExpiresAt) <= this.now()) await this.store.patchRoom(room.ref, { transferToRef: null, transferExpiresAt: null }, room.version);
     }
   }
-  private async admitCreator(memberId: string, channelId: string | null | undefined, config: CommunitySettings): Promise<void> {
+  private async admitCreator(memberId: string, channelId: string | null | undefined, config: CommunitySettings, receivedAt?: number): Promise<void> {
     if (config.enabled && config.rooms.enabled && config.rooms.creatorRef) {
       const creator = await this.resource(config.rooms.creatorRef, 'voice');
       if (channelId === creator.externalId && this.discord.channelOf(memberId) === creator.externalId) {
@@ -521,6 +569,13 @@ export class CommunityEngine {
             await this.runNow(operation.ref);
           } else if (!active) {
             const operation = await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
+            if (this.options.onCreationTiming && receivedAt !== undefined) {
+              const current = this.measureNow();
+              // Diagnostics are bounded and never affect durable queue eligibility.
+              for (const [ref, entry] of this.creationEntries) if (current - entry.receivedAt > 600_000) this.creationEntries.delete(ref);
+              if (this.creationEntries.size >= 1000) this.creationEntries.delete(this.creationEntries.keys().next().value!);
+              this.creationEntries.set(operation.ref, { receivedAt, trace: randomUUID().replace(/-/g, '').slice(0, 12) });
+            }
             await this.runNow(operation.ref);
           }
         }
@@ -530,7 +585,7 @@ export class CommunityEngine {
   private async drainPendingEntrances(): Promise<void> {
     if (!this.pendingEntrances.size || this.stopped || this.snapshotInvalidated || this.options.isReadOnly?.()) return;
     const config = (await this.store.settings()).settings;
-    if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) { this.pendingEntrances.clear(); return; }
+    if (!config.enabled || !config.rooms.enabled || !config.rooms.creatorRef) { this.pendingEntrances.clear(); this.pendingEntranceTimes.clear(); return; }
     const creator = await this.store.resource(config.rooms.creatorRef, 'voice');
     if (!creator?.available) return;
     const occupants = this.discord.occupants(creator.externalId); if (occupants === null) return;
@@ -538,22 +593,34 @@ export class CommunityEngine {
     // must not create rooms for everyone it happens to find in the entrance.
     for (const [memberId, channelId] of this.pendingEntrances) {
       if (this.stopped || this.snapshotInvalidated || this.options.isReadOnly?.() || !(await this.store.runtime()).ready) return;
+      const receivedAt = this.pendingEntranceTimes.get(memberId);
       this.pendingEntrances.delete(memberId);
+      this.pendingEntranceTimes.delete(memberId);
       if (channelId !== creator.externalId || !occupants.includes(memberId) || this.discord.channelOf(memberId) !== creator.externalId) continue;
-      try { await this.admitCreator(memberId, channelId, config); }
+      try { await this.admitCreator(memberId, channelId, config, receivedAt); }
       catch (error) { this.options.onError?.(error); }
     }
   }
-  onVoice(memberId: string, channelId?: string | null, previousChannelId?: string | null): Promise<void> { return this.serial(async () => {
+  onVoice(memberId: string, channelId?: string | null, previousChannelId?: string | null): Promise<void> {
+    const receivedAt = this.options.onCreationTiming ? this.measureNow() : undefined;
+    return this.serial(async () => {
     this.pendingEntrances.delete(memberId);
+    this.pendingEntranceTimes.delete(memberId);
     if (this.stopped || this.options.isReadOnly?.()) return;
     const config = (await this.store.settings()).settings;
     if (this.snapshotInvalidated || !(await this.store.runtime()).ready) {
       const creator = config.enabled && config.rooms.enabled && config.rooms.creatorRef ? await this.store.resource(config.rooms.creatorRef, 'voice') : null;
-      if (!this.stopped && creator && channelId === creator.externalId) this.pendingEntrances.set(memberId, channelId);
+      if (!this.stopped && creator && channelId === creator.externalId) {
+        this.pendingEntrances.set(memberId, channelId);
+        if (receivedAt !== undefined) {
+          for (const [id, time] of this.pendingEntranceTimes) if (receivedAt - time > 600_000) this.pendingEntranceTimes.delete(id);
+          if (this.pendingEntranceTimes.size >= 1000) this.pendingEntranceTimes.delete(this.pendingEntranceTimes.keys().next().value!);
+          this.pendingEntranceTimes.set(memberId, receivedAt);
+        }
+      }
       return;
     }
-    await this.admitCreator(memberId, channelId, config);
+    await this.admitCreator(memberId, channelId, config, receivedAt);
     // A Gateway move only concerns its source and destination. The periodic
     // sweep still checks every managed room and deletion always reads reality.
     const affected = new Set([previousChannelId, channelId].filter((value): value is string => typeof value === 'string'));

@@ -10,12 +10,14 @@ import {executeCommunityExtra} from './extra';
 import {wireCommunity} from './lifecycle';
 import {COMMUNITY_COMMANDS,RETIRED_COMMUNITY_COMMAND_NAMES} from './commands';
 import {handleCommunityInteraction} from './interactions';
-export function createCommunityRuntime(options:{pool:pg.Pool;db:D1Database;client:Client;guildId:string;frontendUrl:string;isReadOnly:()=>boolean;onError:(error:unknown)=>void}) {
+import type {CreationObserver} from './creation-timing';
+export function createCommunityRuntime(options:{pool:pg.Pool;db:D1Database;client:Client;guildId:string;frontendUrl:string;isReadOnly:()=>boolean;onError:(error:unknown)=>void;onCreationTiming?:CreationObserver}) {
  const {pool,db,client,guildId}=options;
  const store=new CommunityStore(pool,guildId);const service=new CommunityService(store,db);const discord=createCommunityDiscord(client,guildId);
  const membership=new CommunityMembershipService(store,discord);
  const panels=new CommunityRoomPanels(store,discord,{isReadOnly:options.isReadOnly,onError:options.onError});
  const engine=new CommunityEngine(store,discord,{authorize:actor=>service.actorForExecution(actor),isReadOnly:options.isReadOnly,onError:options.onError,
+  onCreationTiming:options.onCreationTiming,
   syncPanels:()=>panels.sync(),
   executeExtra:(op,actor,guard)=>executeCommunityExtra({membership},op,actor,guard)});
  const unwire=wireCommunity(client,{guildId,engine,membership,isReadOnly:options.isReadOnly,onError:options.onError,

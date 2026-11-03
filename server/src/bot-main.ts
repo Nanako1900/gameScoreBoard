@@ -124,6 +124,7 @@ function main(): void {
   const client = createClient({ community: communityEnabled });
   const community = communityEnabled ? createCommunityRuntime({ pool, db: ctx.db, client, guildId: config.guildId,
     frontendUrl: config.frontendUrl, isReadOnly: () => ctx.readOnly || stopping,
+    onCreationTiming: record => console.info(JSON.stringify(record)),
     onError: error => console.error('community processing failed', describeError(error)) }) : null;
   const recorder = createVoiceRecorder({
     pool,

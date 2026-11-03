@@ -1,4 +1,4 @@
-export type CreationOutcome = 'succeeded' | 'failed' | 'conflict' | 'needs_review' | 'canceled';
+export type CreationOutcome = 'succeeded' | 'failed' | 'conflict' | 'needs_review' | 'canceled' | 'unconfirmed';
 export interface CreationTiming {
   event: 'community_room_creation';
   trace: string;
@@ -13,7 +13,7 @@ export interface CreationTiming {
 }
 export type CreationObserver = (timing: CreationTiming) => void | Promise<void>;
 
-const outcomes = new Set<CreationOutcome>(['succeeded', 'failed', 'conflict', 'needs_review', 'canceled']);
+const outcomes = new Set<CreationOutcome>(['succeeded', 'failed', 'conflict', 'needs_review', 'canceled', 'unconfirmed']);
 const milliseconds = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 export function creationDuration(start: number, end: number): number | null { return milliseconds(end - start); }
 
