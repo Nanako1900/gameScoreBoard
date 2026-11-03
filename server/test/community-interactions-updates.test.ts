@@ -68,6 +68,24 @@ describe('community source-message updates', () => {
     const s = setup('select', `v1:community:setvisibility:${roomRef}:2`, 'private'); s.input.values = ['locked']; s.op.status = 'succeeded'; vi.mocked(s.deps.wake!).mockRejectedValue(new Error('wake unavailable'));
     await handleCommunityInteraction(s.interaction, s.deps); onlySourceUpdate(s); expect(output(s)).toContain('操作已完成'); expect(output(s)).not.toContain('暂不可用');
   });
+  it.each([['membership', 'private'], ['room', 'private'], ['membership', 'shared'], ['room', 'shared']] as const)('retains only the accepted operation tracker after a transient %s read from %s', async (failure, source) => {
+    const s = source === 'private' ? setup('select', `v1:community:setvisibility:${roomRef}:2`, source) : setup('modal', `v1:community:panelsubmit:rename:${roomRef}`, source);
+    s.input.values = ['locked']; s.op.status = 'succeeded'; s.op.result = { item: { title: 'old private result' } };
+    if (failure === 'membership') vi.mocked(s.deps.service.actorFromDiscord).mockResolvedValueOnce({ userId: null, memberRef, memberAvailable: true, linked: false, isAdmin: false }).mockRejectedValue(new Error('transient membership read failure'));
+    else s.store.getRoom.mockResolvedValueOnce(s.room).mockRejectedValue(new Error('transient room read failure'));
+    await handleCommunityInteraction(s.interaction, s.deps);
+    expect(s.deps.service.enqueueForActor).toHaveBeenCalledOnce(); expect(output(s)).toContain('已受理，状态暂不可用'); expect(output(s)).toContain(`v1:community:op:${s.op.ref}`);
+    expect(output(s)).not.toContain(roomRef); expect(output(s)).not.toContain(s.room.name); expect(output(s)).not.toContain('old private result'); expect(output(s)).not.toContain('操作已完成'); expect(output(s)).not.toContain('请刷新后重试');
+    if (source === 'private') onlySourceUpdate(s); else { expect(s.input.followUp).toHaveBeenCalledOnce(); expect(s.input.editReply).not.toHaveBeenCalled(); }
+  });
+  it('retains a validated operation tracker if its room read fails during a manual refresh', async () => {
+    const s = setup('button', `v1:community:op:${randomUUID()}`, 'private'); s.store.getRoom.mockRejectedValue(new Error('transient room read failure'));
+    await handleCommunityInteraction(s.interaction, s.deps); expect(output(s)).toContain('已受理，状态暂不可用'); expect(output(s)).toContain(`v1:community:op:${s.op.ref}`); expect(output(s)).not.toContain(roomRef); onlySourceUpdate(s);
+  });
+  it('never creates a tracker for another member operation before a room read', async () => {
+    const s = setup('button', `v1:community:op:${randomUUID()}`, 'private'); s.op.actor.memberRef = randomUUID(); s.store.getRoom.mockRejectedValue(new Error('transient room read failure'));
+    await handleCommunityInteraction(s.interaction, s.deps); expect(output(s)).toContain('不存在或已不可见'); expect(output(s)).not.toContain('已受理'); expect(output(s)).not.toContain(s.op.ref); expect(s.store.getRoom).not.toHaveBeenCalled(); onlySourceUpdate(s);
+  });
   it.each(['null', 'read-error', 'unknown-status'])('never claims completion for %s', async condition => {
     const s = setup('select', `v1:community:setvisibility:${roomRef}:2`, 'private'); s.input.values = ['locked'];
     if (condition === 'null') s.store.getOperation.mockResolvedValue(null);
@@ -95,7 +113,12 @@ describe('community source-message updates', () => {
   it.each(['removed', 'changed'])('stops a stale operation when member identity is %s after polling', async change => {
     const s = setup('select', `v1:community:setvisibility:${roomRef}:2`, 'private'); s.input.values = ['locked'];
     vi.mocked(s.deps.service.actorFromDiscord).mockResolvedValueOnce({ memberRef, isAdmin: false, memberAvailable: true, linked: false, userId: null }).mockResolvedValue({ memberRef: change === 'changed' ? randomUUID() : memberRef, isAdmin: false, memberAvailable: change !== 'removed', linked: false, userId: null });
-    s.op.status = 'succeeded'; await handleCommunityInteraction(s.interaction, s.deps); expect(output(s)).not.toContain('操作已完成'); expect(output(s)).not.toContain(roomRef); onlySourceUpdate(s);
+    s.op.status = 'succeeded'; await handleCommunityInteraction(s.interaction, s.deps); expect(output(s)).not.toContain('操作已完成'); expect(output(s)).not.toContain('已受理'); expect(output(s)).not.toContain(s.op.ref); expect(output(s)).not.toContain(roomRef); onlySourceUpdate(s);
+  });
+  it.each([403, 404])('does not substitute an accepted receipt for an explicit post-enqueue %s denial', async status => {
+    const s = setup('select', `v1:community:setvisibility:${roomRef}:2`, 'private'); s.input.values = ['locked'];
+    vi.mocked(s.deps.service.actorFromDiscord).mockResolvedValueOnce({ userId: null, memberRef, memberAvailable: true, linked: false, isAdmin: false }).mockRejectedValue(new CommunityStoreError(status, 'membership_required', '成员身份已变化'));
+    await handleCommunityInteraction(s.interaction, s.deps); expect(output(s)).toContain('成员身份已变化'); expect(output(s)).not.toContain('已受理'); expect(output(s)).not.toContain(s.op.ref); onlySourceUpdate(s);
   });
   it('keeps safe recovery navigation when a stale version is rejected before an operation exists', async () => {
     const s = setup('select', `v1:community:setvisibility:${roomRef}:2`, 'private'); s.input.values = ['locked'];

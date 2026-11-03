@@ -2,7 +2,7 @@ import { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, type 
 import { isCommunityRef, type CommunityJson } from '../../../shared/community';
 import { COMMUNITY_COMMANDS, RETIRED_COMMUNITY_COMMAND_NAMES, isRetiredCommunityComponentId } from './commands';
 import { communityInteractionResponse, type CommunityInteractionMessage } from './interaction-response';
-import type { CommunityDiscord } from './discord';
+import { CommunityDiscordError, type CommunityDiscord } from './discord';
 import type { CommunityMembershipService } from './membership';
 import { canReadRoom, safeCommunityText } from './security';
 import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
@@ -26,6 +26,9 @@ function version(value: string | undefined): number { const number = Number(valu
 const RETIRED_NOTICE = '趣味工具及 AI 建议已下线。房间管理和兴趣身份仍可使用。';
 const pendingStates = new Set(['queued', 'running', 'retry_wait']);
 const operationStates: Record<string, string> = { queued: '已排队，尚未执行', running: '正在执行', retry_wait: '等待重试', succeeded: '操作已完成', failed: '操作失败', conflict: '内容或权限已变化，请刷新后重试', canceled: '操作已取消', needs_review: '执行结果需要管理员核对，请勿重复操作' };
+function accessDenied(error: unknown): boolean {
+  return (error instanceof CommunityStoreError || error instanceof CommunityDiscordError) && [401, 403, 404].includes(error.status);
+}
 
 /** At most four reads and 1.5 seconds, including a slow database read. Engine
  * wake-up is deliberately outside this budget: it owns its own durable retry. */
@@ -47,7 +50,7 @@ async function readOperationBriefly(deps: CommunityInteractionDependencies, ref:
         deps.service.store.getOperation(ref),
         new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
       ]);
-    } catch { latest = null; }
+    } catch (error) { if (accessDenied(error)) throw error; latest = null; }
     finally { if (timer) clearTimeout(timer); }
     if (latest && !pendingStates.has(latest.status)) return latest;
   }
@@ -82,6 +85,12 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
   }
   // ACK failures may already have reached Discord: do not retry another ACK.
   await response.defer();
+  // Only retain a locally accepted or freshly ownership-checked operation.
+  // This tracker never carries a room reference or historical result.
+  type OperationTracker = { ref: string; kind: string; rolesPage: number };
+  let trackedOperation: OperationTracker | null = null;
+  const acceptedReceipt = (operation: OperationTracker) => message('操作已受理，状态暂不可用，请刷新确认。', [row([button('刷新操作状态',
+    `v1:community:op:${operation.ref}${operation.kind === 'roles.set' ? `:roles:${operation.rolesPage}` : ''}`)])]);
   try {
     let authority = await deps.service.actorFromDiscord(interaction.user.id);
     const live = await deps.discord.member(interaction.user.id);
@@ -148,6 +157,7 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
       // Operation history survives retirement, but its old result is never
       // reopened or used to rename a room through a stale AI suggestion.
       if (op.kind.startsWith('fun.')) { await respond(message(RETIRED_NOTICE)); return; }
+      trackedOperation = { ref: op.ref, kind: op.kind, rolesPage };
       const result = object(op.result);
       const target = op.roomRef ?? (typeof result.roomRef === 'string' ? result.roomRef : null);
       let closed = false;
@@ -166,21 +176,15 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
         // submissions do not emit a new receipt or edit that shared message.
         if (response.quiet) return;
         if (op.kind === 'roles.set') {
-          try { await showRoles(rolesPage, '操作已完成'); }
-          catch { await respond(message('操作已完成，身份状态暂不可用，请刷新查看。', navigation)); }
+          await showRoles(rolesPage, '操作已完成');
           return;
         }
         if (target && isCommunityRef(target)) {
           if (closed) { await respond(message('操作已完成\n房间已关闭。', [row([button('我的房间', 'v1:community:room')])])); return; }
           // Only a fresh, authorized room view can supply current controls.
-          // A transient read failure must not turn completed execution into a
-          // failed action; access loss still follows the same private absence.
-          try {
-            await showRoom(target, '操作已完成');
-          } catch (error) {
-            if (error instanceof CommunityStoreError) throw error;
-            await respond(message('操作已完成，房间状态暂不可用，请刷新查看。', navigation));
-          }
+          // Temporary read failures keep the operation tracker below; explicit
+          // access loss still follows the same private absence.
+          await showRoom(target, '操作已完成');
           return;
         }
       }
@@ -188,6 +192,7 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
     };
     const enqueue = async (kind: string, roomRef: string | null, payload: CommunityJson, expectedVersion?: number, rolesPage = 0): Promise<void> => {
       const op = await deps.service.enqueueForActor(actor, kind, roomRef, payload, `interaction:${interaction.id}`, expectedVersion);
+      trackedOperation = { ref: op.ref, kind, rolesPage };
       // The queue is durable already. A slow or failed wake must not hold the
       // interaction open or encourage the member to execute the action twice.
       try { void deps.wake?.().catch(() => undefined); } catch { /* Scheduled execution will retry. */ }
@@ -196,7 +201,7 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
       // final read boundary, rather than repeating permissions on every poll.
       await refreshAuthority();
       if (current) await showOperation(current, rolesPage);
-      else await respond(message('操作已受理，状态暂不可用，请刷新确认。', [row([button('刷新操作状态', `v1:community:op:${op.ref}${kind === 'roles.set' ? `:roles:${rolesPage}` : ''}`)])]));
+      else await respond(acceptedReceipt({ ref: op.ref, kind, rolesPage }));
     };
     if (interaction.isChatInputCommand()) {
       if (command === 'room') await showRoom();
@@ -239,7 +244,8 @@ export async function handleCommunityInteraction(interaction: Interaction, deps:
     else if (parts[0] === 'op') { if (!isCommunityRef(parts[1])) return missing(); const op = await deps.service.store.getOperation(parts[1]); if (!op) return missing(); await showOperation(op, parts[2] === 'roles' ? Math.max(0, Number(parts[3]) || 0) : 0); }
     else return missing();
   } catch (error) {
-    await respond(message(error instanceof CommunityStoreError ? safeCommunityText(error.message) : '社区功能暂不可用，请刷新后重试。',
+    if (trackedOperation && !accessDenied(error)) await respond(acceptedReceipt(trackedOperation));
+    else await respond(message(error instanceof CommunityStoreError ? safeCommunityText(error.message) : '社区功能暂不可用，请刷新后重试。',
       [row([button('我的房间', 'v1:community:room'), button('兴趣身份', 'v1:community:roles')])]));
   }
   return true;
