@@ -41,6 +41,8 @@ import { createDispatcher, type Dispatcher } from './outbox/dispatcher';
 import { scheduleBoardRefresh } from './outbox/board-delivery';
 import { COMMUNITY_COMMANDS } from './community/commands';
 import { createCommunityRuntime } from './community/runtime';
+import { createCommunityAgentRuntime } from './community/agent-runtime';
+import { wireAgentMessages } from './community/agent-gateway';
 
 const HEALTH_PORT = 8788;
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -126,6 +128,11 @@ function main(): void {
     frontendUrl: config.frontendUrl, isReadOnly: () => ctx.readOnly || stopping,
     onCreationTiming: record => console.info(JSON.stringify(record)),
     onError: error => console.error('community processing failed', describeError(error)) }) : null;
+  const agent = communityEnabled ? createCommunityAgentRuntime({ pool, db: ctx.db, client, guildId: config.guildId,
+    frontendUrl: config.frontendUrl, env: actionCtx.env, isReadOnly: () => ctx.readOnly || stopping,
+    onError: () => console.error('community agent processing failed') }) : null;
+  const unwireAgent = agent ? wireAgentMessages(client, agent, () => stopping,
+    () => console.error('community agent message handling failed')) : () => undefined;
   const recorder = createVoiceRecorder({
     pool,
     // The getter is invoked when each queued job executes, not at event admission.
@@ -291,10 +298,11 @@ function main(): void {
     gateway = 'connecting';
     unwireVoice();
     unwireBoard();
+    unwireAgent();
     // The dispatcher first: it sends through the client's REST, which
     // destroy() takes the token from, so an event in flight would fail.
     await Promise.race([
-      Promise.allSettled([dispatcher?.stop(), recorder.stop(), community?.stop()]),
+      Promise.allSettled([dispatcher?.stop(), recorder.stop(), community?.stop(), agent?.stop()]),
       new Promise((resolve) => setTimeout(resolve, IN_FLIGHT_GRACE_MS).unref()),
     ]);
     await client.destroy().catch((error: unknown) => console.error('client.destroy failed', describeError(error)));
