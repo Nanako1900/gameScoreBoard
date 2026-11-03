@@ -6,7 +6,9 @@
 
 社区中心提供自助语音房与自动房管、公开入服欢迎、自选兴趣身份。Discord 与网页共用状态，全局主导航的「设置」集中个人与管理入口；首页另有一个「社区中心」入口。社区功能独立于信誉分。旧投票、分队、抽签、骰子、话题和社区 AI 灵感已下线，历史数据保留。
 
-网页沿用 [#43](https://github.com/Nanako1900/gameScoreBoard/pull/43) 的四项主导航、集中设置和整页详情。临时房的日常入口为 Discord：进入指定语音入口后自动建房并移入，房内文字聊天只有一张自动更新的控制卡，空房按配置时间删除；已有房间再次进入入口会送回原房。临时房由能查看该房间的服务器成员共用控制；固定房通过网页选择分类自动补卡，由 Nanako 管理员输入 Discord 用户 ID 分配管理者，空房也保留。个人导航、选择、确认和刷新复用同一张私密消息，共享卡只更新通用房间状态。常用五项设置保持集中，其余设置按组折叠；保存前显示具体字段问题并展开定位，操作记录故障不阻挡配置编辑。最新计划及验证见 [C7 计划](docs/community-bot/plan-c7.md)、[C7 验证](docs/community-bot/validation-c7.md)；固定房权限与控制卡见 [C5 计划](docs/community-bot/plan-c5.md)。
+网页沿用 [#43](https://github.com/Nanako1900/gameScoreBoard/pull/43) 的四项主导航、集中设置和整页详情。临时房的日常入口为 Discord：进入指定语音入口后自动建房并移入，房内文字聊天只有一张自动更新的控制卡，空房按配置时间删除；已有房间再次进入入口会送回原房。临时房由能查看该房间的服务器成员共用控制；固定房通过网页选择分类自动补卡，由 Nanako 管理员输入 Discord 用户 ID 分配管理者，空房也保留。个人导航、选择、确认和刷新复用同一张私密消息，共享卡只更新通用房间状态。常用五项设置保持集中，其余设置按组折叠；保存前显示具体字段问题并展开定位，操作记录故障不阻挡配置编辑。原消息交互与趣味下线见 [C7 计划](docs/community-bot/plan-c7.md)、[C7 验证](docs/community-bot/validation-c7.md)；固定房权限与控制卡见 [C5 计划](docs/community-bot/plan-c5.md)。
+
+本期 C8 缩短自动建房与移入链路：入口领取自身任务，独立预检并行，严格校验创建回执后直接登记；后台维护分段，房卡同步仍独立。性能证据与线上验收边界见 [C8 计划](docs/community-bot/plan-c8.md)、[C8 验证](docs/community-bot/validation-c8.md)。
 
 功能开关、权限、备份迁移与真实验收见 [社区使用与上线说明](docs/community-bot/operations.md)；需求和确认记录见 [community-bot/requirements.md](docs/community-bot/requirements.md)。本模块为 Node/PG 专属，旧 D1 隐藏入口。
 
