@@ -41,8 +41,8 @@ Discord 里**没有任何管理操作**，改判、撤销、改分都只在网�
    - Reset Token → 复制，就是 `DISCORD_TOKEN`。只显示一次，**只放进 Coolify**，不要贴到任何地方；
    - **Public Bot 关掉**（只有你能把它拉进服务器）；
    - Requires OAuth2 Code Grant 关掉；
-   - Privileged Gateway Intents（Presence / Server Members / Message Content）**全部不开**。
-     bot 使用 Guilds + GuildVoiceStates（非特权），开发者后台不用为语音记录再开开关；不读取普通聊天正文。信息板恢复只核对机器人自己消息的作者与按钮标记。
+   - 基础信誉／语音Bot的Privileged Gateway Intents保持关闭。启用`COMMUNITY_ENABLED`时，社区成员目录／入服欢迎需要 **Server Members Intent**，按[社区上线说明](community-bot/operations.md)配置；Presence和Message Content仍不用开启。
+     基础Bot使用Guilds＋GuildVoiceStates；社区另外使用GuildMembers及C9的非特权GuildMessages。C9只处理指定频道中直接@Bot的显式文字，不读取聊天历史；[直接提及属于Message Content豁免](https://docs.discord.com/developers/events/gateway#message-content-intent)。信息板恢复只核对机器人自己消息的作者与按钮标记。
 4. **OAuth2**：
    - Reset Secret → 复制，就是 `DISCORD_CLIENT_SECRET`；
    - Redirects 加 `https://capi.nanako.org/link/discord/callback`。必须和 `APP_URL` 加
