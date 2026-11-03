@@ -69,6 +69,13 @@ describe('community Agent bounded model boundary', () => {
     expect(fetch.mock.calls[0][1].body).not.toContain(config.apiKey);
     expect(result.answer).not.toContain(config.apiKey);
   });
+  it.each(['[test-provider-](https://example.invalid)secret', 'test-provider-\u0000secret', 'test-provider-\u0001secret'])(
+    'does not reconstruct an active credential while removing markup or controls (%#)', async disguised => {
+      const fetch = vi.fn().mockResolvedValue(response({ ...valid, answer: `回答。${disguised}` })); vi.stubGlobal('fetch', fetch);
+      const result = await answerAgentQuestion({ question: `房间 ${disguised}`, sources: [{ ...rooms, title: disguised, content: rooms.content + disguised }], config });
+      expect(fetch.mock.calls[0][1].body).not.toContain(config.apiKey);
+      expect(result.answer).not.toContain(config.apiKey);
+    });
   it.each([
     { ...config, apiKey: '' }, { ...config, apiKeyError: 'decrypt_failed' as const },
     { ...config, baseUrl: '' }, { ...config, model: '' }, { ...config, baseUrl: 'file:///private/key' },

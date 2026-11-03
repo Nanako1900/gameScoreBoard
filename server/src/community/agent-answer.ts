@@ -71,7 +71,7 @@ export function agentProviderReady(config: AiConfig): boolean {
 /** Model text never controls links or pings. The caller appends trusted source
  * titles/versions itself after this function has checked their opaque refs. */
 function publicText(text: string, key: string): string {
-  return redactAiSecret(text, key)
+  const clean = redactAiSecret(text, key)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .replace(/!?\[([^\]\n]*)\]\([^\n]*?\)/g, '$1')
     .replace(/^\s*\[[^\]\n]+\]:\s*\S+.*$/gm, '')
@@ -80,6 +80,9 @@ function publicText(text: string, key: string): string {
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/gi, '［链接已隐藏］')
     .replace(/\b(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?::\d+)?(?:\/[^\s<>]*)?/gi, '［链接已隐藏］')
     .replace(/\d{17,}/g, '［隐藏］').replace(/<［链接已隐藏］>/g, '［链接已隐藏］').trim();
+  // Removing formatting or controls can join previously separated fragments.
+  // Redact again only after every transformation has finished.
+  return redactAiSecret(clean, key);
 }
 function sourceInput(source: AgentSource, key: string): { ref: string; title: string; content: string; version: number } {
   if (!/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(source.ref) || source.ref.includes(key) || !Number.isSafeInteger(source.version) || source.version < 1
@@ -96,7 +99,7 @@ function parseAnswer(text: string, sources: readonly AgentSource[], key: string)
     || !Array.isArray(value.sourceRefs) || value.sourceRefs.length > sources.length
     || value.sourceRefs.some(ref => typeof ref !== 'string' || !refs.has(ref)) || new Set(value.sourceRefs).size !== value.sourceRefs.length) throw new AgentAnswerError('invalid_response');
   if (value.insufficient) return { ...INSUFFICIENT, sourceRefs: [] };
-  const answer = [...publicText(value.answer, key)].slice(0, 1200).join('');
+  const answer = redactAiSecret([...publicText(value.answer, key)].slice(0, 1200).join(''), key);
   if (!answer || !value.sourceRefs.length) throw new AgentAnswerError('invalid_response');
   return { answer, sourceRefs: value.sourceRefs as string[], insufficient: false };
 }
