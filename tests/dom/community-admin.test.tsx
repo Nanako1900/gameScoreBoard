@@ -67,6 +67,21 @@ it('saves retained settings despite malformed legacy fun fields and never reopen
  expect(body).toMatchObject({expectedVersion:2,settings:{welcome:{template:'欢迎 {name}，一起相聚！'},fun:{enabled:false,enabledTools:[],topics:[],ai:{enabled:false}}}});
  expect(screen.queryByRole('alert',{name:'社区设置需要修改'})).not.toBeInTheDocument();
 });
+it('saves ordinary changes to an older backend that still requires a nonempty disabled AI prompt',async()=>{
+ const original=vi.mocked(fetch).getMockImplementation()!;
+ vi.mocked(fetch).mockImplementation((input,init)=>{
+  if(String(input)==='/api/admin/community'&&init?.method==='POST'){
+   const body=JSON.parse(String(init.body));
+   if(!body.settings.fun.ai.prompt?.trim())return Promise.resolve(Response.json({error:'社区设置格式或范围无效'},{status:400}));
+  }
+  return original(input,init);
+ });
+ render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
+ fireEvent.change(screen.getByRole('spinbutton',{name:'默认人数限制（0 为不限）'}),{target:{value:'4'}});
+ fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));await screen.findByText('已保存待应用');
+ const posts=vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST');expect(posts).toHaveLength(1);
+ expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({settings:{rooms:{userLimit:4},fun:{enabled:false,enabledTools:[],ai:{enabled:false,prompt:expect.any(String)}}}});
+});
 it('shows reconciliation cases and sends refresh as a queued operation',async()=>{
  render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});
  fireEvent.click(screen.getByText('查看运行与日志'));
