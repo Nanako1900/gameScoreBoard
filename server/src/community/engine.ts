@@ -27,6 +27,7 @@ const iso = (value: number | null): string | null => value === null ? null : new
 export class CommunityEngine {
   private timer: ReturnType<typeof setInterval> | undefined;
   private pending: Promise<unknown> = Promise.resolve();
+  private tickWork: Promise<void> | undefined;
   private stopped = false;
   private lastSync = 0;
   private snapshotRevision = 0;
@@ -54,7 +55,7 @@ export class CommunityEngine {
     this.stopped = false; await this.sync();
     if (!this.timer) { this.timer = setInterval(() => { void this.tick().catch(error => this.options.onError?.(error)); }, this.options.intervalMs ?? 5000); this.timer.unref?.(); }
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.pending; this.pendingEntrances.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; await this.tickWork?.catch(() => undefined); await this.pending; this.pendingEntrances.clear(); await this.panelWork; await this.store.setRuntime({ ready: false, problem: 'bot_offline' }); }
   /** Gateway resource changes invalidate even an already-running census. */
   invalidateSnapshot(): void { this.snapshotRevision += 1; }
   sync(): Promise<boolean> { return this.serial(() => this.syncNow()); }
@@ -167,14 +168,28 @@ export class CommunityEngine {
       } catch (error) { this.options.onError?.(error); }
     }
   }
-  tick(): Promise<void> { return this.serial(async () => {
-    if (this.stopped) return;
-    if (this.now() - this.lastSync >= 30_000 && !await this.syncNow()) return;
-    if (this.options.isReadOnly?.()) return;
-    await this.maintenance();
-    for (let i = 0; i < 10; i += 1) if (!await this.runNow()) break;
+  tick(): Promise<void> {
+    if (this.tickWork) return this.tickWork;
+    const work = this.tickNow(); this.tickWork = work;
+    const finished = (): void => { if (this.tickWork === work) this.tickWork = undefined; };
+    void work.then(finished, finished); return work;
+  }
+  private async tickNow(): Promise<void> {
+    const roomRefs = await this.serial(async () => {
+      if (this.stopped) return null;
+      if (this.now() - this.lastSync >= 30_000 && !await this.syncNow()) return null;
+      if (this.stopped || this.options.isReadOnly?.()) return null;
+      return (await this.store.listRooms()).map(room => room.ref);
+    });
+    if (!roomRefs) return;
+    // Enqueue only the next fragment after the previous one finishes. Gateway
+    // entrance callbacks already waiting on serial can run between fragments.
+    for (const roomRef of roomRefs) await this.serial(async () => {
+      if (!this.stopped && !this.options.isReadOnly?.()) await this.maintenance(undefined, roomRef);
+    });
+    for (let i = 0; i < 10; i += 1) if (!await this.serial(() => this.options.isReadOnly?.() ? Promise.resolve(false) : this.runNow())) break;
     this.refreshPanels();
-  }); }
+  }
   runOne(): Promise<boolean> { return this.serial(() => this.runNow()); }
   private async resource(ref: string | null | undefined, kind: CommunityResourceKind): Promise<StoredResource> {
     const value = ref ? await this.store.resource(ref, kind) : null;
@@ -216,9 +231,9 @@ export class CommunityEngine {
     if ((op.actor.memberRef ?? null) !== actor.memberRef) return fail('version_conflict', '账号绑定已变化');
     return actor;
   }
-  private async runNow(): Promise<boolean> {
+  private async runNow(operationRef?: string): Promise<boolean> {
     if (this.stopped) return false;
-    const op = await this.store.claim(300); if (!op) return false;
+    const op = await this.store.claim(300, operationRef); if (!op) return false;
     // Normally retired jobs are canceled before claim. Also guard old/custom
     // queue adapters here without evaluating their former actor or room state.
     if (op.kind.startsWith('fun.')) {
@@ -429,10 +444,13 @@ export class CommunityEngine {
     for (const ref of config.roles.allowedRefs) if (!(await this.resource(ref, 'role')).safe) fail('permissions_missing', '身份白名单包含不安全身份');
     for (const ref of config.rooms.fixedCategoryRefs ?? []) await this.resource(ref, 'category');
   }
-  private async maintenance(channelIds?: ReadonlySet<string>): Promise<void> {
+  private async maintenance(channelIds?: ReadonlySet<string>, roomRef?: string): Promise<void> {
+    if (this.stopped || this.options.isReadOnly?.()) return;
     if (!(await this.store.runtime()).ready) return;
     const settings = (await this.store.settings()).settings;
-    for (let room of await this.store.listRooms()) {
+    const selected = roomRef ? [await this.store.getRoom(roomRef)] : await this.store.listRooms();
+    for (let room of selected) {
+      if (!room) continue;
       if (room.status !== 'active' || isFixedRoom(room)) continue;
       if (channelIds) {
         const channel = room.channelRef ? await this.store.resource(room.channelRef, 'voice') : null;
@@ -461,11 +479,11 @@ export class CommunityEngine {
           const resource = await this.store.upsertResource('member', member.id, safeCommunityText(member.name), { available: true, metadata: { bot: false, protected: member.protected, roleIds: member.roleIds, joinedAt: member.joinedAt } });
           const rooms = await this.store.listRooms({ includeClosed: true }); const active = rooms.find(room => room.ownerRef === resource.ref && room.status !== 'closed');
           if (active?.status === 'active') {
-            await this.store.enqueue('room.join', active.ref, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-return:${resource.ref}:${randomUUID()}`, active.version);
-            await this.runNow();
+            const operation = await this.store.enqueue('room.join', active.ref, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-return:${resource.ref}:${randomUUID()}`, active.version);
+            await this.runNow(operation.ref);
           } else if (!active) {
-            await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
-            await this.runNow();
+            const operation = await this.store.enqueue('room.create', null, { source: 'discord', memberRef: resource.ref }, { creatorOnly: true }, `voice-create:${resource.ref}:${randomUUID()}`);
+            await this.runNow(operation.ref);
           }
         }
       }

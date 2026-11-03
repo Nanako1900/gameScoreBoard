@@ -20,7 +20,7 @@ function setup() {
     patchRoom:vi.fn(async(ref:string,patch:object,version:number)=>{const r=rooms.find(r=>r.ref===ref)!;if(r.version!==version)throw new CommunityStoreError(409,'version_conflict','changed');Object.assign(r,patch,{version:r.version+1});return r}),
     roomAccess:vi.fn(async(ref:string)=>accesses.get(ref)??[]),setRoomAccess:vi.fn(async(ref:string,memberRef:string,patch:object)=>{const list=accesses.get(ref)??[];let a=list.find(a=>a.memberRef===memberRef);if(!a){a={memberRef,allowed:false,blocked:false,present:false};list.push(a)}Object.assign(a,patch);accesses.set(ref,list);return a}),
     enqueue:vi.fn(async(kind:string,roomRef:string|null,actor:StoredOperation['actor'],payload:StoredOperation['payload'],requestKey:string,expectedVersion?:number)=>{const existing=operations.find(o=>o.requestKey===requestKey);if(existing)return existing;const op={ref:randomUUID(),kind,roomRef,actor,payload,requestKey,expectedVersion:expectedVersion??null,status:'queued',claimToken:null,attempts:0,createdAt:new Date(now).toISOString(),finishedAt:null,error:null,result:null,expiresAt:new Date(now+300000).toISOString(),availableAt:new Date(now).toISOString(),errorCode:null} as StoredOperation;operations.push(op);return op}),
-    recoverExpired:vi.fn(async()=>{}),claim:vi.fn(async()=>{const op=operations.find(o=>o.status==='queued');if(!op)return null;op.status='running';op.claimToken=randomUUID();return op}),renew:vi.fn(async()=>true),
+    recoverExpired:vi.fn(async()=>{}),claim:vi.fn(async(_leaseSeconds?:number,operationRef?:string)=>{const op=operations.find(o=>o.status==='queued'&&(!operationRef||o.ref===operationRef));if(!op)return null;op.status='running';op.claimToken=randomUUID();return op}),renew:vi.fn(async()=>true),
     finish:vi.fn(async(ref:string,token:string,outcome:object)=>{const op=operations.find(o=>o.ref===ref)!;Object.assign(op,outcome);return true}),getOperation:vi.fn(async(ref:string)=>operations.find(o=>o.ref===ref)??null),resolveRecoveredOperation:vi.fn(async(ref:string,result:object)=>{Object.assign(operations.find(o=>o.ref===ref)!,{status:'succeeded',result});return true}),addAudit:vi.fn(async()=>{})} as unknown as CommunityStore;
   let present:string[]|null=['owner'];let position:string|null|undefined='creator';
   const discord={snapshot:vi.fn(async()=>({ready:true,guildName:'社区',selfId:'bot',resources:[...resources.values()].map(r=>({id:r.externalId,kind:r.kind,name:r.name,available:true,safe:true})),members:[{id:'owner',name:'owner',bot:false,protected:false,roleIds:[],joinedAt:null},{id:'other',name:'other',bot:false,protected:false,roleIds:[],joinedAt:null}]})),member:vi.fn(async(id:string)=>id==='gone'?null:{id,name:id,bot:false,protected:false,roleIds:[],joinedAt:null}),channel:vi.fn(async(id:string)=>({id,name:id,kind:id==='category'?'category':'voice',parentId:id==='category'?null:'category'})),canView:vi.fn(async()=>true),canConnect:vi.fn(async()=>true),occupants:vi.fn(()=>present),channelOf:vi.fn(()=>position),createVoice:vi.fn(async()=> 'channel'),findCreatedVoice:vi.fn(async()=>null),move:vi.fn(async()=>{}),rename:vi.fn(async()=>{}),setLimit:vi.fn(async()=>{}),setVisibility:vi.fn(async()=>{}),grant:vi.fn(async()=>{}),deny:vi.fn(async()=>{}),delete:vi.fn(async()=>{}),sendPanel:vi.fn(async()=> 'message')} as unknown as CommunityDiscord;
@@ -31,7 +31,51 @@ function setup() {
   return {engine,store,discord,authorize,resources,rooms,operations,owner,other,category,creator,waiting,channel,settings,enqueue,room,setNow:(n:number)=>{now=n},now:()=>now,setPresent:(p:string[]|null)=>{present=p},setPosition:(p:string|null|undefined)=>{position=p}};
 }
 
+const deferred=<T,>()=>{let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done});return {promise,resolve};};
+const drain=async()=>{for(let index=0;index<100;index++)await Promise.resolve();};
+
 describe('community room execution and reconciliation',()=>{
+  it('executes the newly admitted entrance operation before unrelated older queued work',async()=>{
+    const s=setup(),room=await s.room();const older=await s.enqueue('room.rename',room.ref,{name:'旧任务'},room.version);
+    vi.mocked(s.discord.createVoice).mockResolvedValue('new-channel');
+    await s.engine.onVoice('other','creator','waiting');
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();expect(s.discord.rename).not.toHaveBeenCalled();expect(older.status).toBe('queued');
+    const entrance=s.operations.find(op=>op.kind==='room.create')!;
+    expect(s.store.claim).toHaveBeenCalledWith(300,entrance.ref);expect(entrance.status).toBe('succeeded');
+  });
+  it('lets a waiting entrance run between periodic maintenance of two unrelated rooms',async()=>{
+    const s=setup();await s.room();const secondChannel=randomUUID();
+    s.resources.set(secondChannel,{...s.resources.get(s.channel)!,ref:secondChannel,externalId:'second-channel'});
+    await s.store.createRoom(s.other,'另一个房间',{channelRef:secondChannel,status:'active'} as never);await s.engine.sync();
+    const started=deferred<void>(),release=deferred<void>(),order:string[]=[];
+    const channel=vi.mocked(s.discord.channel).getMockImplementation()!;
+    vi.mocked(s.discord.channel).mockImplementation(async id=>{if(id==='channel'){order.push('first');started.resolve();await release.promise;}if(id==='second-channel')order.push('second');return channel(id);});
+    vi.mocked(s.discord.createVoice).mockImplementation(async()=>{order.push('create');return 'new-channel';});
+    const tick=s.engine.tick();await started.promise;const entrance=s.engine.onVoice('visitor','creator','waiting');release.resolve();
+    await tick;await entrance;expect(order).toEqual(['first','create','second']);
+  });
+  it('lets a waiting entrance run between ordinary operations in one periodic tick',async()=>{
+    const s=setup(),room=await s.room();await s.engine.sync();
+    await s.enqueue('room.rename',room.ref,{name:'先改名'});await s.enqueue('room.rename',room.ref,{name:'再改名'});
+    const started=deferred<void>(),release=deferred<void>(),order:string[]=[];
+    vi.mocked(s.discord.rename).mockImplementation(async()=>{order.push('rename');if(order.length===1){started.resolve();await release.promise;}});
+    vi.mocked(s.discord.createVoice).mockImplementation(async()=>{order.push('create');return 'new-channel';});
+    const tick=s.engine.tick();await started.promise;const entrance=s.engine.onVoice('other','creator','waiting');release.resolve();
+    await tick;await entrance;expect(order).toEqual(['rename','create','rename']);
+  });
+  it('coalesces overlapping timer ticks and drains their current fragment before stopping',async()=>{
+    const s=setup(),room=await s.room();await s.engine.sync();
+    const started=deferred<void>(),release=deferred<void>();const channel=vi.mocked(s.discord.channel).getMockImplementation()!;
+    vi.mocked(s.discord.channel).mockImplementation(async id=>{started.resolve();await release.promise;return channel(id);});
+    const tick=s.engine.tick();await started.promise;expect(s.engine.tick()).toBe(tick);
+    let stopped=false;const stop=s.engine.stop().then(()=>{stopped=true;});await drain();expect(stopped).toBe(false);
+    release.resolve();await tick;await stop;expect(s.store.claim).not.toHaveBeenCalled();expect(room.status).toBe('active');
+    expect(s.store.setRuntime).toHaveBeenLastCalledWith({ready:false,problem:'bot_offline'});
+  });
+  it('does not run queued work when a due periodic census fails',async()=>{
+    const s=setup();await s.enqueue('room.create');vi.mocked(s.discord.snapshot).mockResolvedValue({ready:false,guildName:'',selfId:'bot',resources:[],members:[]});
+    await s.engine.tick();expect(s.store.claim).not.toHaveBeenCalled();expect(s.discord.createVoice).not.toHaveBeenCalled();
+  });
   it('cancels a claimed retired task without invoking authorization, extra execution or room quarantine',async()=>{
     const s=setup();const room=await s.room();const extra=vi.fn(async()=>({item:{title:'private'}}));
     s.authorize.mockRejectedValue(new Error('retired actors must not be re-executed'));
