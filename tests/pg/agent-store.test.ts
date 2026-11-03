@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import type pg from 'pg';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { defaultAgentSettings } from '../../shared/community-agent';
 import { CommunityAgentStore, AgentDeliveryError } from '../../server/src/community/agent-store';
@@ -101,6 +103,86 @@ it('enforces one guild-wide budget across concurrent callers and a cooldown acro
   expect((await store.reserve({ ...winner, messageId: '777777777777777777' })).kind).toBe('rate_limited');
   now += 10_000;
   expect((await store.reserve({ ...winner, messageId: '888888888888888888' })).kind).toBe('accepted');
+});
+
+it('defaults to an independent UTC day even when the scoreboard reset timezone is UTC+8', async () => {
+  vi.stubEnv('RESET_TZ_OFFSET', '8');
+  try {
+    const utc = new CommunityAgentStore(pool, GUILD, { now: () => now });
+    await utc.saveSettings({ ...defaultAgentSettings(), enabled: true, channelRefs: [channelRef], userDailyLimit: 1, cooldownSeconds: 0 }, 1, 'admin');
+    const input = { discordUserId: MEMBER, channelId: CHANNEL };
+    now = Date.parse('2026-11-03T15:59:59Z');
+    expect((await utc.reserve({ ...input, messageId: '444444444444444444' })).kind).toBe('accepted');
+    expect((await utc.diagnostics()).usage.day).toBe('2026-11-03');
+    now = Date.parse('2026-11-03T16:00:01Z');
+    expect((await utc.reserve({ ...input, messageId: '555555555555555555' })).kind).toBe('rate_limited');
+    now = Date.parse('2026-11-04T00:00:00Z');
+    expect((await utc.reserve({ ...input, messageId: '666666666666666666' })).kind).toBe('accepted');
+    expect((await utc.diagnostics()).usage.day).toBe('2026-11-04');
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('commits the sending intent before external work and persists only the first confirmed reply ID', async () => {
+  const running = await claim(), replyId = '777777777777777777';
+  const result = await store.withDeliveryGuard(running, async beforeWrite => {
+    await beforeWrite();
+    const visible = (await pool.query('SELECT status FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0];
+    expect(visible.status).toBe('sending');
+    return { id: replyId };
+  });
+  expect(result).toEqual({ kind: 'delivered', value: { id: replyId } });
+  expect((await pool.query('SELECT reply_message_id FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0].reply_message_id).toBe(replyId);
+  await store.withDeliveryGuard(running, async () => undefined);
+  await store.withDeliveryGuard(running, async () => ({ id: '888888888888888888' }));
+  expect((await pool.query('SELECT reply_message_id FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0].reply_message_id).toBe(replyId);
+  expect(JSON.stringify((await store.diagnostics()).requests)).not.toContain(replyId);
+});
+
+it('isolates an invalid reply receipt without persisting it or posting again', async () => {
+  const running = await claim(), post = vi.fn(async () => ({ id: 'not-a-discord-id' }));
+  expect(await store.withDeliveryGuard(running, post)).toEqual({ kind: 'isolated' });
+  expect(await store.withDeliveryGuard(running, post)).toEqual({ kind: 'canceled' });
+  expect(post).toHaveBeenCalledTimes(1);
+  expect((await pool.query('SELECT reply_message_id FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0].reply_message_id).toBeNull();
+});
+
+it('retains a durable sending intent when the REST transaction rolls back and isolation cannot be committed', async () => {
+  const running = await claim(); let externalWorkStarted = false;
+  const faultyPool = {
+    async connect() {
+      const client = await pool.connect();
+      return new Proxy(client, { get(target, property) {
+        if (property === 'query') return async (sql: string, parameters?: unknown[]) => {
+          if (sql === 'COMMIT' && externalWorkStarted) throw new Error('commit unavailable');
+          return target.query(sql, parameters);
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+    },
+    async query(sql: string, parameters?: unknown[]) {
+      if (sql.includes('SET status=$4') && externalWorkStarted) throw new Error('database unavailable');
+      return pool.query(sql, parameters);
+    },
+  } as unknown as pg.Pool;
+  const uncertainStore = new CommunityAgentStore(faultyPool, GUILD, { now: () => now, offsetHours: 8 });
+  const post = vi.fn(async () => { externalWorkStarted = true; return { id: '777777777777777777' }; });
+  expect(await uncertainStore.withDeliveryGuard(running, post)).toEqual({ kind: 'isolated' });
+  expect((await pool.query('SELECT status FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0].status).toBe('sending');
+  now += 90_001; await store.recoverExpired();
+  expect((await store.diagnostics()).requests[0]).toMatchObject({ status: 'isolated', errorCode: 'delivery_unknown' });
+  expect(await store.withDeliveryGuard(running, post)).toEqual({ kind: 'canceled' }); expect(post).toHaveBeenCalledTimes(1);
+});
+
+it('can reapply the migration to an existing request table without losing binding generations or request metadata', async () => {
+  const running = await claim();
+  const binding = (await pool.query('SELECT binding_id FROM discord_links WHERE discord_user_id=$1', [MEMBER])).rows[0].binding_id;
+  await pool.query('ALTER TABLE community_agent_requests DROP COLUMN IF EXISTS reply_message_id');
+  const migration = readFileSync(new URL('../../server/migrations/0013_community_agent.sql', import.meta.url), 'utf8');
+  await pool.query(migration); await pool.query(migration);
+  expect((await pool.query('SELECT binding_id FROM discord_links WHERE discord_user_id=$1', [MEMBER])).rows[0].binding_id).toBe(binding);
+  const request = (await pool.query('SELECT status,reply_message_id FROM community_agent_requests WHERE ref=$1', [running.ref])).rows[0];
+  expect(request).toEqual({ status: 'running', reply_message_id: null });
 });
 
 it('caps pending admissions at twenty and recovers only expired work without replaying it', async () => {

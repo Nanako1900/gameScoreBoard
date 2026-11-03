@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS community_agent_requests (
   ref uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   guild_id text NOT NULL REFERENCES community_agent_settings(guild_id),
   source_message_id text NOT NULL,
+  reply_message_id text,
   discord_user_id text NOT NULL,
   channel_id text NOT NULL,
   user_id text NOT NULL,
@@ -46,6 +47,8 @@ CREATE TABLE IF NOT EXISTS community_agent_requests (
   latency_ms integer CHECK(latency_ms>=0),
   UNIQUE(guild_id,source_message_id)
 );
+-- Also supports reapplying this migration to an existing C9 request table.
+ALTER TABLE community_agent_requests ADD COLUMN IF NOT EXISTS reply_message_id text;
 CREATE INDEX IF NOT EXISTS community_agent_requests_recent ON community_agent_requests(guild_id,created_at DESC,ref DESC);
 CREATE TABLE IF NOT EXISTS community_agent_usage (
   guild_id text NOT NULL REFERENCES community_agent_settings(guild_id),

@@ -9,7 +9,6 @@ import type { Env } from '../../../worker/types';
 import type { CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
 import { AgentValidationError, parseAgentDocumentInput, parseAgentSettings, type AgentAdminData } from '../../../shared/community-agent';
 import { loadAiConfig } from '../../../worker/ai/config';
-import { resetOffsetHours } from '../../../worker/time';
 import { CommunityService, CommunitySettingsInputError } from './service';
 import { CommunityStoreError, type CommunityStore } from './store';
 import { CommunityAgentStore } from './agent-store';
@@ -48,7 +47,7 @@ function withoutMeta(input: Record<string, unknown>): Record<string, unknown> {
 /** Node-only HTTP boundary. The app process has no Discord token and only queues operations. */
 export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> {
   const { store, db, env } = deps; const service = new CommunityService(store, db); const app = new Hono<RouteEnv>();
-  const agent = new CommunityAgentStore(store.pool, store.guildId, { offsetHours: resetOffsetHours(env.RESET_TZ_OFFSET) });
+  const agent = new CommunityAgentStore(store.pool, store.guildId, { offsetHours: 0 });
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store'); c.header('X-Content-Type-Options', 'nosniff');
     if (hasNulInUrl(c.req.url)) fail(400, 'invalid_input', '请求包含非法字符');

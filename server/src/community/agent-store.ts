@@ -4,7 +4,6 @@ import { parseAgentDocumentInput, parseAgentSettings, safeAgentText,
   type AgentAdminData, type AgentDocument, type AgentDocumentInput, type AgentErrorCode, type AgentRequestStatus,
   type AgentRequestView, type AgentSettings } from '../../../shared/community-agent';
 import { isCommunityRef } from '../../../shared/community';
-import { resetOffsetHours } from '../../../worker/time';
 import { checkOut } from '../db/d1';
 import { CommunityStoreError } from './store';
 
@@ -54,7 +53,7 @@ export class CommunityAgentStore {
   private readonly offsetHours: number;
   constructor(readonly pool: pg.Pool, readonly guildId: string, options: { now?: () => number; offsetHours?: number } = {}) {
     this.now = options.now ?? Date.now;
-    this.offsetHours = options.offsetHours ?? resetOffsetHours(process.env.RESET_TZ_OFFSET);
+    this.offsetHours = options.offsetHours ?? 0;
   }
   private async tx<T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     const checked = await checkOut(this.pool);
@@ -198,7 +197,7 @@ export class CommunityAgentStore {
       return { kind: 'accepted', request: { ref: String(request.ref) } };
     });
   }
-  private async guarded(client: Query, key: { ref: string; claimToken?: string }, queued = false): Promise<{ row: Row; snapshot: AgentSnapshot } | null> {
+  private async guarded(client: Query, key: { ref: string; claimToken?: string }, phase: 'queued' | 'running' | 'sending' = 'running'): Promise<{ row: Row; snapshot: AgentSnapshot } | null> {
     if (!isCommunityRef(key.ref) || key.claimToken !== undefined && !isCommunityRef(key.claimToken)) return null;
     const snapshot = this.snapshot(await this.settingsRow(client, 'share'));
     const request = (await client.query('SELECT * FROM community_agent_requests WHERE guild_id=$1 AND ref=$2', [this.guildId, key.ref])).rows[0] as Row | undefined;
@@ -206,7 +205,7 @@ export class CommunityAgentStore {
     const link = (await client.query(`SELECT l.user_id,l.binding_id FROM discord_links l JOIN users u ON u.id=l.user_id
       WHERE l.discord_user_id=$1 FOR UPDATE OF l FOR SHARE OF u`, [request.discord_user_id])).rows[0];
     const row = (await client.query('SELECT * FROM community_agent_requests WHERE guild_id=$1 AND ref=$2 FOR UPDATE', [this.guildId, key.ref])).rows[0] as Row;
-    const active = queued ? row.status === 'queued' : row.status === 'running' && row.claim_token === key.claimToken;
+    const active = row.status === phase && (phase === 'queued' || row.claim_token === key.claimToken);
     if (!active) return null;
     let reason: AgentErrorCode | null = null;
     if (+new Date(String(row.lease_until)) <= this.now()) reason = 'lease_expired';
@@ -227,7 +226,7 @@ export class CommunityAgentStore {
   }
   async claim(requestRef: string): Promise<AgentClaim | null> {
     return this.tx(async client => {
-      const guarded = await this.guarded(client, { ref: requestRef }, true);
+      const guarded = await this.guarded(client, { ref: requestRef }, 'queued');
       if (!guarded) return null;
       const claimToken = randomUUID();
       await client.query("UPDATE community_agent_requests SET status='running',claim_token=$3,lease_until=$4 WHERE guild_id=$1 AND ref=$2",
@@ -241,16 +240,30 @@ export class CommunityAgentStore {
   async check(claim: AgentClaimKey): Promise<boolean> { return this.tx(async client => !!await this.guarded(client, claim)); }
   async withDeliveryGuard<T>(claim: AgentClaimKey, work: (beforeWrite: () => Promise<void>) => Promise<T>): Promise<AgentDeliveryResult<T>> {
     try {
-      return await this.tx(async client => {
-        if (!await this.guarded(client, claim)) return { kind: 'canceled' };
+      // Persist the intent before touching Discord. If the process or the next
+      // transaction dies after POST, recovery must retain an unknown send,
+      // rather than mistake the rolled-back write for an untouched request.
+      const admitted = await this.tx(async client => {
+        if (!await this.guarded(client, claim)) return false;
         await client.query("UPDATE community_agent_requests SET status='sending' WHERE guild_id=$1 AND ref=$2", [this.guildId, claim.ref]);
+        return true;
+      });
+      if (!admitted) return { kind: 'canceled' };
+      return await this.tx(async client => {
+        if (!await this.guarded(client, claim, 'sending')) return { kind: 'canceled' };
         try {
           const value = await work(async () => {
             const current = (await client.query('SELECT lease_until,status,claim_token FROM community_agent_requests WHERE guild_id=$1 AND ref=$2', [this.guildId, claim.ref])).rows[0];
             if (!current || current.status !== 'sending' || current.claim_token !== claim.claimToken || +new Date(current.lease_until) <= this.now())
               throw new AgentDeliveryError(false, 'lease_expired');
           });
-          await client.query("UPDATE community_agent_requests SET status='running' WHERE guild_id=$1 AND ref=$2", [this.guildId, claim.ref]);
+          let replyId: string | null = null;
+          if (value !== null && typeof value === 'object' && 'id' in value) {
+            const receipt = (value as { id: unknown }).id;
+            if (typeof receipt !== 'string' || !EXTERNAL_ID.test(receipt)) throw new AgentDeliveryError(true, 'delivery_unknown');
+            replyId = receipt;
+          }
+          await client.query("UPDATE community_agent_requests SET status='running',reply_message_id=COALESCE(reply_message_id,$3) WHERE guild_id=$1 AND ref=$2", [this.guildId, claim.ref, replyId]);
           return { kind: 'delivered', value };
         } catch (error) {
           const uncertain = !(error instanceof AgentDeliveryError) || error.uncertain;
