@@ -109,6 +109,10 @@ function leaveAndReturn(): void {
 }
 
 beforeEach(() => {
+  // These assertions isolate explicit invalidation from the weekly-reset
+  // watcher. Keep the fixture's reset in the future regardless of today's date.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(START);
   window.history.replaceState(null, '', '/board');
   visibility = 'visible';
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
@@ -123,6 +127,7 @@ afterEach(() => {
 
 describe('App — the board recovery countdown', () => {
   it('ticks by the minute and reads 回血中… once the reset has passed', async () => {
+    vi.useRealTimers(); // Replace the baseline's Date-only clock with an advancing clock.
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       shouldAdvanceTime: true,
@@ -343,6 +348,7 @@ describe('App — a refresh that fails', () => {
 
 describe('App — the weekly reset passes with the page open', () => {
   it('refetches config, shows 回血中… meanwhile, and never a negative countdown', async () => {
+    vi.useRealTimers(); // Replace the baseline's Date-only clock with an advancing clock.
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       shouldAdvanceTime: true,
