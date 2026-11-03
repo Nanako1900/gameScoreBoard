@@ -262,6 +262,149 @@ describe('community Discord resource adapter',()=>{
   });
 });
 
+describe('verified voice creation and source-bound movement', () => {
+  const SOURCE = '555555555555555556';
+  function movementSetup() {
+    const s = setup(); s.channels.set(SOURCE, rawChannel(SOURCE)); s.voices.set(OWNER, { id: OWNER, channelId: SOURCE });
+    return s;
+  }
+  it.each([false, true])('starts independent creation reads together (verified: %s)', async verified => {
+    const s = setup(), get = s.get.getMockImplementation()!;
+    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+    s.get.mockImplementation(async (route, options) => { if (route === Routes.guild(G)) await blocked; return get(route, options); });
+    const work = verified ? s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 6, OP, ROOM, async () => {})
+      : s.api.createVoice(PARENT, '房间', OWNER, 'hidden', 6, OP);
+    try {
+      expect(s.get.mock.calls.map(([route]) => route)).toEqual(expect.arrayContaining([Routes.channel(PARENT), Routes.guildMember(G, OWNER)]));
+      expect(s.post).not.toHaveBeenCalled();
+    } finally { release(); await work; }
+    expect(s.get).toHaveBeenCalledTimes(5);
+  });
+  it.each([false, true])('starts independent movement reads together (source-bound: %s)', async sourceBound => {
+    const s = movementSetup(), get = s.get.getMockImplementation()!;
+    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+    s.get.mockImplementation(async (route, options) => { if (route === Routes.guild(G)) await blocked; return get(route, options); });
+    const work = sourceBound ? s.api.moveFrom!(OWNER, ROOM, SOURCE, async () => {}) : s.api.move(OWNER, ROOM);
+    try {
+      expect(s.get.mock.calls.map(([route]) => route)).toEqual(expect.arrayContaining([
+        Routes.guildMember(G, OWNER), Routes.channel(SOURCE), Routes.channel(ROOM),
+      ]));
+      expect(s.patch).not.toHaveBeenCalled();
+    } finally { release(); await work; }
+    expect(s.get).toHaveBeenCalledTimes(6);
+  });
+  it('checks database authority after create reads and returns only the actual validated POST receipt', async () => {
+    const s = setup(), beforeWrite = vi.fn(async () => { expect(s.get).toHaveBeenCalledTimes(5); expect(s.post).not.toHaveBeenCalled(); });
+    expect(await s.api.createVoiceVerified!(PARENT, ' 我的房间 ', OWNER, 'hidden', 6, OP, ROOM, beforeWrite))
+      .toEqual({ id: ROOM, kind: 'voice', parentId: PARENT, name: '我的房间', userLimit: 6 });
+    expect(beforeWrite).toHaveBeenCalledTimes(1);
+    expect(s.get.mock.calls.some(([route]) => route === Routes.channel(ROOM))).toBe(false);
+    expect(s.post.mock.calls[0][1].reason).toBe(`community-room:${OP}`);
+  });
+  it.each(['initial', 'reads', 'guard'] as const)('does not create after the owner leaves the expected entrance during %s', async stage => {
+    const s = setup(), get = s.get.getMockImplementation()!;
+    if (stage === 'initial') s.voices.delete(OWNER);
+    if (stage === 'reads') s.get.mockImplementation(async (route, options) => {
+      if (route === Routes.channel(PARENT)) s.voices.set(OWNER, { id: OWNER, channelId: TEXT });
+      return get(route, options);
+    });
+    const beforeWrite = vi.fn(async () => { if (stage === 'guard') s.voices.delete(OWNER); });
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, ROOM, beforeWrite)).rejects.toMatchObject({ status: 409, uncertain: false });
+    expect(s.post).not.toHaveBeenCalled();
+  });
+  it('retains a successful creation receipt when the owner disconnects during POST', async () => {
+    const s = setup(), post = s.post.getMockImplementation()!;
+    s.post.mockImplementation(async (route, options) => { s.voices.delete(OWNER); return post(route, options); });
+    expect(await s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 6, OP, ROOM, async () => {}))
+      .toMatchObject({ id: ROOM, parentId: PARENT, userLimit: 6 });
+    expect(await s.api.moveFrom!(OWNER, ROOM, ROOM, async () => {})).toBe(false);
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each([
+    { id: undefined }, { id: 'invalid' }, { guild_id: OTHER }, { type: ChannelType.GuildText }, { parent_id: TEXT },
+    { name: undefined }, { name: '别的房间' }, { user_limit: undefined }, { user_limit: -1 }, { user_limit: 99.5 },
+    { user_limit: 1 }, { permission_overwrites: undefined },
+  ])('quarantines an unverified POST receipt: %j', async changed => {
+    const s = setup(); s.post.mockResolvedValue({ ...rawChannel(), name: '房间', user_limit: 6, ...changed } as never);
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 6, OP, ROOM, async () => {}))
+      .rejects.toMatchObject({ uncertain: true });
+    expect(s.post).toHaveBeenCalledTimes(1); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('marks a non-object POST receipt uncertain without changing a definite pre-write rejection', async () => {
+    const s = setup(); s.post.mockResolvedValue(null as never);
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, ROOM, async () => {})).rejects.toMatchObject({ uncertain: true });
+    const t = setup(); t.post.mockRejectedValue({ status: 403 });
+    await expect(t.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, ROOM, async () => {}))
+      .rejects.toMatchObject({ status: 403, uncertain: false });
+  });
+  it.each(['initial', 'reads', 'guard'] as const)('does not pull a member from a changed source during %s', async stage => {
+    const s = movementSetup(), get = s.get.getMockImplementation()!;
+    if (stage === 'initial') s.voices.set(OWNER, { id: OWNER, channelId: TEXT });
+    if (stage === 'reads') s.get.mockImplementation(async (route, options) => {
+      if (route === Routes.guildRoles(G)) s.voices.set(OWNER, { id: OWNER, channelId: TEXT });
+      return get(route, options);
+    });
+    const beforeWrite = vi.fn(async () => { if (stage === 'guard') s.voices.delete(OWNER); });
+    expect(await s.api.moveFrom!(OWNER, ROOM, SOURCE, beforeWrite)).toBe(false);
+    expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('checks database authority after fresh movement reads and before PATCH', async () => {
+    const s = movementSetup(), beforeWrite = vi.fn(async () => { expect(s.get).toHaveBeenCalledTimes(6); expect(s.patch).not.toHaveBeenCalled(); });
+    expect(await s.api.moveFrom!(OWNER, ROOM, SOURCE, beforeWrite)).toBe(true);
+    expect(beforeWrite).toHaveBeenCalledTimes(1);
+    expect(s.patch).toHaveBeenCalledWith(Routes.guildMember(G, OWNER), { body: { channel_id: ROOM }, reason: 'community room move' });
+  });
+  it.each(['create', 'move'] as const)('does not write after a rejected database guard: %s', async action => {
+    const s = movementSetup(), beforeWrite = vi.fn(async () => { throw new Error('lease or identity changed'); });
+    const work = action === 'create' ? s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, SOURCE, beforeWrite)
+      : s.api.moveFrom!(OWNER, ROOM, SOURCE, beforeWrite);
+    await expect(work).rejects.toThrow('lease or identity changed');
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each(['member', 'role', 'overwrite'] as const)('refreshes target access after a %s change instead of reusing creation permission reads', async changed => {
+    const s = movementSetup(); s.roles.find(role => role.id === G)!.permissions = (BASE & ~P.Connect).toString();
+    s.roles.find(role => role.id === FUN)!.permissions = P.Connect.toString();
+    await s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, SOURCE, async () => {});
+    if (changed === 'member') s.members.get(OWNER)!.roles = [];
+    if (changed === 'role') s.roles.find(role => role.id === FUN)!.permissions = '0';
+    if (changed === 'overwrite') s.channels.get(ROOM)!.permission_overwrites.push({ id: OWNER, type: 1, allow: '0', deny: P.Connect.toString() });
+    expect(await s.api.moveFrom!(OWNER, ROOM, SOURCE, async () => {})).toBe(false);
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G))).toHaveLength(2);
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildMember(G, OWNER))).toHaveLength(2);
+    expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('refreshes creation permissions for a second operation after a guild-role change', async () => {
+    const s = setup();
+    await s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, ROOM, async () => {});
+    s.setBotPermissions(BASE);
+    await expect(s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, ROOM, async () => {})).rejects.toMatchObject({ status: 403 });
+    expect(s.get.mock.calls.filter(([route]) => route === Routes.guildRoles(G))).toHaveLength(2);
+    expect(s.post).toHaveBeenCalledTimes(1);
+  });
+  it.each(['create', 'move'] as const)('fails explicitly when Gateway becomes unavailable before %s writes', async action => {
+    const s = movementSetup(), beforeWrite = vi.fn(async () => { s.setAvailable(false); });
+    const work = action === 'create' ? s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, SOURCE, beforeWrite)
+      : s.api.moveFrom!(OWNER, ROOM, SOURCE, beforeWrite);
+    await expect(work).rejects.toMatchObject({ status: 503, uncertain: false });
+    expect(s.post).not.toHaveBeenCalled(); expect(s.patch).not.toHaveBeenCalled();
+  });
+  it.each(['source', 'target', 'roles'] as const)('fails explicitly after fresh bot movement permission loss in %s', async location => {
+    const s = movementSetup();
+    await s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'open', 0, OP, SOURCE, async () => {});
+    if (location === 'roles') s.setBotPermissions(BOT & ~P.MoveMembers);
+    else s.channels.get(location === 'source' ? SOURCE : ROOM)!.permission_overwrites.push({ id: SELF, type: 1, allow: '0', deny: P.MoveMembers.toString() });
+    await expect(s.api.moveFrom!(OWNER, ROOM, SOURCE, async () => {})).rejects.toMatchObject({ status: 403, uncertain: false });
+    expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('keeps category-only message permissions out of the verified creation overwrites', async () => {
+    const s = setup(); s.setBotPermissions(BOT & ~P.ReadMessageHistory);
+    s.channels.get(PARENT)!.permission_overwrites.push({ id: SELF, type: 1, allow: P.ReadMessageHistory.toString(), deny: '0' });
+    await s.api.createVoiceVerified!(PARENT, '房间', OWNER, 'hidden', 0, OP, ROOM, async () => {});
+    const overwrites = s.post.mock.calls[0][1].body.permission_overwrites as Array<{ id: string; allow: string }>;
+    expect(BigInt(overwrites.find(item => item.id === SELF)!.allow) & P.ReadMessageHistory).toBe(0n);
+  });
+});
+
 describe('voice-room persistent panel messages', () => {
   const MID = '900000000000000001', NEXT = '900000000000000002';
   const panel = () => renderRoomPanel({ roomRef: OP, name: '游戏房', ownerName: 'Nanako', occupantCount: 2,
