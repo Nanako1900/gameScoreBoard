@@ -5,10 +5,10 @@ import type { VoicePresent, VoiceRecorder } from '../voice/recorder';
 
 export function createClient(options: { community?: boolean } = {}): Client {
   return new Client({
-    // No GuildMembers, GuildPresences or MessageContent: slash commands bring
-    // the users they mention with them.
+    // Community receives member events and direct mentions. Message content
+    // for explicit app mentions is available without MessageContent intent.
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates,
-      ...(options.community ? [GatewayIntentBits.GuildMembers] : [])],
+      ...(options.community ? [GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages] : [])],
     // Voice states must survive for complete-state reconciliation. Members and
     // users remain uncached; slash commands carry the users they mention.
     makeCache: Options.cacheWithLimits({

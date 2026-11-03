@@ -13,8 +13,8 @@ describe('community host integration',()=>{
   }
   expect(await(await fetch(new Request('https://api.test/api/communityish'))).text()).toBe('worker');
  });
- it('requests the member intent only when community is explicitly enabled',async()=>{
+ it('requests community member and message events without content or presence privileges',async()=>{
   const ordinary=createClient();const community=createClient({community:true});
-  try{expect(ordinary.options.intents.has(GatewayIntentBits.GuildMembers)).toBe(false);expect(community.options.intents.has(GatewayIntentBits.GuildMembers)).toBe(true);expect(community.options.intents.has(GatewayIntentBits.MessageContent)).toBe(false);}finally{await ordinary.destroy();await community.destroy();}
+  try{expect(ordinary.options.intents.has(GatewayIntentBits.GuildMembers)).toBe(false);expect(ordinary.options.intents.has(GatewayIntentBits.GuildMessages)).toBe(false);expect(community.options.intents.has(GatewayIntentBits.GuildMembers)).toBe(true);expect(community.options.intents.has(GatewayIntentBits.GuildMessages)).toBe(true);expect(community.options.intents.has(GatewayIntentBits.MessageContent)).toBe(false);expect(community.options.intents.has(GatewayIntentBits.GuildPresences)).toBe(false);}finally{await ordinary.destroy();await community.destroy();}
  });
 });
