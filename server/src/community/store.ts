@@ -38,7 +38,7 @@ const ERRORS: Record<string, string> = {
   operation_expired: '操作已过期，请重新检查当前状态', execution_uncertain: '操作结果需要对账，请稍后查看',
   bot_offline: '机器人暂未就绪', permissions_missing: '机器人缺少所需权限', resource_missing: '目标资源已不可用',
   membership_required: '需要当前服务器成员身份', not_owner: '当前账号没有房间管理权限', version_conflict: '内容已变化，请刷新后重试',
-  feature_disabled: '此功能已停用', rate_limited: '操作过于频繁，请稍后重试', read_only: '系统维护中，请稍后重试',
+  feature_disabled: '此功能已停用', feature_retired: '趣味工具已下线', rate_limited: '操作过于频繁，请稍后重试', read_only: '系统维护中，请稍后重试',
   discord_error: 'Discord 操作暂未成功，请稍后重试', invalid_input: '请求内容无效', unknown: '社区操作暂未成功，请稍后重试',
 };
 function safeCode(value: string | undefined): string | null { return value === undefined ? null : Object.hasOwn(ERRORS, value) ? value : 'unknown'; }
@@ -97,7 +97,7 @@ function operationRow(row: Row): StoredOperation {
 }
 export function operationView(op: StoredOperation): CommunityOperationView {
   return { ref: op.ref, kind: op.kind, roomRef: op.roomRef, status: op.status, createdAt: op.createdAt,
-    finishedAt: op.finishedAt, error: op.error, result: publicJson(op.result) };
+    finishedAt: op.finishedAt, error: op.error, result: op.kind.startsWith('fun.') ? null : publicJson(op.result) };
 }
 function translate(error: unknown): never {
   if (error instanceof CommunityStoreError) throw error;

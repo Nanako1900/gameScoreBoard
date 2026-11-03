@@ -58,7 +58,7 @@ export function defaultCommunitySettings(): CommunitySettings {
       pollMaxOptions: 10, maxParticipants: 40, maxDiceCount: 20, maxDiceSides: 1000,
       topics: [],
       ai: { enabled: false, userDailyLimit: 5, guildDailyLimit: 50,
-        prompt: '' } },
+        prompt: '此功能已下线。' } },
   };
 }
 export interface CommunitySettingsIssue { path: string; label: string; message: string }

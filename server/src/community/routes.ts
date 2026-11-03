@@ -6,7 +6,7 @@ import { ApiError } from '../../../worker/errors';
 import { allowedOrigins, cookieConfig, hasNulInUrl, isReadOnly, parseCsvList } from '../../../worker/http';
 import { cookieNames, getCookie, verifySession } from '../../../worker/session';
 import type { Env } from '../../../worker/types';
-import type { CommunityFunView, CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
+import type { CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
 import { CommunityService, CommunitySettingsInputError } from './service';
 import { CommunityStoreError, type CommunityStore } from './store';
 
@@ -14,7 +14,6 @@ export interface CommunityRoleReadView { choices: CommunityResourceView[]; selec
 export interface CommunityRouteDeps {
   store: CommunityStore; db: D1Database; env: Env;
   membership?: { readRoles(memberRef: string): Promise<CommunityRoleReadView> };
-  fun?: { list(memberRef: string | null, isAdmin: boolean): Promise<CommunityFunView[]> };
   onError?: (context: string, error: unknown) => void;
 }
 type RouteEnv = { Variables: { communityUserId: string } };
@@ -84,10 +83,8 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     const resources = await service.resources(user(c), 'role');
     return c.json({ choices: resources, selectedRefs, maxChoices: settings.roles.maxChoices, enabled: settings.enabled && settings.roles.enabled });
   });
-  app.get('/api/community/fun', async c => {
-    const actor = await service.actorFromWeb(user(c)); if (!actor.isAdmin && !actor.memberAvailable) fail(403, 'membership_required', '需要当前服务器成员身份');
-    return c.json({ items: deps.fun ? await deps.fun.list(actor.memberRef, actor.isAdmin) : [] });
-  });
+  const retired = () => fail(410, 'feature_retired', '趣味工具已下线');
+  app.get('/api/community/fun', retired);
   app.get('/api/community/operations/:ref', async c => c.json({ operation: await service.operation(c.req.param('ref'), user(c)) }));
   app.post('/api/community/rooms', async c => {
     const input = await body(c); exact(input, ['name', 'requestKey']);
@@ -101,16 +98,8 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     const input = await body(c); exact(input, ['roleRefs', 'requestKey']);
     return accepted(c, await service.enqueue(user(c), 'roles.set', null, withoutMeta(input), key(input)));
   });
-  app.post('/api/community/fun', async c => {
-    const input = await body(c); exact(input, ['kind', 'input', 'roomRef', 'requestKey']);
-    return accepted(c, await service.enqueue(user(c), 'fun.create', null, withoutMeta(input), key(input)));
-  });
-  app.post('/api/community/fun/:ref/actions', async c => {
-    const input = await body(c); exact(input, ['action', 'choice', 'requestKey']);
-    if (!['vote', 'close', 'redraw'].includes(String(input.action))) fail(400, 'invalid_input', '不支持此互动操作');
-    const payload = { ref: c.req.param('ref'), ...(input.choice === undefined ? {} : { choice: input.choice }) };
-    return accepted(c, await service.enqueue(user(c), 'fun.' + input.action, null, payload, key(input)));
-  });
+  app.post('/api/community/fun', retired);
+  app.post('/api/community/fun/:ref/actions', retired);
   app.get('/api/admin/community', async c => c.json(await service.settings(user(c))));
   app.post('/api/admin/community', async c => {
     const input = await body(c); exact(input, ['settings', 'expectedVersion', 'requestKey']);

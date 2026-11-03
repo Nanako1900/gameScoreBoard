@@ -3,8 +3,8 @@ import { defaultCommunitySettings, parseCommunitySettings } from '../../shared/c
 import { publicCommunitySettings } from '../../server/src/community/security';
 
 describe('retired community tools configuration', () => {
-  it('starts with a disabled compatibility shell containing no topics or AI prompt', () => {
-    expect(defaultCommunitySettings().fun).toMatchObject({ enabled: false, enabledTools: [], topics: [], ai: { enabled: false, prompt: '' } });
+  it('starts with a disabled compatibility shell containing no topics or active AI prompt', () => {
+    expect(defaultCommunitySettings().fun).toMatchObject({ enabled: false, enabledTools: [], topics: [], ai: { enabled: false, prompt: '此功能已下线。' } });
   });
 
   it.each([undefined, null, 'obsolete', { enabled: true, enabledTools: ['ai', 'poll'], topics: [{ text: 'OLD_PRIVATE_TOPIC' }], ai: { enabled: true, prompt: 'OLD_PRIVATE_PROMPT' } }])
@@ -12,7 +12,7 @@ describe('retired community tools configuration', () => {
     const value = defaultCommunitySettings();
     const parsed = parseCommunitySettings({ ...value, fun: legacy });
     expect(parsed.fun).toEqual(defaultCommunitySettings().fun);
-    expect(parsed.fun).toMatchObject({ enabled: false, enabledTools: [], topics: [], ai: { enabled: false, prompt: '' } });
+    expect(parsed.fun).toMatchObject({ enabled: false, enabledTools: [], topics: [], ai: { enabled: false, prompt: '此功能已下线。' } });
     expect(JSON.stringify(parsed)).not.toMatch(/OLD_PRIVATE_TOPIC|OLD_PRIVATE_PROMPT/);
   });
 
@@ -23,5 +23,17 @@ describe('retired community tools configuration', () => {
     const publicValue = publicCommunitySettings(value);
     expect(publicValue.fun).toMatchObject({ enabled: false, enabledTools: [], tags: [], ai: { enabled: false } });
     expect(JSON.stringify(publicValue)).not.toMatch(/PRIVATE_TAG|OLD_PRIVATE/);
+  });
+
+  it('keeps the disabled shell valid for the deployed C6 configuration contract during rolling upgrades', () => {
+    const fun = defaultCommunitySettings().fun;
+    for (const [value, min, max] of [[fun.cooldownSeconds, 0, 3600], [fun.pollMaxHours, 1, 720], [fun.pollMaxOptions, 2, 10],
+      [fun.maxParticipants, 2, 100], [fun.maxDiceCount, 1, 100], [fun.maxDiceSides, 2, 1_000_000],
+      [fun.ai.userDailyLimit, 1, 1000], [fun.ai.guildDailyLimit, 1, 10000]]) {
+      expect(Number.isInteger(value)).toBe(true); expect(value).toBeGreaterThanOrEqual(min); expect(value).toBeLessThanOrEqual(max);
+    }
+    expect(fun.ai.prompt.trim().length).toBeGreaterThanOrEqual(1);
+    expect(fun.ai.prompt.length).toBeLessThanOrEqual(4000);
+    expect(fun.enabled).toBe(false); expect(fun.ai.enabled).toBe(false);
   });
 });
