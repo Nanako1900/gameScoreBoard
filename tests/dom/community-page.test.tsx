@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { CommunityPage } from '../../src/components/CommunityPage';
+import { CommunityPage, OperationNotice } from '../../src/components/CommunityPage';
 import { defaultCommunitySettings } from '../../shared/community';
 const memberRef='ab4ce2dd-8bc9-4043-845c-d2aec97b4bfb';
 const roleRef='b10ebd61-dbd4-4804-aa54-021b345821c1';
@@ -48,17 +48,19 @@ describe('community member center',()=>{
   expect(screen.queryByRole('button',{name:'创建语音房'})).not.toBeInTheDocument();
  });
 });
-it('keeps rooms usable when fun is disabled and its endpoint is absent',async()=>{
+it('keeps rooms usable without fetching retired tools even when a legacy backend enables them',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;
- vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/community'?Promise.resolve(Response.json({...overview,settings:{...overview.settings,fun:{...overview.settings.fun,enabled:false}}})):String(input).endsWith('/fun')?Promise.resolve(Response.json({error:'互动未启用'},{status:404})):original(input,init));
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/community'?Promise.resolve(Response.json({...overview,settings:{...overview.settings,fun:{...overview.settings.fun,enabled:true}}})):String(input).endsWith('/fun')?Promise.resolve(Response.json({error:'互动已下线'},{status:410})):original(input,init));
  render(<CommunityPage tab="rooms" accountKey="member"/>);expect(await screen.findByRole('heading',{name:'进入语音，房间就准备好了'})).toBeInTheDocument();
  expect(vi.mocked(fetch).mock.calls.some(call=>String(call[0]).endsWith('/fun'))).toBe(false);
+ expect(screen.getByRole('navigation',{name:'社区'}).querySelectorAll('a')).toHaveLength(2);
+ expect(screen.queryByRole('link',{name:'一起玩点什么'})).not.toBeInTheDocument();
 });
 it('isolates missing individual features and does not hide the entire community',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;
- vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/fun')?Promise.resolve(Response.json({error:'互动未提供'},{status:404})):original(input,init));
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/roles')?Promise.resolve(Response.json({error:'身份未提供'},{status:404})):original(input,init));
  const view=render(<CommunityPage tab="rooms" accountKey="member"/>);expect(await screen.findByRole('heading',{name:'进入语音，房间就准备好了'})).toBeInTheDocument();
- view.rerender(<CommunityPage tab="play" accountKey="member"/>);expect(await screen.findByText('趣味工具暂未开放。')).toBeInTheDocument();
+ view.rerender(<CommunityPage tab="roles" accountKey="member"/>);expect(await screen.findByText('自选身份暂未开放。')).toBeInTheDocument();
 });
 it('clears previous operations and private rooms after the same account loses its binding',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;
@@ -75,12 +77,19 @@ it('drops cached member controls immediately when a write returns forbidden',asy
  vi.mocked(fetch).mockResolvedValue(Response.json({error:'需要当前服务器成员身份'},{status:403}));fireEvent.click(screen.getByRole('button',{name:'保存身份'}));
  expect(await screen.findByRole('alert')).toHaveTextContent('需要当前服务器成员身份');expect(screen.queryByRole('button',{name:'保存身份'})).not.toBeInTheDocument();
 });
-it('labels roomless AI as private and keeps ordinary tool results community-visible',async()=>{
- const original=vi.mocked(fetch).getMockImplementation()!;
- vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/community'?Promise.resolve(Response.json({...overview,settings:{...overview.settings,fun:{...overview.settings.fun,ai:{...overview.settings.fun.ai,enabled:true}}}})):original(input,init));
- render(<CommunityPage tab="play" accountKey="member"/>);fireEvent.click(await screen.findByRole('button',{name:'AI 灵感'}));
- expect(screen.getByRole('option',{name:'仅自己和管理员可见'})).toBeInTheDocument();expect(screen.queryByRole('option',{name:'社区成员可见'})).not.toBeInTheDocument();
- fireEvent.click(screen.getByRole('button',{name:'骰子'}));expect(screen.getByRole('option',{name:'社区成员可见'})).toBeInTheDocument();
+it('shows the retired play route with room and role links and makes no community request',()=>{
+ render(<CommunityPage tab="play" accountKey="guest"/>);
+ expect(screen.getByRole('heading',{name:'趣味工具已下线'})).toBeInTheDocument();
+ expect(screen.getByRole('link',{name:'前往语音房间'})).toHaveAttribute('href','/community');
+ expect(screen.getByRole('link',{name:'前往兴趣身份'})).toHaveAttribute('href','/community/roles');
+ expect(fetch).not.toHaveBeenCalled();
+ expect(screen.queryByRole('button')).not.toBeInTheDocument();
+});
+it('keeps historical retired operation status without rendering old results',()=>{
+ render(<OperationNotice operation={{ref:roleRef,kind:'fun.create',status:'succeeded',error:null,result:{suggestions:['不再展示的旧建议']},roomRef:null,createdAt:'2026-10-28T00:00:00Z',finishedAt:null}}/>);
+ expect(screen.getByText('已下线互动（历史操作）')).toBeInTheDocument();
+ expect(screen.getByText('已执行，请查看最新状态')).toBeInTheDocument();
+ expect(screen.queryByText('不再展示的旧建议')).not.toBeInTheDocument();
 });
 
 it('ignores a late queued response from before the same account binding changed',async()=>{
@@ -124,5 +133,5 @@ it('lets an unbound administrator manage existing rooms while personal actions s
  fireEvent.click(screen.getByText('网页辅助管理'));expect(screen.getByRole('textbox',{name:'修改名字'})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'关闭有人房间…'}));expect(vi.mocked(fetch).mock.calls.filter(call=>call[1]?.method==='POST')).toHaveLength(0);fireEvent.click(screen.getByRole('button',{name:'确认移动并关闭'}));await screen.findByText('已提交，等待机器人执行');
  const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({action:'admin_delete',confirm:true,expectedVersion:7});
  expect(vi.mocked(fetch).mock.calls.some(call=>String(call[0]).endsWith('/roles')||String(call[0]).endsWith('/fun'))).toBe(false);
- view.rerender(<CommunityPage tab="play" accountKey="unbound-admin"/>);expect(await screen.findByText('先绑定 Discord，再从网页管理社区')).toBeInTheDocument();expect(screen.queryByText('最近一起玩的')).not.toBeInTheDocument();
+ view.rerender(<CommunityPage tab="play" accountKey="unbound-admin"/>);expect(await screen.findByRole('heading',{name:'趣味工具已下线'})).toBeInTheDocument();expect(screen.queryByText('最近一起玩的')).not.toBeInTheDocument();
 });

@@ -210,21 +210,8 @@ export class CommunityService {
         if (!settings.roles.allowedRefs.includes(roleRef) || !role?.available || !role.safe) fail(400, 'invalid_resource', '此身份不在可自选白名单中');
       }
       payload = { roleRefs: roles };
-    } else if (kind.startsWith('fun.')) {
-      this.requireMember(authority); if (!settings.enabled || !settings.fun.enabled) fail(409, 'feature_disabled', '社区互动已停用');
-      if (kind === 'fun.create') {
-        payload = fields(input, ['kind', 'input', 'roomRef']);
-        if (!settings.fun.enabledTools.includes(payload.kind as never)) fail(400, 'invalid_input', '此互动工具不可用');
-        const target = payload.roomRef ?? roomRef; if (target != null) { if (!isCommunityRef(target)) fail(400, 'invalid_resource', '房间引用无效'); await this.roomForActor(target, authority); payload.roomRef = target; roomRef = target; }
-      } else if (['fun.vote', 'fun.close', 'fun.redraw'].includes(kind)) {
-        payload = fields(input, kind === 'fun.vote' ? ['ref', 'choice'] : ['ref']); if (!isCommunityRef(payload.ref)) return missing();
-        const item = (await this.store.pool.query('SELECT creator_ref,room_ref,kind FROM community_fun WHERE guild_id=$1 AND ref=$2', [this.store.guildId, payload.ref])).rows[0]; if (!item) return missing();
-        if (item.room_ref) await this.roomForActor(String(item.room_ref), authority);
-        if (kind !== 'fun.vote' && !authority.isAdmin && String(item.creator_ref) !== authority.memberRef) fail(403, 'forbidden', '只有发起者或管理员可以操作');
-        if (kind === 'fun.vote') payload.choice = integer(payload.choice, 0, 9);
-        roomRef = item.room_ref ? String(item.room_ref) : null;
-      } else fail(400, 'invalid_input', '不支持此互动操作');
-    } else return fail(400, 'invalid_input', '不支持此社区操作');
+    } else if (kind.startsWith('fun.')) return fail(410, 'feature_retired', '趣味工具已下线');
+    else return fail(400, 'invalid_input', '不支持此社区操作');
     return this.store.enqueue(kind, roomRef, actor, payload as CommunityJson, key, version);
   }
   async operation(operationRef: string, userId: string) {

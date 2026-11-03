@@ -38,7 +38,7 @@ const ERRORS: Record<string, string> = {
   operation_expired: '操作已过期，请重新检查当前状态', execution_uncertain: '操作结果需要对账，请稍后查看',
   bot_offline: '机器人暂未就绪', permissions_missing: '机器人缺少所需权限', resource_missing: '目标资源已不可用',
   membership_required: '需要当前服务器成员身份', not_owner: '当前账号没有房间管理权限', version_conflict: '内容已变化，请刷新后重试',
-  feature_disabled: '此功能已停用', rate_limited: '操作过于频繁，请稍后重试', read_only: '系统维护中，请稍后重试',
+  feature_disabled: '此功能已停用', feature_retired: '趣味工具已下线', rate_limited: '操作过于频繁，请稍后重试', read_only: '系统维护中，请稍后重试',
   discord_error: 'Discord 操作暂未成功，请稍后重试', invalid_input: '请求内容无效', unknown: '社区操作暂未成功，请稍后重试',
 };
 function safeCode(value: string | undefined): string | null { return value === undefined ? null : Object.hasOwn(ERRORS, value) ? value : 'unknown'; }
@@ -97,7 +97,7 @@ function operationRow(row: Row): StoredOperation {
 }
 export function operationView(op: StoredOperation): CommunityOperationView {
   return { ref: op.ref, kind: op.kind, roomRef: op.roomRef, status: op.status, createdAt: op.createdAt,
-    finishedAt: op.finishedAt, error: op.error, result: publicJson(op.result) };
+    finishedAt: op.finishedAt, error: op.error, result: op.kind.startsWith('fun.') ? null : publicJson(op.result) };
 }
 function translate(error: unknown): never {
   if (error instanceof CommunityStoreError) throw error;
@@ -402,8 +402,22 @@ export class CommunityStore {
     return (await this.pool.query('SELECT * FROM community_operations WHERE guild_id=$1 AND ($2::uuid IS NULL OR room_ref=$2) ORDER BY created_at DESC,ref DESC LIMIT $3', [this.guildId, options.roomRef ?? null, options.limit ?? 100])).rows.map(row => operationView(operationRow(row as Row)));
   }
   async recoverExpired(): Promise<void> {
+    // Retired tools have no room-management effects to replay. Release their
+    // queued scopes and abandoned leases before ordinary recovery can quarantine
+    // a room. A still-valid worker lease remains authoritative until it ends.
+    // Preserve the payload/result internally for history; operationView hides it.
+    await this.pool.query(`WITH retired AS (
+      UPDATE community_operations SET status='canceled',finished_at=now(),error_code='feature_retired',claim_token=NULL,lease_until=NULL
+      WHERE guild_id=$1 AND kind LIKE 'fun.%' AND (
+        status IN ('queued','retry_wait') OR
+        (status IN ('running','needs_review') AND (claim_token IS NULL OR lease_until IS NULL OR lease_until<=now()))
+      ) RETURNING ref
+    ) INSERT INTO community_audit(guild_id,actor_source,actor_label,action,target_ref,outcome)
+      SELECT $1,'system','系统','operation.cancel',ref,'canceled' FROM retired`, [this.guildId]);
+    // A live tool lease can expire after the statement above. Leave it for the
+    // next retirement pass instead of turning it into a room-review barrier.
     await this.pool.query(`UPDATE community_operations SET status='needs_review',claim_token=NULL,lease_until=NULL,error_code='execution_uncertain'
-      WHERE guild_id=$1 AND status='running' AND lease_until<now()`, [this.guildId]);
+      WHERE guild_id=$1 AND kind NOT LIKE 'fun.%' AND status='running' AND lease_until<now()`, [this.guildId]);
     await this.pool.query(`UPDATE community_operations SET status='canceled',finished_at=now(),error_code='operation_expired'
       WHERE guild_id=$1 AND status IN ('queued','retry_wait') AND expires_at<now()`, [this.guildId]);
   }

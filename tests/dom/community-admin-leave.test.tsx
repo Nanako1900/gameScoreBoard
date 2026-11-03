@@ -30,7 +30,7 @@ async function start() {
   await screen.findByRole('button', { name: '保存社区设置' });
   return view;
 }
-function edit() { fireEvent.change(screen.getByRole('textbox', { name: '社区 AI 提示词' }), { target: { value: '尚未保存的私人配置' } }); }
+function edit() { fireEvent.change(screen.getByRole('textbox', { name: '欢迎文案' }), { target: { value: '尚未保存的私人配置' } }); }
 async function askToLeave() {
   await userEvent.setup().click(screen.getByRole('link', { name: '信誉榜' }));
   await screen.findByRole('group', { name: QUESTION });
@@ -56,18 +56,18 @@ describe('community administrator uses the shared page leave guard', () => {
   it('protects header navigation and keeps the draft when departure is canceled', async () => {
     await start(); edit(); await askToLeave();
     await userEvent.setup().click(screen.getByRole('button', { name: '继续编辑' }));
-    expect(screen.getByRole('textbox', { name: '社区 AI 提示词' })).toHaveValue('尚未保存的私人配置');
+    expect(screen.getByRole('textbox', { name: '欢迎文案' })).toHaveValue('尚未保存的私人配置');
     await askToLeave();
     await userEvent.setup().click(screen.getByRole('button', { name: '放弃修改并离开' }));
     expect(window.location.pathname).toBe('/board');
     expect(window.confirm).not.toHaveBeenCalled();
   });
-  it('uses the shared confirmation before opening the centralized model settings', async () => {
+  it('uses the shared confirmation before opening the community rooms', async () => {
     await start(); edit();
-    await userEvent.setup().click(screen.getByRole('link', { name: '管理模型与密钥' }));
+    await userEvent.setup().click(screen.getByRole('link', { name: '查看社区与房间' }));
     await screen.findByRole('group', { name: QUESTION });
     await userEvent.setup().click(screen.getByRole('button', { name: '放弃修改并离开' }));
-    expect(window.location.pathname).toBe('/settings/ai');
+    expect(window.location.pathname).toBe('/community');
     expect(window.confirm).not.toHaveBeenCalled();
   });
   it('clears the editor as soon as logout is confirmed even while logout is pending', async () => {
@@ -77,7 +77,7 @@ describe('community administrator uses the shared page leave guard', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '放弃修改并离开' }));
     expect(departed).toHaveBeenCalledOnce();
     expect(screen.getByRole('status')).toHaveTextContent('正在离开');
-    expect(screen.queryByRole('textbox', { name: '社区 AI 提示词' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '欢迎文案' })).not.toBeInTheDocument();
     const requests = vi.mocked(communityApi.admin).mock.calls.length;
     fireEvent.focus(window);
     await act(async () => {});
@@ -86,7 +86,7 @@ describe('community administrator uses the shared page leave guard', () => {
   it('cancels a pending departure when administrator access is revoked', async () => {
     const view = await start(); edit(); await askToLeave();
     view.rerender(<Frame me={{ ...ADMIN, is_admin: false }} />);
-    expect(screen.queryByRole('textbox', { name: '社区 AI 提示词' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '欢迎文案' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: QUESTION })).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/settings/community');
     await userEvent.setup().click(screen.getByRole('button', { name: '退出账号' }));
@@ -96,7 +96,7 @@ describe('community administrator uses the shared page leave guard', () => {
     await start(); edit(); await askToLeave();
     vi.mocked(communityApi.admin).mockRejectedValue(new ApiError('无权访问', 403));
     fireEvent.focus(window);
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: '社区 AI 提示词' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: '欢迎文案' })).not.toBeInTheDocument());
     expect(screen.queryByRole('group', { name: QUESTION })).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/settings/community');
     await userEvent.setup().click(screen.getByRole('button', { name: '退出账号' }));
@@ -112,7 +112,7 @@ describe('community administrator uses the shared page leave guard', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '放弃修改并离开' }));
     await act(async () => save.resolve({ ...data(), operation }));
     expect(screen.getByRole('status')).toHaveTextContent('正在离开');
-    expect(screen.queryByRole('textbox', { name: '社区 AI 提示词' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '欢迎文案' })).not.toBeInTheDocument();
     expect(screen.queryByText('已执行，请查看最新状态')).not.toBeInTheDocument();
   });
 });

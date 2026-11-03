@@ -1,5 +1,5 @@
 import { ApiError } from './api';
-import type { CommunityAuditView, CommunityFunView, CommunityOperationView, CommunityOverview, CommunityResourceView, CommunityRoomView, CommunityRuntimeView, CommunitySettings, CommunitySettingsIssue, CommunityTool } from '@shared/community';
+import type { CommunityAuditView, CommunityOperationView, CommunityOverview, CommunityResourceView, CommunityRoomView, CommunityRuntimeView, CommunitySettings, CommunitySettingsIssue } from '@shared/community';
 const base=(import.meta.env.VITE_API_BASE??'').replace(/\/$/,'');
 export interface CommunityBackendCapabilities {fixedRooms:boolean}
 /** Read the server's actual response before normalizing with newer defaults. */
@@ -37,13 +37,9 @@ export const communityApi={
  rooms:(signal?:AbortSignal)=>communityRequest<{rooms:CommunityRoomView[]}>('/api/community/rooms',undefined,signal),
  resources:(kind='member',admin=false,signal?:AbortSignal)=>communityRequest<{resources:CommunityResourceView[]}>(`${admin?'/api/admin/community':'/api/community'}/resources${kind?`?kind=${encodeURIComponent(kind)}`:''}`,undefined,signal),
  roles:(signal?:AbortSignal)=>communityRequest<CommunityRoles>('/api/community/roles',undefined,signal),
- fun:(signal?:AbortSignal)=>communityRequest<{items:CommunityFunView[]}>('/api/community/fun',undefined,signal),
  operation:(ref:string,signal?:AbortSignal)=>communityRequest<{operation:CommunityOperationView}>(`/api/community/operations/${encodeURIComponent(ref)}`,undefined,signal),
- createRoom:(name:string)=>communityRequest<{operation:CommunityOperationView}>('/api/community/rooms',{name,requestKey:crypto.randomUUID()}),
  roomAction:(room:CommunityRoomView,action:string,fields:Record<string,unknown>={})=>communityRequest<{operation:CommunityOperationView}>(`/api/community/rooms/${room.ref}/actions`,{action,...fields,expectedVersion:room.version,requestKey:crypto.randomUUID()}),
  setRoles:(roleRefs:string[])=>communityRequest<{operation:CommunityOperationView}>('/api/community/roles',{roleRefs,requestKey:crypto.randomUUID()}),
- createFun:(kind:CommunityTool,input:unknown,roomRef:string|null)=>communityRequest<{operation:CommunityOperationView}>('/api/community/fun',{kind,input,roomRef,requestKey:crypto.randomUUID()}),
- funAction:(ref:string,action:string,fields:Record<string,unknown>={})=>communityRequest<{operation:CommunityOperationView}>(`/api/community/fun/${ref}/actions`,{action,...fields,requestKey:crypto.randomUUID()}),
  admin:(signal?:AbortSignal)=>communityRequest<CommunityAdminData>('/api/admin/community',undefined,signal),
  save:(settings:CommunitySettings,version:number,capabilities:CommunityBackendCapabilities={fixedRooms:true})=>{
   let payload=settings;

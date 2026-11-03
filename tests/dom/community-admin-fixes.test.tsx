@@ -47,17 +47,13 @@ it('opens folded advanced settings and focuses the invalid number instead of sil
  fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(posts()).toHaveLength(0);expect(summary.closest('details')).toHaveAttribute('open');expect(field).toHaveFocus();expect(field).toHaveAttribute('name','rooms.maxRooms');
 });
 
-it('expands the correct group and identifies the new empty topic even while fun is disabled',async()=>{
- settings.fun.enabled=false;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('趣味互动与 AI');fireEvent.click(screen.getByRole('button',{name:'添加话题'}));
- const field=screen.getByRole('textbox',{name:'话题正文 3'});const section=field.closest('#community-fun')!;const details=section.tagName==='DETAILS'?section:section.closest('details');if(details)fireEvent.click(screen.getByRole('heading',{name:'趣味互动与 AI'}));
- fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(posts()).toHaveLength(0);expect(field).toHaveFocus();expect(field).toHaveAttribute('data-setting-path','fun.topics.2.text');expect(field).toHaveAttribute('aria-invalid','true');expect(field).toBeVisible();
-});
-
-it('collects independent validation errors and makes summary links focus their actual fields',async()=>{
- render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('入服欢迎');openGroup('趣味互动与 AI');
- const welcome=screen.getByRole('textbox',{name:'欢迎文案'});fireEvent.change(welcome,{target:{value:'欢迎 {unsupported}'}});fireEvent.change(screen.getByRole('textbox',{name:'话题标签 1'}),{target:{value:Array.from({length:11},(_,i)=>'标签'+i).join(',')}});
- fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(posts()).toHaveLength(0);const links=within(errorSummary()).getAllByRole('link');expect(links.length).toBeGreaterThanOrEqual(2);expect(welcome).toHaveAttribute('aria-invalid','true');
- fireEvent.click(links.find(link=>link.getAttribute('href')?.includes('fun-topics'))!);expect(screen.getByRole('textbox',{name:'话题标签 1'})).toHaveFocus();
+it('collects retained group errors and makes summary links reveal their actual fields',async()=>{
+ render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('入服欢迎');openGroup('兴趣身份');
+ const welcome=screen.getByRole('textbox',{name:'欢迎文案'});fireEvent.change(welcome,{target:{value:'欢迎 {unsupported}'}});
+ fireEvent.change(screen.getByRole('spinbutton',{name:'每人最多兴趣身份'}),{target:{value:''}});
+ fireEvent.click(screen.getByRole('heading',{name:'入服欢迎'}));fireEvent.click(screen.getByRole('heading',{name:'兴趣身份'}));
+ fireEvent.click(screen.getByRole('button',{name:'保存社区设置'}));expect(posts()).toHaveLength(0);const links=within(errorSummary()).getAllByRole('link');expect(links.length).toBeGreaterThanOrEqual(2);expect(welcome).toHaveAttribute('aria-invalid','true');expect(welcome).toBeVisible();
+ fireEvent.click(links.find(link=>link.getAttribute('href')?.includes('roles-maxChoices'))!);const choices=screen.getByRole('spinbutton',{name:'每人最多兴趣身份'});expect(choices).toHaveFocus();expect(choices).toBeVisible();
 });
 
 it('keeps legacy backends usable for ordinary saves while clearly disabling unsupported fixed-room controls',async()=>{
@@ -77,12 +73,12 @@ it('maps a safe server validation error to its folded field without losing the d
 });
 
 it('loads settings when diagnostics fail and preserves the draft on diagnostic retry',async()=>{
- diagnosticsStatus=503;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('趣味互动与 AI');fireEvent.change(screen.getByRole('textbox',{name:'社区 AI 提示词'}),{target:{value:'保留正在编辑的提示词'}});fireEvent.click(screen.getByText('查看运行与日志'));
- expect(screen.getByText('操作记录暂不可用，请重试。')).toBeInTheDocument();expect(screen.getByText('管理记录暂不可用，请重试。')).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'重试运行记录'}));await waitFor(()=>expect(vi.mocked(fetch).mock.calls.filter(call=>String(call[0])==='/api/admin/community')).toHaveLength(2));expect(screen.getByRole('textbox',{name:'社区 AI 提示词'})).toHaveValue('保留正在编辑的提示词');
+ diagnosticsStatus=503;render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});openGroup('入服欢迎');fireEvent.change(screen.getByRole('textbox',{name:'欢迎文案'}),{target:{value:'保留正在编辑的提示词'}});fireEvent.click(screen.getByText('查看运行与日志'));
+ expect(screen.getByText('操作记录暂不可用，请重试。')).toBeInTheDocument();expect(screen.getByText('管理记录暂不可用，请重试。')).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'重试运行记录'}));await waitFor(()=>expect(vi.mocked(fetch).mock.calls.filter(call=>String(call[0])==='/api/admin/community')).toHaveLength(2));expect(screen.getByRole('textbox',{name:'欢迎文案'})).toHaveValue('保留正在编辑的提示词');
 });
 
 it('still clears private state when an optional diagnostic read returns forbidden',async()=>{
- render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});diagnosticsStatus=403;fireEvent.focus(window);await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument();
+ render(<CommunityAdminPage me={admin}/>);await screen.findByRole('button',{name:'保存社区设置'});diagnosticsStatus=403;fireEvent.focus(window);await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument();
 });
 
 it('keeps fixed-manager submission independent from an invalid settings draft',async()=>{
@@ -110,7 +106,7 @@ it('revokes already loaded private drafts when a late optional forbidden result 
  vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/resources')?Promise.resolve(Response.json({error:'目录暂不可用'},{status:503})):String(input).endsWith('/operations')?new Promise(resolve=>{complete=resolve;}):original(input,init));
  fireEvent.focus(window);await screen.findByText('目录暂不可用');expect(screen.getByRole('button',{name:'保存社区设置'})).toBeInTheDocument();
  complete(Response.json({error:'权限已撤销'},{status:403}));await waitFor(()=>expect(screen.queryByRole('button',{name:'保存社区设置'})).not.toBeInTheDocument());
- expect(screen.queryByRole('textbox',{name:'社区 AI 提示词'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('textbox',{name:'欢迎文案'})).not.toBeInTheDocument();
 });
 
 it('ignores a former administrator account’s late diagnostic forbidden response',async()=>{

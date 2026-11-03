@@ -123,7 +123,7 @@ function main(): void {
   const communityEnabled = envFlag(process.env.COMMUNITY_ENABLED, false, 'COMMUNITY_ENABLED');
   const client = createClient({ community: communityEnabled });
   const community = communityEnabled ? createCommunityRuntime({ pool, db: ctx.db, client, guildId: config.guildId,
-    frontendUrl: config.frontendUrl, env: actionCtx.env, isReadOnly: () => ctx.readOnly || stopping,
+    frontendUrl: config.frontendUrl, isReadOnly: () => ctx.readOnly || stopping,
     onError: error => console.error('community processing failed', describeError(error)) }) : null;
   const recorder = createVoiceRecorder({
     pool,

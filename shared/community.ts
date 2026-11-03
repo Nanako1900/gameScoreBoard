@@ -2,8 +2,8 @@
 // inside the Node community adapter/store and never become browser DTO fields.
 export type CommunityVisibility = 'open' | 'locked' | 'hidden';
 export type CommunityResourceKind = 'category' | 'voice' | 'text' | 'role' | 'member';
+/** Legacy values describe saved configuration only; no tool is executable. */
 export type CommunityTool = 'poll' | 'teams' | 'draw' | 'roll' | 'topic' | 'ai';
-export const COMMUNITY_TOOLS: readonly CommunityTool[] = ['poll', 'teams', 'draw', 'roll', 'topic', 'ai'];
 export interface CommunityTopic { ref: string; text: string; tags: string[] }
 export interface CommunitySettings {
   enabled: boolean;
@@ -12,6 +12,7 @@ export interface CommunitySettings {
     cooldownSeconds: number; emptyGraceSeconds: number; ownerGraceSeconds: number; userLimit: number; maxUserLimit: number };
   welcome: { enabled: boolean; channelRef: string | null; template: string; rejoinCooldownHours: number };
   roles: { enabled: boolean; allowedRefs: string[]; maxChoices: number };
+  /** Retired configuration shape retained for old clients and saved apply jobs. Never enabled. */
   fun: { enabled: boolean; enabledTools: CommunityTool[]; cooldownSeconds: number; pollMaxHours: number;
     pollMaxOptions: number; maxParticipants: number; maxDiceCount: number; maxDiceSides: number; topics: CommunityTopic[];
     ai: { enabled: boolean; userDailyLimit: number; guildDailyLimit: number; prompt: string } };
@@ -39,8 +40,6 @@ export interface CommunityPublicSettings {
   fun: Omit<CommunitySettings['fun'], 'ai' | 'topics'> & { ai: Omit<CommunitySettings['fun']['ai'], 'prompt'>; tags: string[] };
 }
 export interface CommunityOverview { settings: CommunityPublicSettings; version: number; runtime: CommunityRuntimeView; me: CommunityMeView }
-export interface CommunityFunView { ref: string; kind: CommunityTool; title: string; data: CommunityJson; status: 'open' | 'closed';
-  roomRef: string | null; createdAt: string; closesAt: string | null; creator: CommunityMemberView | null }
 
 export function isCommunityRef(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
@@ -53,12 +52,11 @@ export function defaultCommunitySettings(): CommunitySettings {
       emptyGraceSeconds: 120, ownerGraceSeconds: 120, userLimit: 0, maxUserLimit: 99 },
     welcome: { enabled: false, channelRef: null, template: '欢迎 {name} 来到 {server}！从社区中心选择兴趣身份，也可以创建自己的语音房。', rejoinCooldownHours: 24 },
     roles: { enabled: false, allowedRefs: [], maxChoices: 5 },
-    fun: { enabled: true, enabledTools: [...COMMUNITY_TOOLS], cooldownSeconds: 5, pollMaxHours: 168,
+    fun: { enabled: false, enabledTools: [], cooldownSeconds: 5, pollMaxHours: 168,
       pollMaxOptions: 10, maxParticipants: 40, maxDiceCount: 20, maxDiceSides: 1000,
-      topics: [{ ref: 'c2845d73-47cc-4037-966c-61ce46e26777', text: '最近玩到最想推荐的游戏是什么？', tags: ['游戏'] },
-        { ref: 'e6cc9dd1-0a22-4ed2-84f4-0723a0c10bcb', text: '如果今晚换一种玩法，你想尝试什么？', tags: ['闲聊'] }],
+      topics: [],
       ai: { enabled: false, userDailyLimit: 5, guildDailyLimit: 50,
-        prompt: '根据用户主动输入的主题，给出三个简短、友好的中文房间名或讨论话题。只返回建议文本，不执行操作，不包含提及、链接或个人信息。' } },
+        prompt: '此功能已下线。' } },
   };
 }
 export interface CommunitySettingsIssue { path: string; label: string; message: string }
@@ -115,21 +113,11 @@ function decodeCommunitySettings(input: unknown): { value: CommunitySettings; is
   const r = object(c.rooms, ['enabled', 'categoryRef', 'creatorRef', 'waitingRef', 'panelRef', 'fixedCategoryRefs', 'visibility', 'maxPerMember', 'maxRooms', 'cooldownSeconds', 'emptyGraceSeconds', 'ownerGraceSeconds', 'userLimit', 'maxUserLimit'], 'rooms', '语音房间');
   const w = object(c.welcome, ['enabled', 'channelRef', 'template', 'rejoinCooldownHours'], 'welcome', '入服欢迎');
   const roles = object(c.roles, ['enabled', 'allowedRefs', 'maxChoices'], 'roles', '兴趣身份');
-  const f = object(c.fun, ['enabled', 'enabledTools', 'cooldownSeconds', 'pollMaxHours', 'pollMaxOptions', 'maxParticipants', 'maxDiceCount', 'maxDiceSides', 'topics', 'ai'], 'fun', '趣味互动');
-  const ai = f ? object(f.ai, ['enabled', 'userDailyLimit', 'guildDailyLimit', 'prompt'], 'fun.ai', '社区 AI') : null;
+  // Old settings and settings.apply payloads may contain an absent, malformed or
+  // enabled fun block. Ignore it completely: it cannot revive retired features
+  // or prevent the remaining room, welcome and role settings from being saved.
   const visibility = r && ['open', 'locked', 'hidden'].includes(String(r.visibility)) ? r.visibility as CommunityVisibility : 'open';
   if (r && !['open', 'locked', 'hidden'].includes(String(r.visibility))) add('rooms.visibility', '默认访问方式', '默认访问方式请选择公开、锁门或隐藏。');
-  const tools = f ? array(f.enabledTools, null, 'fun.enabledTools', '开放的趣味工具').filter((value, index): value is CommunityTool => {
-    if (COMMUNITY_TOOLS.includes(value as CommunityTool)) return true;
-    add(`fun.enabledTools.${index}`, `趣味工具第 ${index + 1} 项`, '请选择受支持的趣味工具。'); return false;
-  }) : [];
-  const topics = f ? array(f.topics, 200, 'fun.topics', '话题题库').map((value, index): CommunityTopic => {
-    const path = `fun.topics.${index}`, label = `话题 ${index + 1}`;
-    const topic = object(value, ['ref', 'text', 'tags'], path, label);
-    if (!topic) return { ref: '', text: '', tags: [] };
-    return { ref: ref(topic.ref, `${path}.ref`, `${label}引用`, false) ?? '', text: text(topic.text, 1, 500, `${path}.text`, `${label}正文`),
-      tags: array(topic.tags, 10, `${path}.tags`, `${label}标签`).map((tag, tagIndex) => text(tag, 1, 30, `${path}.tags.${tagIndex}`, `${label}标签 ${tagIndex + 1}`)) };
-  }) : [];
   const template = w ? text(w.template, 1, 1500, 'welcome.template', '欢迎文案') : defaults.welcome.template;
   if (w && !hasIssue('welcome.template') && (template.match(/\{[^{}]*\}/g) ?? []).some(key => !['{name}', '{server}', '{memberCount}'].includes(key)))
     add('welcome.template', '欢迎文案', '欢迎文案仅支持 {name}、{server}、{memberCount} 占位符。');
@@ -147,12 +135,7 @@ function decodeCommunitySettings(input: unknown): { value: CommunitySettings; is
       rejoinCooldownHours: integer(w.rejoinCooldownHours, 1, 720, 'welcome.rejoinCooldownHours', '重入欢迎冷却（小时）') } : defaults.welcome,
     roles: roles ? { enabled: bool(roles.enabled, 'roles.enabled', '启用自选兴趣身份'), allowedRefs: refs(roles.allowedRefs, 100, 'roles.allowedRefs', '兴趣身份白名单'),
       maxChoices: integer(roles.maxChoices, 1, 5, 'roles.maxChoices', '每人最多兴趣身份') } : defaults.roles,
-    fun: f ? { enabled: bool(f.enabled, 'fun.enabled', '开放趣味工具'), enabledTools: [...new Set(tools)],
-      cooldownSeconds: integer(f.cooldownSeconds, 0, 3600, 'fun.cooldownSeconds', '互动冷却（秒）'), pollMaxHours: integer(f.pollMaxHours, 1, 720, 'fun.pollMaxHours', '投票最长时间（小时）'),
-      pollMaxOptions: integer(f.pollMaxOptions, 2, 10, 'fun.pollMaxOptions', '投票最多选项'), maxParticipants: integer(f.maxParticipants, 2, 100, 'fun.maxParticipants', '分队与抽签最多人数'),
-      maxDiceCount: integer(f.maxDiceCount, 1, 100, 'fun.maxDiceCount', '一次最多骰子'), maxDiceSides: integer(f.maxDiceSides, 2, 1000000, 'fun.maxDiceSides', '骰子最多面数'), topics,
-      ai: ai ? { enabled: bool(ai.enabled, 'fun.ai.enabled', '启用社区 AI'), userDailyLimit: integer(ai.userDailyLimit, 1, 1000, 'fun.ai.userDailyLimit', '每人每日 AI 配额'),
-        guildDailyLimit: integer(ai.guildDailyLimit, 1, 10000, 'fun.ai.guildDailyLimit', '全服每日 AI 配额'), prompt: text(ai.prompt, 1, 4000, 'fun.ai.prompt', '社区 AI 提示词') } : defaults.fun.ai } : defaults.fun,
+    fun: defaults.fun,
   };
   if (!hasIssue('rooms.userLimit') && !hasIssue('rooms.maxUserLimit') && value.rooms.userLimit > value.rooms.maxUserLimit)
     add('rooms.userLimit', '默认人数上限', '默认人数上限不能超过允许设置的最多人数。');

@@ -21,9 +21,7 @@ import { hostSet } from './hosts';
 import { createLinkRoutes } from './link-routes';
 import { CommunityStore } from './community/store';
 import { createCommunityRoutes } from './community/routes';
-import { CommunityFunService } from './community/fun-service';
 import { readCommunityRoles } from './community/membership';
-import { resetOffsetHours } from '../../worker/time';
 
 const DEFAULT_JOBS_INTERVAL_MS = 60_000;
 const MIN_JOBS_INTERVAL_MS = 5_000;
@@ -87,7 +85,6 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   if (communityEnabled && !communityStore) log.warn('Community disabled: GUILD_ID is missing or invalid');
   const communityRoutes = communityStore ? createCommunityRoutes({ store: communityStore, db: env.DB, env,
     membership: { readRoles: ref => readCommunityRoles(communityStore, ref) },
-    fun: new CommunityFunService(communityStore, { db: env.DB, env, offsetHours: resetOffsetHours(env.RESET_TZ_OFFSET) }),
     onError: (context, error) => log.error(context, error) }) : undefined;
   const fetch = withDiscordBinding(processEnv, env, api.fetch, log, communityRoutes);
 

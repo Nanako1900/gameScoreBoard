@@ -25,7 +25,7 @@ describe('community settings and resource references', () => {
     expect(parseCommunitySettings(value).roles.allowedRefs).toEqual([REF]);
     expect(() => parseCommunitySettings({ ...value, rooms: { ...value.rooms, emptyGraceSeconds: -1 } })).toThrow();
     expect(() => parseCommunitySettings({ ...value, rooms: { ...value.rooms, categoryRef: '1114391825336250432' } })).toThrow();
-    expect(() => parseCommunitySettings({ ...value, fun: { ...value.fun, ai: { ...value.fun.ai, userDailyLimit: 0 } } })).toThrow();
+    expect(() => parseCommunitySettings({ ...value, welcome: { ...value.welcome, rejoinCooldownHours: 0 } })).toThrow();
     expect(() => parseCommunitySettings({ ...value, secret: 'do-not-accept-unknown-configuration' })).toThrow();
   });
   it('never returns shared mutable arrays between default settings', () => {

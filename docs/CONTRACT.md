@@ -693,7 +693,7 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
   | `/cases` | own todo / public records | `CASES_PATH`; `?view=public` selects public records |
   | `/community` | community room page, scoped to the current actor | community capability required |
   | `/community/roles` | self-service community interest roles | community capability required |
-  | `/community/play` | community fun tools and authorized results | community capability required |
+  | `/community/play` | retired tools notice with room and role links; no feature reads | preserved old address |
   | `/settings` | personal profile, same content as `/settings/profile` | default profile alias |
   | `/settings/profile` | personal display name and identity | `settingsPath('profile')` |
   | `/settings/discord` | Discord binding and DM preferences | `settingsPath('discord')` |
@@ -832,8 +832,8 @@ The welcome renderer's optional parameter is omitted for invalid/unconfigured ch
 | `/api/community/rooms/:ref/actions` | POST `{action, expectedVersion, requestKey, ...fields}` → 202 `{operation}` |
 | `/api/community/resources?kind=member\|role` | GET `{resources}`，成员只见安全的成员／白名单身份选择器 |
 | `/api/community/roles` | GET `{choices, selectedRefs, maxChoices, enabled}`；POST `{roleRefs, requestKey}` → 202 `{operation}` |
-| `/api/community/fun` | GET `{items}`；POST `{kind, input, roomRef?, requestKey}` → 202 `{operation}` |
-| `/api/community/fun/:ref/actions` | POST `{action: vote\|close\|redraw, choice?, requestKey}` → 202 `{operation}` |
+| `/api/community/fun` | GET／POST → 410 `feature_retired`；不读取旧结果，不入队 |
+| `/api/community/fun/:ref/actions` | POST → 410 `feature_retired`；不执行旧动作 |
 | `/api/community/operations/:ref` | GET `{operation}`，当前本人身份或管理员可读，目标范围仍须可见 |
 | `/api/admin/community` | GET `{settings, version, runtime}`；POST `{settings, expectedVersion, requestKey}` 原子保存全配置及应用任务，202 返回同结构和 `operation` |
 | `/api/admin/community/resources` | GET `{resources}`，管理员按名称选择分类／文字或语音频道／角色／成员 |
@@ -849,6 +849,8 @@ C4 的常规成员流程为进入指定语音入口 → 自动建房并移入 �
 
 消息 ID 存在 `community_resources.metadata.roomPanelMessageId`，只在 Bot 内部使用，不进入 DTO、不递增房间版本。重启或消息 404 时，完整分页查找本 Bot 与控制按钮内的同房 opaque ref 标记；唯一匹配继续编辑，完整证明不存在才补建，缺权限／不完整／多义均停止补发。历史核对前后及写入前复查语音频道类型、受管分类和权限，写入前另查房间／配置版本、ready 与只读状态。发送成功而写回前崩溃由同标记找回，不盲目重复 POST。只处理自有面板，普通聊天正文不保存或用于 AI。
 
+C7 按实际来源选择回复方式：slash命令和共享入口导航创建私密卡；私密来源组件与来自私密消息的modal提交更新原卡；共享房卡的改名／人数modal提交静默确认，成功交给房卡同步器，错误只私密提示。仍排队时允许一次带刷新按钮的私密状态卡，后续刷新复用它。私密房间／身份操作成功后回读真实状态，排队不当成功。`deferred`本身不能决定原消息归属；个人页面、选择和错误不得覆写共享卡。
+
 管理员房间设置默认五项：开关、创建入口、分类、空房删除分钟、默认人数。高级策略及运行日志折叠，待对账提醒常显并可展开诊断；分钟输入无损保留旧秒值，编辑后按秒四舍五入，仍遵守 15–86400 秒约束。既有全局社区入口频道保持可选兼容，不是房内卡的配置项。
 
 C6 保持一次原子保存全部配置及原有严格范围。共享校验器同时提供 `CommunitySettingsIssue {path, label, message}`；管理员 POST 的输入校验失败返回 400 `{error, fieldErrors: CommunitySettingsIssue[]}`，路径只指向设置结构，标签和提示不含提交值、Discord ID 或未知字段名。鉴权先于输入校验，401/403及存储配置损坏不返回字段问题。网页统一执行校验，不依赖折叠字段的原生 required 阻断；错误摘要可展开并聚焦相应字段，数字保留原始输入，清空不转换为0。保存回执与后续未保存修改分开显示，失败保留草稿。
@@ -859,20 +861,21 @@ C5 按机主最新确认更新房间控制权限：临时房中，当前真实�
 
 管理员配置增加可选 `rooms.fixedCategoryRefs`（默认 `[]`）；旧客户端全量保存省略该字段时保留已配置值，显式 `[]` 才清空。完整快照登记选定分类内既有语音房，排除创建入口／等候区及已登记临时房。固定房使用同表的可信 `metadata.kind='fixed'`，owner 为空，独立于临时房配额；不会设置回收时限，全部删除／回收／转让／认领入口与旧任务均拒绝。取消分类或移出范围只停止控制并清除可见投影；重新纳入时保留原管理者。
 
-固定房允许原有任意 Discord 角色覆盖，网页读取只认完整快照计算并原子落库的实际可见成员 `allowed` 投影，不能按默认 open 摘要、旧 present 或管理者身份放行。房间、互动、操作回执均遵守此范围。固定访问修改保留原成员覆盖，只为管理者显式保持先前已具备的 View／Connect；人工角色覆盖冲突会拒绝操作，不虚构房主。
+固定房允许原有任意 Discord 角色覆盖，网页读取只认完整快照计算并原子落库的实际可见成员 `allowed` 投影，不能按默认 open 摘要、旧 present 或管理者身份放行。房间和操作回执均遵守此范围。固定访问修改保留原成员覆盖，只为管理者显式保持先前已具备的 View／Connect；人工角色覆盖冲突会拒绝操作，不虚构房主。
 
 仅 Nanako 管理员可向房间动作提交 `action:'managers', discordIds:string[]`，最多 20 个，完整替换固定房管理者列表；空数组表示清空。机主明确允许管理员主动输入 Discord 用户 ID，Bot 实时校验当前非机器人服务器成员且能查看目标房间后映射为随机引用。不会额外授予 Discord 查看／连接权限；输入不回填、不进草稿，GET／错误／日志／URL 不回显原 ID。普通成员 DTO 可选新增 `kind`、`managers`（随机引用与名字）、`panelProblem`（稳定脱敏说明）。
 
 C5 新房仅将 Bot 在服务器与分类均已持有的 SendMessages／ReadMessageHistory／EmbedLinks 保留到 Bot 自身覆盖；房主不会因此获得管理权限。Discord 创建频道只允许写入 Bot 在服务器持有的权限位，因此角色本来缺失的位必须由机主授予，不尝试通过分类越权复制。无跨操作权限缓存：独立读取并行、完整目录在末尾用新鲜上下文，首次空历史卡适配的 GET 从 13 减至 9、单页快照从 8 减至 5。静音事件不触发房管，入口先准入再维护相关频道，目录事件合并并保留立即失效／同步代次；失效期间真实进入口者仅在恢复后仍在入口时继续处理。卡片错误按权限／历史／暂不可用显示脱敏诊断，状态变化下一轮及时重读，新卡优先。
 
 - 所有 ref 是随机 UUID v4，与原始 Discord ID 无可逆关系。DTO、URL、错误、审计与选择器不含原始成员／频道／角色标识、CDN 头像或精确频道链接。管理员配置也只用 opaque refs。
-- 成员配置投影不包含行政资源选择或私有 AI prompt。私房名称、成员、人数、互动与操作结果均按当前可见范围过滤。待对账房间对其他普通成员隔离；本人只见自身可读状态，管理员可诊断。
+- 成员配置投影不包含行政资源选择或私有 AI prompt。私房名称、成员、人数与操作结果均按当前可见范围过滤。待对账房间对其他普通成员隔离；本人只见自身可读状态，管理员可诊断。
 - 操作状态：`queued/running/retry_wait/succeeded/failed/conflict/canceled/needs_review`。202 不代表执行成功。相同 actor 和 requestKey 的相同请求返回同一任务，不同内容冲突；房间与同成员的跨端角色任务分别串行。过期 running 进入待对账，不自动重放。
 - `runtime.ready` 有新鲜度限制；`appliedVersion` 与已保存 `version` 分开。恢复时只信完整资源／语音快照、已登记目标和严格审计标记，不把未知当作空房；Gap 后重新观察宽限。
 - 人工 review 只取消旧任务、解除 scope 阻塞并记审计。欢迎保守计作已发送；房间须再经类型、分类、完整访问模型或唯一建房审计证明才能恢复。不可证明时继续隔离。
-- 趣味结果不参与计分。投票同 Discord 身份跨端一票、可在截止前改票；抽签不放回，重抽保存旧记录；分队仅使用明确选定成员。
-- 社区 AI 独立开关／prompt／配额，复用已保存提供商凭据；只用本次主动主题，按现有 reset 时区原子计配额（失败也计）。无房间范围的建议仅创建者与管理员可读；房间范围继承房间 ACL；应用名字是另一次房主管理动作。
+- C7 下线全部趣味工具与旧社区AI建议。活跃社区命令仅room／roles；缓存旧slash、按钮、菜单、modal安全返回停用说明，不读结果、不调用模型、不入队。旧全局入口原地移除趣味按钮。
+- `fun`仅保留禁用配置壳，兼容旧数据库、旧设置任务和滚动更新：旧内容全部忽略，题库为空、工具列表为空、开关关闭，AI提示词为固定无敏感内容的合法占位。其余房间／欢迎／身份严格校验不变。历史表和迁移保留，普通保存不能重启退休功能。
+- 退休`fun.*`任务的queued／retry_wait、过期running及无活动租约的needs_review安全终止并保留记录；有效租约不抢占。退休任务不再堵住房间队列，已隔离房间继续原核对流程。历史操作保留状态／审计，对外不返回旧内嵌结果；普通room.rename不因曾来自AI确认而被误取消。
 
 新 PG 表均由可重复执行的 `0012_community.sql` 创建：settings、resources、rooms、room_access、operations、audit、fun、poll_votes、ai_usage、role_choices、welcomes（均带 `community_` 前缀）。不删除或复用约局／历史／语音证据表。
 
-本 PR 已基于 `3119a96`（main #43，S6 清爽总览）融合。新增社区页面 `/community`、`/community/roles`、`/community/play`，管理页使用既有集中设置中的 `/settings/community`；`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。
+社区页面为 `/community`、`/community/roles`，旧 `/community/play` 只显示停用说明；管理页使用既有集中设置中的 `/settings/community`，`/admin/community` 为后者兼容别名。`/settings` 仍默认个人资料，S6 的四项主导航、工具路由、整页详情、原入户和永久深链均保留。社区接口能力关闭或旧 D1 返回 404 时隐藏社区入口，不影响既有设置／裁判工具。独立知识库问答Agent为后续一期，不复用退休趣味模块。

@@ -478,11 +478,10 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     },
     async sendPanel(channelId, messageId) {
       const { ctx } = await textChannel(channelId);
-      const body = { content: '社区中心 · 创建与管理自己的语音房，选择兴趣身份，使用趣味工具。', allowed_mentions: { parse: [] },
+      const body = { content: '社区中心 · 管理语音房，选择兴趣身份。', allowed_mentions: { parse: [] },
         components: [{ type: 1, components: [
           { type: 2, style: 2, label: '我的房间', custom_id: 'v1:community:room' },
           { type: 2, style: 2, label: '兴趣身份', custom_id: 'v1:community:roles' },
-          { type: 2, style: 2, label: '趣味工具', custom_id: 'v1:community:play' },
         ] }] };
       if (messageId) {
         validateId(messageId); const previous = raw(await request('get', Routes.channelMessage(channelId, messageId)));
