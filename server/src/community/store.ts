@@ -421,18 +421,21 @@ export class CommunityStore {
     await this.pool.query(`UPDATE community_operations SET status='canceled',finished_at=now(),error_code='operation_expired'
       WHERE guild_id=$1 AND status IN ('queued','retry_wait') AND expires_at<now()`, [this.guildId]);
   }
-  async claim(leaseSeconds = 30): Promise<StoredOperation | null> {
-    count(leaseSeconds, 1, 300);await this.recoverExpired();
+  async claim(leaseSeconds = 30, operationRef?: string): Promise<StoredOperation | null> {
+    count(leaseSeconds, 1, 300);
+    if (operationRef !== undefined && !isCommunityRef(operationRef)) return null;
+    await this.recoverExpired();
     return this.tx(async client => {
       // A short guild claim lock closes the two-concurrent-claimer window for one scope.
       // Released before any Discord request; evidence writes never wait on that request.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['community:claim:' + this.guildId]);
       const row = await client.query(`UPDATE community_operations SET status='running',claim_token=gen_random_uuid(),claimed_at=now(),lease_until=now()+make_interval(secs=>$2),attempts=attempts+1
         WHERE ref=(SELECT o.ref FROM community_operations o WHERE o.guild_id=$1 AND o.status IN ('queued','retry_wait')
+          AND ($3::uuid IS NULL OR o.ref=$3::uuid)
           AND o.available_at<=now() AND (o.expires_at IS NULL OR o.expires_at>now())
           AND NOT EXISTS(SELECT 1 FROM community_operations e WHERE e.guild_id=o.guild_id AND e.scope_key=o.scope_key
             AND ((e.status IN ('running','needs_review')) OR (e.status IN ('queued','retry_wait') AND (e.created_at,e.ref)<(o.created_at,o.ref))))
-          ORDER BY o.created_at,o.ref FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [this.guildId, leaseSeconds]);
+          ORDER BY o.created_at,o.ref FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [this.guildId, leaseSeconds, operationRef ?? null]);
       return row.rows[0] ? operationRow(row.rows[0] as Row) : null;
     });
   }

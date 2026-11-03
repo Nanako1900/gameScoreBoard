@@ -54,8 +54,13 @@ export interface CommunityDiscord {
   /** undefined means unavailable; null proves disconnected in the ready snapshot. */
   channelOf(memberId: string): string | null | undefined;
   createVoice(parentId: string, name: string, ownerId: string, visibility: CommunityVisibility, userLimit: number, operationRef: string): Promise<string>;
+  /** A creation receipt is authoritative only after validating the actual POST response. */
+  createVoiceVerified?(parentId: string, name: string, ownerId: string, visibility: CommunityVisibility, userLimit: number, operationRef: string,
+    expectedSourceId: string, beforeWrite: () => Promise<void>): Promise<CommunityDiscordChannel>;
   findCreatedVoice(operationRef: string): Promise<string | null>;
   move(memberId: string, channelId: string | null): Promise<void>;
+  /** false means the member left the expected source or no longer has target access. */
+  moveFrom?(memberId: string, targetChannelId: string, expectedSourceId: string, beforeWrite: () => Promise<void>): Promise<boolean>;
   rename(channelId: string, name: string): Promise<void>;
   setLimit(channelId: string, limit: number): Promise<void>;
   setVisibility(channelId: string, ownerId: string, visibility: CommunityVisibility): Promise<void>;
@@ -130,6 +135,11 @@ function parseChannel(value: unknown, guildId: string): Channel | null {
 }
 function publicChannel(channel: Channel): CommunityDiscordChannel {
   const { overwrites: _overwrites, ...out } = channel; return out;
+}
+function overwriteSignature(overwrites: readonly Overwrite[]): string {
+  return JSON.stringify(overwrites.map(overwrite => ({ id: overwrite.id, type: overwrite.type,
+    allow: BigInt(overwrite.allow).toString(), deny: BigInt(overwrite.deny).toString(),
+  })).sort((a, b) => a.id.localeCompare(b.id) || a.type - b.type));
 }
 function guildPermissions(member: Member, ctx: Context, guildId: string): bigint {
   if (member.id === ctx.ownerId) return -1n;
@@ -330,6 +340,61 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     const member = await currentMember(memberId, ctx); if (member.bot || member.id === ctx.ownerId) throw forbidden();
     assertReady(); await request(remove ? 'delete' : 'put', Routes.guildMemberRole(guildId, memberId, roleId), { reason: 'community self-selected role' });
   }
+  async function createVoiceRequest(parentId: string, name: string, ownerId: string, visibility: CommunityVisibility, userLimit: number,
+    operationRef: string, expectedSourceId?: string, beforeWrite?: () => Promise<void>): Promise<{ response: unknown; expectedOverwrites: string }> {
+    validateName(name); validateLimit(userLimit); const marker = reason(operationRef);
+    const checkSource = (): void => {
+      assertReady();
+      if (expectedSourceId !== undefined && channelOf(ownerId) !== expectedSourceId)
+        throw new CommunityDiscordError(409, '已离开创建入口');
+    };
+    if (expectedSourceId !== undefined) validateId(expectedSourceId);
+    checkSource();
+    // These reads belong only to this write, with no permissions carried into
+    // a later move or another operation.
+    const [ctx, parent, owner] = await Promise.all([context(), readChannel(parentId), readMember(ownerId)]);
+    if (!parent || parent.kind !== 'category') throw missing();
+    if (!has(channelPermissions(ctx.self, parent, ctx, guildId), CHANNEL_MANAGEMENT | P.ManageRoles)
+      || !has(guildPermissions(ctx.self, ctx, guildId), P.ViewAuditLog)) throw forbidden();
+    if (!owner) throw missing(); if (owner.bot) throw forbidden();
+    guildPermissions(owner, ctx, guildId);
+    const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility);
+    // Creation permits only permission bits the bot also holds guild-wide.
+    const bot = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === ctx.selfId)!;
+    const retained = channelPermissions(ctx.self, parent, ctx, guildId) & guildPermissions(ctx.self, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS;
+    bot.allow = (BigInt(bot.allow) | retained).toString();
+    checkSource(); await beforeWrite?.(); checkSource();
+    const expectedOverwrites = overwriteSignature(permission_overwrites);
+    const response = await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
+      parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker });
+    return { response, expectedOverwrites };
+  }
+  async function moveMember(memberId: string, channelId: string | null, expectedSourceId?: string, beforeWrite?: () => Promise<void>): Promise<boolean> {
+    assertReady(); validateId(memberId); if (channelId !== null) validateId(channelId);
+    if (expectedSourceId !== undefined) validateId(expectedSourceId);
+    const sourceId = channelOf(memberId);
+    if (sourceId === undefined) throw unavailable();
+    if (expectedSourceId !== undefined && sourceId !== expectedSourceId) return false;
+    const [ctx, member, source, target] = await Promise.all([context(), readMember(memberId),
+      sourceId === null ? null : readChannel(sourceId), channelId === null ? null : readChannel(channelId)]);
+    if (expectedSourceId !== undefined && channelOf(memberId) !== expectedSourceId) { assertReady(); return false; }
+    if (!member) throw missing(); if (member.bot) throw forbidden();
+    guildPermissions(member, ctx, guildId);
+    if (sourceId === null) { if (channelId === null) return true; throw new CommunityDiscordError(409, '成员尚未连接语音，不能直接移动'); }
+    if (!source || source.kind !== 'voice' || !has(channelPermissions(ctx.self, source, ctx, guildId), P.ViewChannel | P.MoveMembers)) throw forbidden();
+    if (channelId !== null) {
+      if (!target || target.kind !== 'voice') throw missing();
+      if (!has(channelPermissions(ctx.self, target, ctx, guildId), ACCESS | P.MoveMembers)) throw forbidden();
+      if (!has(channelPermissions(member, target, ctx, guildId), ACCESS)) { if (expectedSourceId !== undefined) return false; throw forbidden(); }
+    }
+    await beforeWrite?.();
+    if (channelOf(memberId) !== sourceId) {
+      assertReady(); if (expectedSourceId !== undefined) return false;
+      throw new CommunityDiscordError(409, '成员语音位置已变化，请重试');
+    }
+    assertReady(); await request('patch', Routes.guildMember(guildId, memberId), { body: { channel_id: channelId }, reason: 'community room move' });
+    return true;
+  }
   return {
     async snapshot(fixedCategoryIds = []) {
       const fixedCategories = new Set(fixedCategoryIds); for (const categoryId of fixedCategories) validateId(categoryId);
@@ -370,23 +435,24 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     canConnect: (memberId, channelId) => access(memberId, channelId, true),
     occupants, channelOf,
     async createVoice(parentId, name, ownerId, visibility, userLimit, operationRef) {
-      validateName(name); validateLimit(userLimit); const marker = reason(operationRef), ctx = await context(), parent = await readChannel(parentId);
-      if (!parent || parent.kind !== 'category') throw missing();
-      if (!has(channelPermissions(ctx.self, parent, ctx, guildId), CHANNEL_MANAGEMENT | P.ManageRoles)
-        || !has(guildPermissions(ctx.self, ctx, guildId), P.ViewAuditLog)) throw forbidden();
-      const owner = await currentMember(ownerId, ctx); if (owner.bot) throw forbidden();
-      const permission_overwrites = visibilityOverwrites(null, ctx, ownerId, visibility);
-      // Discord's create-channel API only permits overwriting permissions the
-      // bot holds guild-wide. A category-only grant must not make the primary
-      // room creation fail; missing card permissions are diagnosed separately.
-      const bot = permission_overwrites.find(overwrite => overwrite.type === 1 && overwrite.id === ctx.selfId)!;
-      const retained = channelPermissions(ctx.self, parent, ctx, guildId) & guildPermissions(ctx.self, ctx, guildId) & ROOM_PANEL_MESSAGE_PERMISSIONS;
-      bot.allow = (BigInt(bot.allow) | retained).toString();
-      assertReady();
-      const created = raw(await request('post', Routes.guildChannels(guildId), { body: { name: name.trim(), type: ChannelType.GuildVoice,
-        parent_id: parentId, user_limit: userLimit, permission_overwrites }, reason: marker }));
-      if (created.type !== ChannelType.GuildVoice || created.guild_id !== guildId) throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true);
-      return id(created.id);
+      const { response } = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef);
+      try {
+        const created = raw(response);
+        if (created.type !== ChannelType.GuildVoice || created.guild_id !== guildId) throw invalid();
+        return id(created.id);
+      } catch { throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true); }
+    },
+    async createVoiceVerified(parentId, name, ownerId, visibility, userLimit, operationRef, expectedSourceId, beforeWrite) {
+      const { response, expectedOverwrites } = await createVoiceRequest(parentId, name, ownerId, visibility, userLimit, operationRef, expectedSourceId, beforeWrite);
+      try {
+        const actual = raw(response), channel = parseChannel(actual, guildId);
+        // The receipt replaces a follow-up GET, so it must prove the explicit
+        // owner, bot and everyone ACL, regardless of Discord's array ordering.
+        if (!channel || channel.kind !== 'voice' || channel.parentId !== parentId || channel.name !== name.trim()
+          || typeof actual.user_limit !== 'number' || !Number.isInteger(actual.user_limit) || actual.user_limit !== userLimit
+          || overwriteSignature(channel.overwrites) !== expectedOverwrites) throw invalid();
+        return publicChannel(channel);
+      } catch { throw new CommunityDiscordError(503, '建房结果尚未确认，需要审计对账', true); }
     },
     async findCreatedVoice(operationRef) {
       const marker = reason(operationRef);
@@ -412,17 +478,9 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       await check(); return found.id;
     },
     async move(memberId, channelId) {
-      const ctx = await context(), member = await currentMember(memberId, ctx); if (member.bot) throw forbidden();
-      const sourceId = channelOf(memberId); if (sourceId === undefined) throw unavailable();
-      if (sourceId === null) { if (channelId === null) return; throw new CommunityDiscordError(409, '成员尚未连接语音，不能直接移动'); }
-      const source = await readChannel(sourceId); if (!source || source.kind !== 'voice' || !has(channelPermissions(ctx.self, source, ctx, guildId), P.ViewChannel | P.MoveMembers)) throw forbidden();
-      if (channelId !== null) {
-        const target = await readChannel(channelId); if (!target || target.kind !== 'voice') throw missing();
-        if (!has(channelPermissions(ctx.self, target, ctx, guildId), ACCESS | P.MoveMembers) || !has(channelPermissions(member, target, ctx, guildId), ACCESS)) throw forbidden();
-      }
-      if (channelOf(memberId) !== sourceId) throw new CommunityDiscordError(409, '成员语音位置已变化，请重试');
-      assertReady(); await request('patch', Routes.guildMember(guildId, memberId), { body: { channel_id: channelId }, reason: 'community room move' });
+      await moveMember(memberId, channelId);
     },
+    moveFrom: (memberId, channelId, expectedSourceId, beforeWrite) => moveMember(memberId, channelId, expectedSourceId, beforeWrite),
     async rename(channelId, name) { validateName(name); await managedChannel(channelId); assertReady(); await request('patch', Routes.channel(channelId), { body: { name: name.trim() }, reason: 'community room rename' }); },
     async setLimit(channelId, userLimit) { validateLimit(userLimit); await managedChannel(channelId); assertReady(); await request('patch', Routes.channel(channelId), { body: { user_limit: userLimit }, reason: 'community room capacity' }); },
     async setVisibility(channelId, ownerId, visibility) {

@@ -20,7 +20,7 @@ function setup() {
     patchRoom:vi.fn(async(ref:string,patch:object,version:number)=>{const r=rooms.find(r=>r.ref===ref)!;if(r.version!==version)throw new CommunityStoreError(409,'version_conflict','changed');Object.assign(r,patch,{version:r.version+1});return r}),
     roomAccess:vi.fn(async(ref:string)=>accesses.get(ref)??[]),setRoomAccess:vi.fn(async(ref:string,memberRef:string,patch:object)=>{const list=accesses.get(ref)??[];let a=list.find(a=>a.memberRef===memberRef);if(!a){a={memberRef,allowed:false,blocked:false,present:false};list.push(a)}Object.assign(a,patch);accesses.set(ref,list);return a}),
     enqueue:vi.fn(async(kind:string,roomRef:string|null,actor:StoredOperation['actor'],payload:StoredOperation['payload'],requestKey:string,expectedVersion?:number)=>{const existing=operations.find(o=>o.requestKey===requestKey);if(existing)return existing;const op={ref:randomUUID(),kind,roomRef,actor,payload,requestKey,expectedVersion:expectedVersion??null,status:'queued',claimToken:null,attempts:0,createdAt:new Date(now).toISOString(),finishedAt:null,error:null,result:null,expiresAt:new Date(now+300000).toISOString(),availableAt:new Date(now).toISOString(),errorCode:null} as StoredOperation;operations.push(op);return op}),
-    recoverExpired:vi.fn(async()=>{}),claim:vi.fn(async()=>{const op=operations.find(o=>o.status==='queued');if(!op)return null;op.status='running';op.claimToken=randomUUID();return op}),renew:vi.fn(async()=>true),
+    recoverExpired:vi.fn(async()=>{}),claim:vi.fn(async(_leaseSeconds?:number,operationRef?:string)=>{const op=operations.find(o=>o.status==='queued'&&(!operationRef||o.ref===operationRef));if(!op)return null;op.status='running';op.claimToken=randomUUID();return op}),renew:vi.fn(async()=>true),
     finish:vi.fn(async(ref:string,token:string,outcome:object)=>{const op=operations.find(o=>o.ref===ref)!;Object.assign(op,outcome);return true}),getOperation:vi.fn(async(ref:string)=>operations.find(o=>o.ref===ref)??null),resolveRecoveredOperation:vi.fn(async(ref:string,result:object)=>{Object.assign(operations.find(o=>o.ref===ref)!,{status:'succeeded',result});return true}),addAudit:vi.fn(async()=>{})} as unknown as CommunityStore;
   let present:string[]|null=['owner'];let position:string|null|undefined='creator';
   const discord={snapshot:vi.fn(async()=>({ready:true,guildName:'社区',selfId:'bot',resources:[...resources.values()].map(r=>({id:r.externalId,kind:r.kind,name:r.name,available:true,safe:true})),members:[{id:'owner',name:'owner',bot:false,protected:false,roleIds:[],joinedAt:null},{id:'other',name:'other',bot:false,protected:false,roleIds:[],joinedAt:null}]})),member:vi.fn(async(id:string)=>id==='gone'?null:{id,name:id,bot:false,protected:false,roleIds:[],joinedAt:null}),channel:vi.fn(async(id:string)=>({id,name:id,kind:id==='category'?'category':'voice',parentId:id==='category'?null:'category'})),canView:vi.fn(async()=>true),canConnect:vi.fn(async()=>true),occupants:vi.fn(()=>present),channelOf:vi.fn(()=>position),createVoice:vi.fn(async()=> 'channel'),findCreatedVoice:vi.fn(async()=>null),move:vi.fn(async()=>{}),rename:vi.fn(async()=>{}),setLimit:vi.fn(async()=>{}),setVisibility:vi.fn(async()=>{}),grant:vi.fn(async()=>{}),deny:vi.fn(async()=>{}),delete:vi.fn(async()=>{}),sendPanel:vi.fn(async()=> 'message')} as unknown as CommunityDiscord;
@@ -31,7 +31,153 @@ function setup() {
   return {engine,store,discord,authorize,resources,rooms,operations,owner,other,category,creator,waiting,channel,settings,enqueue,room,setNow:(n:number)=>{now=n},now:()=>now,setPresent:(p:string[]|null)=>{present=p},setPosition:(p:string|null|undefined)=>{position=p}};
 }
 
+const deferred=<T,>()=>{let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done});return {promise,resolve};};
+const drain=async()=>{for(let index=0;index<100;index++)await Promise.resolve();};
+function nativeCreation(s:ReturnType<typeof setup>) {
+  const post=vi.fn(),patch=vi.fn();
+  const create=vi.fn<NonNullable<CommunityDiscord['createVoiceVerified']>>(async(parentId,name,_ownerId,_visibility,userLimit,_operationRef,_source,beforeWrite)=>{
+    await beforeWrite();post();return {id:'channel',name,kind:'voice',parentId,userLimit};
+  });
+  const move=vi.fn<NonNullable<CommunityDiscord['moveFrom']>>(async(_memberId,_channelId,_source,beforeWrite)=>{await beforeWrite();patch();return true;});
+  s.discord.createVoiceVerified=create;s.discord.moveFrom=move;
+  return {create,move,post,patch};
+}
+
 describe('community room execution and reconciliation',()=>{
+  it('uses the verified creation receipt and persists the confirmed room before the source-bound move',async()=>{
+    const s=setup(),native=nativeCreation(s);const operation=await s.enqueue('room.create',null,{creatorOnly:true});
+    native.move.mockImplementation(async(memberId,channelId,source,beforeWrite)=>{
+      expect([memberId,channelId,source]).toEqual(['owner','channel','creator']);
+      expect(s.rooms[0]).toMatchObject({status:'active',channelRef:s.channel});await beforeWrite();native.patch();return true;
+    });
+    await s.engine.runOne();
+    expect(operation.status).toBe('succeeded');expect(native.post).toHaveBeenCalledOnce();expect(native.patch).toHaveBeenCalledOnce();
+    expect(s.discord.createVoice).not.toHaveBeenCalled();expect(s.discord.move).not.toHaveBeenCalled();expect(s.discord.channel).not.toHaveBeenCalled();
+    expect(s.discord.member).not.toHaveBeenCalled();expect(s.discord.canConnect).not.toHaveBeenCalled();expect(s.discord.canView).toHaveBeenCalledOnce();
+  });
+  it.each(['settings','applied','source','epoch','ready','identity','lease'] as const)('stops a verified creation when %s changes before POST',async race=>{
+    const s=setup(),native=nativeCreation(s);const original=vi.mocked(s.store.settings).getMockImplementation()!;
+    native.create.mockImplementation(async(parentId,name,_owner,_visibility,userLimit,_op,_source,beforeWrite)=>{
+      if(race==='settings'||race==='applied'||race==='ready')vi.mocked(s.store.settings).mockImplementation(async()=>{
+        const current=await original();return {...current,version:race==='settings'?2:current.version,runtime:{...current.runtime,appliedVersion:race==='applied'?0:current.runtime.appliedVersion,ready:race!=='ready'}};
+      });
+      if(race==='source')s.setPosition('waiting');if(race==='epoch')s.engine.invalidateSnapshot();
+      if(race==='identity')s.authorize.mockResolvedValue({memberRef:s.other,isAdmin:false});if(race==='lease')vi.mocked(s.store.renew).mockResolvedValue(false);
+      await beforeWrite();native.post();return {id:'channel',name,kind:'voice',parentId,userLimit};
+    });
+    const operation=await s.enqueue('room.create',null,{creatorOnly:true});await s.engine.runOne();
+    expect(native.post).not.toHaveBeenCalled();expect(native.patch).not.toHaveBeenCalled();expect(operation.status).not.toBe('succeeded');expect(s.rooms[0].status).toBe('closed');
+  });
+  it('allows its own channel-create invalidation without skipping the final full visibility guard',async()=>{
+    const s=setup(),native=nativeCreation(s);const create=native.create.getMockImplementation()!,settings=vi.mocked(s.store.settings).getMockImplementation()!;
+    native.create.mockImplementation(async(...args)=>{
+      const receipt=await create(...args);s.engine.invalidateSnapshot();
+      vi.mocked(s.store.settings).mockImplementation(async()=>{const current=await settings();return {...current,runtime:{...current.runtime,ready:false}};});
+      return receipt;
+    });
+    const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(operation.status).toBe('succeeded');expect(native.patch).toHaveBeenCalledOnce();expect(s.discord.canView).toHaveBeenCalledOnce();
+  });
+  it('defers entrance events immediately after invalidation before readiness is persisted',async()=>{
+    const s=setup(),native=nativeCreation(s);s.engine.invalidateSnapshot();
+    await s.engine.onVoice('owner','creator','waiting');expect(native.create).not.toHaveBeenCalled();expect(s.store.enqueue).not.toHaveBeenCalled();
+    await s.engine.sync();expect(native.create).toHaveBeenCalledOnce();expect(native.patch).toHaveBeenCalledOnce();
+  });
+  it('refuses a native POST after invalidation that predates the operation while stored readiness is stale',async()=>{
+    const s=setup(),native=nativeCreation(s);s.engine.invalidateSnapshot();const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(native.post).not.toHaveBeenCalled();expect(operation.status).not.toBe('succeeded');expect(s.rooms[0].status).toBe('closed');
+  });
+  it('never clears a new invalidation received while publishing a ready census',async()=>{
+    const s=setup(),native=nativeCreation(s);
+    vi.mocked(s.store.setRuntime).mockImplementation(async patch=>{if(patch.ready===true)s.engine.invalidateSnapshot();});
+    expect(await s.engine.sync()).toBe(false);await s.engine.onVoice('owner','creator','waiting');
+    expect(s.store.enqueue).not.toHaveBeenCalled();expect(native.post).not.toHaveBeenCalled();
+    vi.mocked(s.store.setRuntime).mockResolvedValue();await s.engine.sync();expect(native.post).toHaveBeenCalledOnce();
+  });
+  it('keeps a newly confirmed room when the native move declines after a position or access change',async()=>{
+    const s=setup(),native=nativeCreation(s);native.move.mockResolvedValue(false);
+    const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(operation.status).toBe('succeeded');expect(s.rooms[0].status).toBe('active');expect(native.patch).not.toHaveBeenCalled();
+  });
+  it.each(['settings','applied','identity','lease','room'] as const)('rechecks %s immediately before the native move',async race=>{
+    const s=setup(),native=nativeCreation(s),original=vi.mocked(s.store.settings).getMockImplementation()!;
+    native.move.mockImplementation(async(_member,_target,_source,beforeWrite)=>{
+      if(race==='settings'||race==='applied')vi.mocked(s.store.settings).mockImplementation(async()=>{
+        const current=await original();return {...current,version:race==='settings'?2:current.version,runtime:{...current.runtime,appliedVersion:race==='applied'?0:current.runtime.appliedVersion}};
+      });
+      if(race==='identity')s.authorize.mockResolvedValue({memberRef:s.other,isAdmin:false});if(race==='lease')vi.mocked(s.store.renew).mockResolvedValue(false);
+      if(race==='room')await s.store.patchRoom(s.rooms[0].ref,{status:'closed'},s.rooms[0].version);
+      await beforeWrite();native.patch();return true;
+    });
+    const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(native.post).toHaveBeenCalledOnce();expect(native.patch).not.toHaveBeenCalled();expect(operation.status).toBe('needs_review');expect(s.rooms[0].status).toBe(race==='room'?'closed':'needs_review');
+  });
+  it('retains the final full visibility check after both native writes',async()=>{
+    const s=setup(),native=nativeCreation(s);vi.mocked(s.discord.canView).mockResolvedValue(false);
+    const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(native.post).toHaveBeenCalledOnce();expect(native.patch).toHaveBeenCalledOnce();expect(s.discord.canView).toHaveBeenCalledOnce();expect(operation.status).toBe('needs_review');
+  });
+  it('quarantines a malformed verified receipt and never recreates its uncertain room',async()=>{
+    const s=setup(),native=nativeCreation(s);native.create.mockResolvedValue({id:'channel',name:'异常',kind:'voice',parentId:'elsewhere',userLimit:0});
+    await s.engine.onVoice('owner','creator','waiting');await s.engine.onVoice('owner','creator','waiting');
+    expect(native.create).toHaveBeenCalledOnce();expect(native.move).not.toHaveBeenCalled();expect(s.rooms).toHaveLength(1);expect(s.rooms[0].status).toBe('needs_review');
+  });
+  it('uses complete display mapping for native admission but freshly checks an existing-room return',async()=>{
+    const s=setup(),native=nativeCreation(s);s.resources.get(s.owner)!.metadata={bot:false,protected:false,roleIds:[],joinedAt:null};
+    await s.engine.onVoice('owner','creator','waiting');expect(s.discord.member).not.toHaveBeenCalled();expect(native.create).toHaveBeenCalledOnce();
+    await s.engine.onVoice('owner','creator','waiting');expect(s.discord.member).toHaveBeenCalled();expect(s.discord.move).toHaveBeenCalledWith('owner','channel');
+  });
+  it.each(['missing','unavailable','incomplete'] as const)('falls back to a fresh admission member read for %s display mapping',async mode=>{
+    const s=setup(),native=nativeCreation(s);
+    if(mode==='missing')s.resources.delete(s.owner);if(mode==='unavailable')s.resources.get(s.owner)!.available=false;
+    await s.engine.onVoice('owner','creator','waiting');expect(s.discord.member).toHaveBeenCalledExactlyOnceWith('owner');expect(native.create).toHaveBeenCalledOnce();
+  });
+  it.each(['create','move'] as const)('keeps the legacy adapter path when the native %s method is absent',async missing=>{
+    const s=setup();nativeCreation(s);if(missing==='create')delete s.discord.createVoiceVerified;else delete s.discord.moveFrom;
+    const operation=await s.enqueue('room.create');await s.engine.runOne();
+    expect(operation.status).toBe('succeeded');expect(s.discord.createVoice).toHaveBeenCalledOnce();expect(s.discord.move).toHaveBeenCalledOnce();
+  });
+  it('executes the newly admitted entrance operation before unrelated older queued work',async()=>{
+    const s=setup(),room=await s.room();const older=await s.enqueue('room.rename',room.ref,{name:'旧任务'},room.version);
+    vi.mocked(s.discord.createVoice).mockResolvedValue('new-channel');
+    await s.engine.onVoice('other','creator','waiting');
+    expect(s.discord.createVoice).toHaveBeenCalledOnce();expect(s.discord.rename).not.toHaveBeenCalled();expect(older.status).toBe('queued');
+    const entrance=s.operations.find(op=>op.kind==='room.create')!;
+    expect(s.store.claim).toHaveBeenCalledWith(300,entrance.ref);expect(entrance.status).toBe('succeeded');
+  });
+  it('lets a waiting entrance run between periodic maintenance of two unrelated rooms',async()=>{
+    const s=setup();await s.room();const secondChannel=randomUUID();
+    s.resources.set(secondChannel,{...s.resources.get(s.channel)!,ref:secondChannel,externalId:'second-channel'});
+    await s.store.createRoom(s.other,'另一个房间',{channelRef:secondChannel,status:'active'} as never);await s.engine.sync();
+    const started=deferred<void>(),release=deferred<void>(),order:string[]=[];
+    const channel=vi.mocked(s.discord.channel).getMockImplementation()!;
+    vi.mocked(s.discord.channel).mockImplementation(async id=>{if(id==='channel'){order.push('first');started.resolve();await release.promise;}if(id==='second-channel')order.push('second');return channel(id);});
+    vi.mocked(s.discord.createVoice).mockImplementation(async()=>{order.push('create');return 'new-channel';});
+    const tick=s.engine.tick();await started.promise;const entrance=s.engine.onVoice('visitor','creator','waiting');release.resolve();
+    await tick;await entrance;expect(order).toEqual(['first','create','second']);
+  });
+  it('lets a waiting entrance run between ordinary operations in one periodic tick',async()=>{
+    const s=setup(),room=await s.room();await s.engine.sync();
+    await s.enqueue('room.rename',room.ref,{name:'先改名'});await s.enqueue('room.rename',room.ref,{name:'再改名'});
+    const started=deferred<void>(),release=deferred<void>(),order:string[]=[];
+    vi.mocked(s.discord.rename).mockImplementation(async()=>{order.push('rename');if(order.length===1){started.resolve();await release.promise;}});
+    vi.mocked(s.discord.createVoice).mockImplementation(async()=>{order.push('create');return 'new-channel';});
+    const tick=s.engine.tick();await started.promise;const entrance=s.engine.onVoice('other','creator','waiting');release.resolve();
+    await tick;await entrance;expect(order).toEqual(['rename','create','rename']);
+  });
+  it('coalesces overlapping timer ticks and drains their current fragment before stopping',async()=>{
+    const s=setup(),room=await s.room();await s.engine.sync();
+    const started=deferred<void>(),release=deferred<void>();const channel=vi.mocked(s.discord.channel).getMockImplementation()!;
+    vi.mocked(s.discord.channel).mockImplementation(async id=>{started.resolve();await release.promise;return channel(id);});
+    const tick=s.engine.tick();await started.promise;expect(s.engine.tick()).toBe(tick);
+    let stopped=false;const stop=s.engine.stop().then(()=>{stopped=true;});await drain();expect(stopped).toBe(false);
+    release.resolve();await tick;await stop;expect(s.store.claim).not.toHaveBeenCalled();expect(room.status).toBe('active');
+    expect(s.store.setRuntime).toHaveBeenLastCalledWith({ready:false,problem:'bot_offline'});
+  });
+  it('does not run queued work when a due periodic census fails',async()=>{
+    const s=setup();await s.enqueue('room.create');vi.mocked(s.discord.snapshot).mockResolvedValue({ready:false,guildName:'',selfId:'bot',resources:[],members:[]});
+    await s.engine.tick();expect(s.store.claim).not.toHaveBeenCalled();expect(s.discord.createVoice).not.toHaveBeenCalled();
+  });
   it('cancels a claimed retired task without invoking authorization, extra execution or room quarantine',async()=>{
     const s=setup();const room=await s.room();const extra=vi.fn(async()=>({item:{title:'private'}}));
     s.authorize.mockRejectedValue(new Error('retired actors must not be re-executed'));
