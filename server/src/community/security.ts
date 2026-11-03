@@ -1,4 +1,5 @@
 import type { CommunityJson, CommunityPublicSettings, CommunitySettings, CommunityVisibility } from '../../../shared/community';
+import { defaultCommunitySettings } from '../../../shared/community';
 
 export interface CommunityReader { memberRef: string | null; isAdmin: boolean; memberAvailable: boolean }
 export function canReadRoom(actor: CommunityReader, room: { ownerRef: string | null; visibility: CommunityVisibility; status?: string; metadata?: { [key: string]: unknown } },
@@ -26,7 +27,8 @@ export function publicCommunityJson(value: CommunityJson, depth = 0): CommunityJ
   return value;
 }
 export function publicCommunitySettings(settings: CommunitySettings): CommunityPublicSettings {
-  const { enabled, rooms, roles, fun } = settings;
+  const { enabled, rooms, roles } = settings;
+  const fun = defaultCommunitySettings().fun;
   return { enabled, rooms: { enabled: rooms.enabled, visibility: rooms.visibility, maxPerMember: rooms.maxPerMember,
     maxRooms: rooms.maxRooms, cooldownSeconds: rooms.cooldownSeconds, emptyGraceSeconds: rooms.emptyGraceSeconds,
     ownerGraceSeconds: rooms.ownerGraceSeconds, userLimit: rooms.userLimit, maxUserLimit: rooms.maxUserLimit },
@@ -34,6 +36,6 @@ export function publicCommunitySettings(settings: CommunitySettings): CommunityP
   fun: { enabled: fun.enabled, enabledTools: [...fun.enabledTools], cooldownSeconds: fun.cooldownSeconds,
     pollMaxHours: fun.pollMaxHours, pollMaxOptions: fun.pollMaxOptions, maxParticipants: fun.maxParticipants,
     maxDiceCount: fun.maxDiceCount, maxDiceSides: fun.maxDiceSides,
-    tags: [...new Set(fun.topics.flatMap(topic => topic.tags.map(safeCommunityText)))],
+    tags: [],
     ai: { enabled: fun.ai.enabled, userDailyLimit: fun.ai.userDailyLimit, guildDailyLimit: fun.ai.guildDailyLimit } } };
 }
