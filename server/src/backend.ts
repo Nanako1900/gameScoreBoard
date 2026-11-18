@@ -89,7 +89,7 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   const musicEnabled = envFlag(processEnv.MUSIC_ENABLED, false, 'MUSIC_ENABLED', warn);
   const masterKey = (processEnv.AI_CONFIG_MASTER_KEY ?? '').trim() || undefined;
   const music = communityStore && musicEnabled ? { store: new MusicStore(pool, guildId), db: env.DB, masterKey,
-    netease: createProxiedNetease(env.DB, masterKey), requestRoomAccess: musicRoomAccess(communityStore) } : undefined;
+    netease: createProxiedNetease(env.DB, masterKey, failure => log.warn(`music: netease ${failure.path} failed (${failure.reason})`)), requestRoomAccess: musicRoomAccess(communityStore) } : undefined;
   const communityRoutes = communityStore ? createCommunityRoutes({ store: communityStore, db: env.DB, env,
     membership: { readRoles: ref => readCommunityRoles(communityStore, ref) },
     onError: (context, error) => log.error(context, error), music }) : undefined;

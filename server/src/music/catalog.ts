@@ -38,7 +38,7 @@ export class MusicCatalog {
     } catch (error) {
       if (error instanceof CommunityStoreError) throw error;
       this.service.deps.onError?.('music netease request failed', error instanceof Error ? error.name : 'unknown');
-      return fail(502, 'netease_unavailable', NETEASE_UNAVAILABLE);
+      return fail(503, 'netease_unavailable', NETEASE_UNAVAILABLE);
     }
   }
 

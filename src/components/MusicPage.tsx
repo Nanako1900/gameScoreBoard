@@ -29,14 +29,17 @@ function MusicUnavailable({ problem, reload }: { problem: MusicProblem | null; r
       </section>
     );
   }
-  const gone = problem.status === 403 || problem.status === 404;
+  // 403 is never about the room (a room you may not see answers 404): it means
+  // the caller is not a linked server member, and the server says which.
+  const gone = problem.status === 404;
+  const refused = problem.status === 403;
   return (
     <section className="community-page music-page">
       <BackLink />
       <h1>音乐播放器</h1>
       <p role="alert">{problem.status === UNAUTHENTICATED ? '登录后使用音乐播放器' : gone ? GONE_MESSAGE : problem.message}</p>
       {problem.status === UNAUTHENTICATED && <LoginLink>登录 Nanako</LoginLink>}
-      {!gone && problem.status !== UNAUTHENTICATED && <button type="button" onClick={reload}>重新加载</button>}
+      {!gone && !refused && problem.status !== UNAUTHENTICATED && <button type="button" onClick={reload}>重新加载</button>}
     </section>
   );
 }
