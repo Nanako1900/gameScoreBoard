@@ -22,6 +22,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 
 function setup(routes: Record<string, Responder>, timeoutMs?: number) {
   const calls: Call[] = [];
+  const failures: { path: string; reason: string }[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init: init ?? {} });
@@ -29,8 +30,11 @@ function setup(routes: Record<string, Responder>, timeoutMs?: number) {
     if (!responder) throw new Error(`unexpected url ${url}`);
     return responder();
   });
-  const deps = Object.freeze({ fetch: fetch as unknown as typeof globalThis.fetch, timeoutMs });
-  return { client: createNeteaseClient(deps), calls };
+  const deps = Object.freeze({
+    fetch: fetch as unknown as typeof globalThis.fetch, timeoutMs,
+    onFailure: (failure: { path: string; reason: string }) => { failures.push(failure); },
+  });
+  return { client: createNeteaseClient(deps), calls, failures };
 }
 
 function header(call: Call, name: string): string | null {
@@ -46,7 +50,7 @@ async function expectUnavailable(promise: Promise<unknown>, forbidden: string[] 
   const error = await promise.then(() => null, (caught: unknown) => caught);
   expect(error).toBeInstanceOf(CommunityStoreError);
   const storeError = error as CommunityStoreError;
-  expect(storeError.status).toBe(502);
+  expect(storeError.status).toBe(503);
   expect(storeError.code).toBe('netease_unavailable');
   expect(storeError.message).toBe(GENERIC);
   for (const text of forbidden) expect(storeError.message).not.toContain(text);
@@ -296,7 +300,7 @@ describe('QR login', () => {
     expect(await client.qrCheck('a1b2-c3d4')).toEqual({ status: 'done', cookie: MUSIC_U });
   });
 
-  it('fails with 502 when 803 arrives without MUSIC_U', async () => {
+  it('fails as unavailable when 803 arrives without MUSIC_U', async () => {
     const headers = new Headers();
     headers.append('Set-Cookie', '__csrf=csrfsecret; Path=/');
     const { client } = setup({ [`${BASE}/login/qrcode/client/login`]: () => jsonResponse({ code: 803 }, { headers }) });
@@ -397,5 +401,44 @@ describe('neteaseSource', () => {
     const source = neteaseSource(client);
     await expectInvalid(source.resolve('bilibili:1'));
     expect(client.songUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe('failure reporting', () => {
+  const QR = `${BASE}/login/qrcode/unikey`;
+
+  it('names NetEase risk control instead of a generic outage', async () => {
+    const { client, failures } = setup({ [QR]: () => jsonResponse({ code: -462, data: { blockText: 'secret-body-text' } }) });
+    const error = await client.qrKey().then(() => null, (caught: unknown) => caught) as CommunityStoreError;
+    expect(error).toBeInstanceOf(CommunityStoreError);
+    expect(error.status).toBe(503);
+    expect(error.code).toBe('netease_blocked');
+    expect(error.message).toContain('风控');
+    expect(error.message).not.toContain('secret-body-text');
+    expect(failures).toEqual([{ path: '/login/qrcode/unikey', reason: 'code_-462' }]);
+  });
+
+  it('reports the upstream code, HTTP status or transport failure without the body', async () => {
+    const refused = setup({ [QR]: () => jsonResponse({ code: 50000005, msg: 'secret-body-text' }) });
+    await expectUnavailable(refused.client.qrKey());
+    expect(refused.failures).toEqual([{ path: '/login/qrcode/unikey', reason: 'code_50000005' }]);
+
+    const http = setup({ [QR]: () => new Response('secret-body-text', { status: 500 }) });
+    await expectUnavailable(http.client.qrKey());
+    expect(http.failures).toEqual([{ path: '/login/qrcode/unikey', reason: 'http_500' }]);
+
+    const network = setup({ [QR]: () => { throw new Error('secret-body-text'); } });
+    await expectUnavailable(network.client.qrKey());
+    expect(network.failures).toEqual([{ path: '/login/qrcode/unikey', reason: 'network' }]);
+
+    const garbage = setup({ [QR]: () => new Response('<html>secret-body-text</html>') });
+    await expectUnavailable(garbage.client.qrKey());
+    expect(garbage.failures).toEqual([{ path: '/login/qrcode/unikey', reason: 'bad_body' }]);
+  });
+
+  it('does not report the expected QR polling codes', async () => {
+    const { client, failures } = setup({ [`${BASE}/login/qrcode/client/login`]: () => jsonResponse({ code: 801 }) });
+    expect(await client.qrCheck('a1b2-c3d4')).toEqual({ status: 'waiting' });
+    expect(failures).toEqual([]);
   });
 });

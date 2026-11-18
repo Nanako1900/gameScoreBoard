@@ -49,6 +49,14 @@ describe('page states', () => {
     expect(screen.queryByRole('button', { name: '邀请 Music 进房' })).not.toBeInTheDocument();
   });
 
+  it('shows the server reason on 403 instead of blaming the room', async () => {
+    current = () => json({ error: '请先绑定 Discord', code: 'membership_required' }, 403);
+    render(<MusicPage roomRef={roomRef} />);
+    expect(await screen.findByText('请先绑定 Discord')).toBeInTheDocument();
+    expect(screen.queryByText('房间不存在或你无权查看')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新加载' })).not.toBeInTheDocument();
+  });
+
   it.each([401, 403, 404])('clears all private data when a later poll answers %i', async (status) => {
     serve(activeView({ myAccount }, { current: queueItem(1), queue: [queueItem(2)] }));
     render(<MusicPage roomRef={roomRef} />);

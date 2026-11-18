@@ -9,7 +9,12 @@ import { weapi } from './crypto';
 export interface NeteaseClientDeps {
   fetch: typeof fetch;
   timeoutMs?: number;
+  /** Told why a request failed: the path plus an HTTP status, NetEase code or
+   * transport reason. Never the body, a cookie or a URL. */
+  onFailure?: (failure: NeteaseFailure) => void;
 }
+
+export interface NeteaseFailure { path: string; reason: string }
 
 export type QrCheckResult =
   | { status: 'waiting' | 'scanned' | 'expired' }
@@ -42,6 +47,8 @@ const CODE_NOT_FOUND = 404;
 const CODE_NO_ACCESS = 401;
 const CODE_NEED_LOGIN = 301;
 const CODE_REGION_BLOCKED = -110;
+/** NetEase refused this network or client as risky. Retrying from the same exit does not help. */
+const CODE_RISK_CONTROL = -462;
 const FEE_VIP = 1;
 const FEE_PURCHASE = 4;
 const QR_TYPE_WEB = 1;
@@ -79,8 +86,14 @@ const UNPLAYABLE = {
   other: '暂时无法播放',
 } as const;
 
+// 503 rather than 502: gateways in front of the app replace a 502 with their
+// own page, which drops the CORS headers and hides the message from the page.
 function unavailable(): CommunityStoreError {
-  return new CommunityStoreError(502, 'netease_unavailable', '网易云暂不可用，请稍后重试');
+  return new CommunityStoreError(503, 'netease_unavailable', '网易云暂不可用，请稍后重试');
+}
+
+function blocked(): CommunityStoreError {
+  return new CommunityStoreError(503, 'netease_blocked', '网易云拒绝了服务器的网络环境（风控），请联系管理员检查出口代理');
 }
 
 function invalid(message: string): CommunityStoreError {
@@ -153,19 +166,14 @@ function parseTracks(value: unknown): MusicTrack[] {
   return value.map(parseTrack).filter((track): track is MusicTrack => track !== null);
 }
 
-function parseJsonObject(text: string): JsonObject {
+function parseJsonObject(text: string): JsonObject | null {
   try {
     const parsed: unknown = JSON.parse(text);
-    if (isRecord(parsed)) return parsed;
+    return isRecord(parsed) ? parsed : null;
   } catch {
-    // Fall through to the generic error: the body must never be echoed.
+    // The body must never be echoed: the caller reports only that it was unreadable.
+    return null;
   }
-  throw unavailable();
-}
-
-function requireOk(body: JsonObject): JsonObject {
-  if (body.code !== CODE_OK) throw unavailable();
-  return body;
 }
 
 function cookieHeader(cookie: string | null | undefined): string {
@@ -177,7 +185,13 @@ function cookieHeader(cookie: string | null | undefined): string {
 interface WeapiResponse {
   body: JsonObject;
   headers: Headers;
+  /** The body when NetEase answered 200; otherwise reports the code and throws. */
+  ok(): JsonObject;
+  /** Reports a code this endpoint does not expect and returns the error to throw. */
+  refused(): CommunityStoreError;
 }
+
+class Reported extends Error {}
 
 function createPoster(deps: NeteaseClientDeps) {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -189,17 +203,25 @@ function createPoster(deps: NeteaseClientDeps) {
       Cookie: cookieHeader(cookie),
     };
     const body = new URLSearchParams({ ...weapi({ ...payload, csrf_token: '' }) }).toString();
+    const report = (reason: string): void => { deps.onFailure?.({ path, reason }); };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await deps.fetch(`${API_BASE}${path}`, {
         method: 'POST', headers, body, signal: controller.signal, redirect: 'error',
       });
-      if (response.status !== CODE_OK) throw unavailable();
+      if (response.status !== CODE_OK) { report(`http_${response.status}`); throw new Reported(); }
       const text = await response.text();
-      if (text.length > MAX_BODY_CHARS) throw unavailable();
-      return { body: parseJsonObject(text), headers: response.headers };
-    } catch {
+      const parsed = text.length > MAX_BODY_CHARS ? null : parseJsonObject(text);
+      if (!parsed) { report('bad_body'); throw new Reported(); }
+      const refused = (): CommunityStoreError => {
+        report(typeof parsed.code === 'number' && Number.isSafeInteger(parsed.code) ? `code_${parsed.code}` : 'bad_body');
+        return parsed.code === CODE_RISK_CONTROL ? blocked() : unavailable();
+      };
+      return { body: parsed, headers: response.headers, refused,
+        ok: () => { if (parsed.code !== CODE_OK) throw refused(); return parsed; } };
+    } catch (error) {
+      if (!(error instanceof Reported)) report(controller.signal.aborted ? 'timeout' : 'network');
       throw unavailable();
     } finally {
       clearTimeout(timer);
@@ -222,8 +244,7 @@ function validateKeyword(keyword: unknown, limit: unknown): { keyword: string; l
 async function search(post: Post, keyword: string, limit?: number): Promise<MusicTrack[]> {
   const input = validateKeyword(keyword, limit);
   const payload = { s: input.keyword, type: SEARCH_TYPE_SONG, limit: input.limit, offset: 0, total: true };
-  const { body } = await post('/cloudsearch/get/web', payload);
-  const result = requireOk(body).result;
+  const result = (await post('/cloudsearch/get/web', payload)).ok().result;
   if (!isRecord(result)) throw unavailable();
   return result.songs === undefined ? [] : parseTracks(result.songs).slice(0, input.limit);
 }
@@ -246,11 +267,11 @@ export function parsePlaylistId(input: unknown): string {
 }
 
 async function playlistTrackIds(post: Post, id: string): Promise<{ name: string; ids: string[] }> {
-  const { body } = await post('/v6/playlist/detail', { id, n: MUSIC_QUEUE_LIMIT, s: 0 });
+  const { body, ok } = await post('/v6/playlist/detail', { id, n: MUSIC_QUEUE_LIMIT, s: 0 });
   if (body.code === CODE_NOT_FOUND || body.code === CODE_NO_ACCESS) {
     throw new CommunityStoreError(404, 'resource_missing', '歌单不存在或无权查看');
   }
-  const playlist = requireOk(body).playlist;
+  const playlist = ok().playlist;
   if (!isRecord(playlist) || typeof playlist.name !== 'string' || !Array.isArray(playlist.trackIds)) {
     throw unavailable();
   }
@@ -265,8 +286,8 @@ async function playlist(post: Post, idOrUrl: string): Promise<{ name: string; tr
   const { name, ids } = await playlistTrackIds(post, parsePlaylistId(idOrUrl));
   if (ids.length === 0) return { name, tracks: [] };
   const c = `[${ids.map((id) => `{"id":${id}}`).join(',')}]`;
-  const { body } = await post('/v3/song/detail', { c });
-  const byId = new Map(parseTracks(requireOk(body).songs).map((track) => [track.id, track]));
+  const detail = (await post('/v3/song/detail', { c })).ok();
+  const byId = new Map(parseTracks(detail.songs).map((track) => [track.id, track]));
   const tracks = ids
     .map((id) => byId.get(`netease:${id}`))
     .filter((track): track is MusicTrack => track !== undefined);
@@ -293,15 +314,13 @@ async function songUrl(post: Post, trackId: string, cookie?: string | null): Pro
   if (!isMusicTrackId(trackId)) throw invalid('曲目无效');
   const digits = trackId.slice('netease:'.length);
   const payload = { ids: `[${digits}]`, level: 'standard', encodeType: 'aac' };
-  const { body } = await post('/song/enhance/player/url/v1', payload, cookie);
-  const data = requireOk(body).data;
+  const data = (await post('/song/enhance/player/url/v1', payload, cookie)).ok().data;
   if (!Array.isArray(data) || !isRecord(data[0])) throw unavailable();
   return readSongUrl(data[0]);
 }
 
 async function qrKey(post: Post): Promise<{ key: string; url: string }> {
-  const { body } = await post('/login/qrcode/unikey', { type: QR_TYPE_WEB });
-  const key = requireOk(body).unikey;
+  const key = (await post('/login/qrcode/unikey', { type: QR_TYPE_WEB })).ok().unikey;
   if (typeof key !== 'string' || !QR_KEY_PATTERN.test(key)) throw unavailable();
   return { key, url: `${QR_LOGIN_URL}${key}` };
 }
@@ -319,10 +338,10 @@ function extractMusicU(headers: Headers): string {
 
 async function qrCheck(post: Post, key: string): Promise<QrCheckResult> {
   if (typeof key !== 'string' || !QR_KEY_PATTERN.test(key)) throw invalid('二维码已失效，请重新获取');
-  const { body, headers } = await post('/login/qrcode/client/login', { key, type: QR_TYPE_WEB });
+  const { body, headers, refused } = await post('/login/qrcode/client/login', { key, type: QR_TYPE_WEB });
   if (body.code === QR_CODE_DONE) return { status: 'done', cookie: extractMusicU(headers) };
   const status = typeof body.code === 'number' ? QR_STATUS[body.code] : undefined;
-  if (!status) throw unavailable();
+  if (!status) throw refused();
   return { status };
 }
 
@@ -332,9 +351,9 @@ function isVip(...records: unknown[]): boolean {
 
 async function account(post: Post, cookie: string): Promise<{ nickname: string; vip: boolean } | null> {
   if (typeof cookie !== 'string') throw invalid('网易云登录状态无效');
-  const { body } = await post('/nuser/account/get', {}, cookie);
-  if (body.code === CODE_NEED_LOGIN) return null;
-  const { profile, account: accountInfo } = requireOk(body);
+  const response = await post('/nuser/account/get', {}, cookie);
+  if (response.body.code === CODE_NEED_LOGIN) return null;
+  const { profile, account: accountInfo } = response.ok();
   if (profile === null || profile === undefined) return null;
   const nickname = isRecord(profile) ? clampText(profile.nickname, NICKNAME_MAX) : '';
   if (!nickname) throw unavailable();

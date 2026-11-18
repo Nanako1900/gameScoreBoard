@@ -5,7 +5,7 @@ import type { Readable } from 'node:stream';
 import { AiSecretError } from '../../../worker/ai/secrets';
 import type { CommunityStore } from '../community/store';
 import { openAudioStream } from './audio';
-import { createNeteaseClient, type NeteaseClient } from './netease/client';
+import { createNeteaseClient, type NeteaseClient, type NeteaseFailure } from './netease/client';
 import { createMusicFetch, readMusicProxy } from './proxy';
 import { openMusicSecret } from './secrets';
 import { neteaseSource, type ResolveResult } from './source';
@@ -29,6 +29,8 @@ export interface MusicMainDeps {
   store: Pick<MusicStore, 'account' | 'deleteAccount'>;
   community: Pick<CommunityStore, 'resource'>;
   now(): number;
+  /** Why a NetEase request failed (path and reason only), for the process log. */
+  onNeteaseFailure?: (failure: NeteaseFailure) => void;
 }
 
 export function communityRooms(community: Pick<CommunityStore, 'getRoom' | 'resource'>): MusicRooms {
@@ -51,7 +53,7 @@ async function proxiedFetch(deps: MusicMainDeps, forAudio: boolean): Promise<typ
 }
 
 async function netease(deps: MusicMainDeps): Promise<NeteaseClient> {
-  return createNeteaseClient({ fetch: await proxiedFetch(deps, false) });
+  return createNeteaseClient({ fetch: await proxiedFetch(deps, false), onFailure: deps.onNeteaseFailure });
 }
 
 export function createMusicIo(deps: MusicMainDeps): {
