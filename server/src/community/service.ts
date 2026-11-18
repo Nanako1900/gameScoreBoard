@@ -36,7 +36,7 @@ function text(value: unknown, max = 100): string {
 const safeResource = (resource: StoredResource): CommunityResourceView => ({ ref: resource.ref, kind: resource.kind, name: safeCommunityText(resource.name), available: resource.available, safe: resource.safe });
 
 export class CommunityService {
-  constructor(public readonly store: CommunityStore, public readonly db: D1Database) {}
+  constructor(public readonly store: CommunityStore, public readonly db: D1Database, private readonly options: { musicEnabled?: boolean } = {}) {}
   private async identity(userId: string | null, member: StoredResource | null, linked: boolean, isAdmin: boolean): Promise<CommunityWebActor> {
     return { userId, linked, memberRef: member?.ref ?? null, isAdmin,
       memberAvailable: !!member?.available && member.metadata.bot !== true && (await this.store.runtime()).ready };
@@ -69,7 +69,7 @@ export class CommunityService {
     const member = candidate?.available && candidate.metadata.bot !== true ? candidate : null;
     return { settings: publicCommunitySettings(stored.settings), version: stored.version, runtime: stored.runtime,
       me: { linked: actor.linked, member: member ? { ref: member.ref, name: safeCommunityText(member.name) } : null,
-        isAdmin: actor.isAdmin, needsMembership: actor.linked && !member } };
+        isAdmin: actor.isAdmin, needsMembership: actor.linked && !member }, musicEnabled: this.options.musicEnabled === true };
   }
   private async roomForActor(roomRef: string, actor: CommunityWebActor): Promise<StoredRoom> {
     const room = await this.store.getRoom(roomRef); if (!room || room.status === 'closed') return missing();

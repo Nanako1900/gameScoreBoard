@@ -122,8 +122,12 @@ function main(): void {
 
   const communityEnabled = envFlag(process.env.COMMUNITY_ENABLED, false, 'COMMUNITY_ENABLED');
   const client = createClient({ community: communityEnabled });
+  const musicAppId = (process.env.MUSIC_DISCORD_APP_ID ?? '').trim();
+  const musicUserId = /^\d{17,20}$/.test(musicAppId) ? musicAppId : null;
+  if (musicAppId && !musicUserId) console.warn('MUSIC_DISCORD_APP_ID must be a Discord id (17–20 digits); music room access disabled');
   const community = communityEnabled ? createCommunityRuntime({ pool, db: ctx.db, client, guildId: config.guildId,
-    frontendUrl: config.frontendUrl, isReadOnly: () => ctx.readOnly || stopping,
+    frontendUrl: config.frontendUrl, isReadOnly: () => ctx.readOnly || stopping, musicUserId,
+    musicEnabled: envFlag(process.env.MUSIC_ENABLED, false, 'MUSIC_ENABLED') && musicUserId !== null,
     onCreationTiming: record => console.info(JSON.stringify(record)),
     onError: error => console.error('community processing failed', describeError(error)) }) : null;
   const recorder = createVoiceRecorder({

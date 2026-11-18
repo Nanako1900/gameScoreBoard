@@ -75,6 +75,31 @@ describe('persistent room control card', () => {
     for (const word of ['自动删除', '认领', '转让', '<t:']) expect(card.embeds[0].description).not.toContain(word);
     expect(card.components[0].components).toHaveLength(4);
   });
+  it('is byte-for-byte unchanged without a music link', () => {
+    const plain = JSON.stringify(renderRoomPanel(state));
+    expect(JSON.stringify(renderRoomPanel({ ...state, musicUrl: null }))).toBe(plain);
+    expect(JSON.stringify(renderRoomPanel({ ...state, musicUrl: undefined }))).toBe(plain);
+    expect(renderRoomPanel(state).components).toHaveLength(1);
+  });
+  it('appends one music player link row carrying only the opaque room reference', () => {
+    const url = `https://score.example.com/community/music/${REF}`;
+    const card = renderRoomPanel({ ...state, musicUrl: url });
+    const plain = renderRoomPanel(state);
+    expect(card.components).toHaveLength(2);
+    expect(card.components[0]).toEqual(plain.components[0]);
+    expect(card.embeds).toEqual(plain.embeds);
+    expect(card.components[1]).toEqual({ type: 1, components: [{ type: 2, style: 5, label: '音乐播放器', url }] });
+    expect(renderRoomPanel({ ...state, musicUrl: `http://localhost:5173/community/music/${REF}` }).components).toHaveLength(2);
+  });
+  it('rejects music links that are not https, carry extra data or name another room', () => {
+    const other = 'aa52a9a3-56a7-4c35-a145-ed3a207bf206';
+    for (const musicUrl of [
+      `http://score.example.com/community/music/${REF}`, `javascript:alert(1)//community/music/${REF}`,
+      `https://score.example.com/community/music/${REF}?channel=666666666666666666`, `https://score.example.com/community/music/${REF}#x`,
+      `https://user:pw@score.example.com/community/music/${REF}`, `https://score.example.com/community/music/${other}`,
+      `https://score.example.com/community/music/666666666666666666/${REF}`, 'not a url',
+    ]) expect(() => renderRoomPanel({ ...state, musicUrl }), musicUrl).toThrow();
+  });
   it('uses a friendly unassigned-manager label for fixed rooms and sanitizes manager names', () => {
     expect(renderRoomPanel({ ...state, kind: 'fixed', managerNames: [] }).embeds[0].fields)
       .toContainEqual(expect.objectContaining({ name: '管理者', value: '未分配管理员' }));

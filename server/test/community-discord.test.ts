@@ -13,7 +13,7 @@ const rawMember=(id:string,roles:string[]=[],bot=false)=>({user:{id,username:'na
 const rawChannel=(id=ROOM,type:number=ChannelType.GuildVoice)=>({id,type,guild_id:G,name:'游戏房',parent_id:PARENT,user_limit:0,permission_overwrites:[] as Array<{id:string;type:number;allow:string;deny:string}>});
 const audit=(id:string,target=ROOM,actor=SELF,reason=`community-room:${OP}`)=>({id,target_id:target,user_id:actor,action_type:10,reason,changes:[{key:'type',new_value:2}]});
 const aid=(n:number)=>String(999999999999999999n+BigInt(n));
-function setup(){
+function setup(options:{musicUserId?:string|null}={}){
   let ready=true, available=true, botPermissions=BOT;
   const roles=[{id:G,name:'@everyone',position:0,permissions:BASE.toString(),managed:false},
     {id:BOTROLE,name:'Bot',position:10,permissions:BOT.toString(),managed:true},
@@ -39,7 +39,7 @@ function setup(){
   const post=vi.fn(async(route:string,options:{body:Record<string,unknown>;reason?:string})=>route===Routes.guildChannels(G)?{...rawChannel(),...options.body,id:ROOM}:{id:'900000000000000001'});
   const patch=vi.fn(async(_route:string,_options?:{body?:object})=>({}));const put=vi.fn(async()=>({}));const del=vi.fn(async()=>({}));
   const client={user:{id:SELF},isReady:()=>ready,guilds:{cache:new Map([[G,guild]])},rest:{get,post,patch,put,delete:del}} as unknown as Client;
-  const api=createCommunityDiscord(client,G);
+  const api=createCommunityDiscord(client,G,options);
   return{api,client,guild,roles,members,channels,voices,pages,memberPages,get,post,patch,put,del,setReady:(x:boolean)=>ready=x,setAvailable:(x:boolean)=>available=x,setBotPermissions:(x:bigint)=>botPermissions=x};
 }
 
@@ -757,5 +757,113 @@ describe('community room state inspection',()=>{
     const s=setup();const get=s.get.getMockImplementation()!;
     s.get.mockImplementation(async(route,options)=>{const result=await get(route,options);if(route===Routes.channel(ROOM)){s.roles.find(role=>role.id===G)!.permissions=P.Speak.toString();s.setBotPermissions(BOT&~ACCESS)}return result});
     await expect(s.api.inspectRoom(ROOM,OWNER)).rejects.toMatchObject({status:403});
+  });
+});
+
+describe('managed Music bot access in temporary rooms',()=>{
+  const MUSIC='123456789012345678', ACCESS=P.ViewChannel|P.Connect;
+  const MUSIC_ALLOW=ACCESS|P.Speak|P.SendMessages|P.EmbedLinks;
+  type Ow={id:string;type:number;allow:string;deny:string};
+  function musicSetup(visibility:'open'|'locked'|'hidden'='hidden',musicUserId:string|null=MUSIC){
+    const s=setup({musicUserId});s.members.set(MUSIC,rawMember(MUSIC,[],true));
+    s.channels.get(ROOM)!.permission_overwrites=[
+      {id:G,type:0,allow:(visibility==='open'?ACCESS:visibility==='locked'?P.ViewChannel:0n).toString(),deny:(visibility==='hidden'?ACCESS:visibility==='locked'?P.Connect:0n).toString()},
+      {id:SELF,type:1,allow:ACCESS.toString(),deny:'0'},{id:OWNER,type:1,allow:ACCESS.toString(),deny:'0'},
+    ];
+    // Writes land on the fake channel so later reads see Discord's actual state.
+    s.put.mockImplementation((async(route:string,options:{body:{type:number;allow:string;deny:string}})=>{
+      const target=route.split('/').at(-1)!,channel=s.channels.get(ROOM)!;
+      channel.permission_overwrites=[...channel.permission_overwrites.filter(o=>o.id!==target),{id:target,...options.body}];return {};
+    }) as never);
+    s.patch.mockImplementation(async(route:string,options?:{body?:object})=>{
+      const body=options?.body as {permission_overwrites?:Ow[]}|undefined;
+      if(route===Routes.channel(ROOM)&&body?.permission_overwrites)s.channels.get(ROOM)!.permission_overwrites=body.permission_overwrites.map(o=>({...o}));
+      return {};
+    });
+    return s;
+  }
+  const musicOverwrite=(s:ReturnType<typeof setup>)=>s.channels.get(ROOM)!.permission_overwrites.find(o=>o.id===MUSIC);
+  it('adds exactly view, connect, speak and voice-chat message access for the Music account',async()=>{
+    const s=musicSetup();await s.api.grantMusic!(ROOM,MUSIC);
+    expect(s.put).toHaveBeenCalledTimes(1);
+    expect(s.put.mock.calls[0]).toEqual([Routes.channelPermission(ROOM,MUSIC),expect.objectContaining({body:{type:1,allow:MUSIC_ALLOW.toString(),deny:'0'}})]);
+    expect(s.channels.get(ROOM)!.permission_overwrites).toHaveLength(4);
+  });
+  it('is idempotent: an existing managed overwrite is not rewritten',async()=>{
+    const s=musicSetup();await s.api.grantMusic!(ROOM,MUSIC);await s.api.grantMusic!(ROOM,MUSIC);
+    expect(s.put).toHaveBeenCalledTimes(1);expect(musicOverwrite(s)).toMatchObject({allow:MUSIC_ALLOW.toString(),deny:'0'});
+  });
+  it('clears a manual deny of the managed bits and keeps unrelated bits',async()=>{
+    const s=musicSetup();s.channels.get(ROOM)!.permission_overwrites.push({id:MUSIC,type:1,allow:P.UseVAD.toString(),deny:(P.Connect|P.Stream).toString()});
+    await s.api.grantMusic!(ROOM,MUSIC);
+    expect(musicOverwrite(s)).toMatchObject({allow:(MUSIC_ALLOW|P.UseVAD).toString(),deny:P.Stream.toString()});
+  });
+  it('refuses a non-bot, departed or self target and a bot lacking channel management, without writing',async()=>{
+    const s=musicSetup();s.members.set(MUSIC,rawMember(MUSIC));await expect(s.api.grantMusic!(ROOM,MUSIC)).rejects.toMatchObject({status:403});
+    s.members.delete(MUSIC);await expect(s.api.grantMusic!(ROOM,MUSIC)).rejects.toMatchObject({status:404});
+    await expect(s.api.grantMusic!(ROOM,SELF)).rejects.toMatchObject({status:403});
+    const t=musicSetup();t.setBotPermissions(BASE);await expect(t.api.grantMusic!(ROOM,MUSIC)).rejects.toMatchObject({status:403});
+    const u=musicSetup();u.roles.find(role=>role.id===G)!.permissions=(BASE&~P.Speak).toString();u.setBotPermissions(BOT&~P.Speak);await expect(u.api.grantMusic!(ROOM,MUSIC)).rejects.toMatchObject({status:403});
+    expect([...s.put.mock.calls,...t.put.mock.calls,...u.put.mock.calls]).toHaveLength(0);
+  });
+  it('keeps the Music overwrite across open, locked, hidden and open and still reconstructs the room model',async()=>{
+    const s=musicSetup('open');await s.api.grantMusic!(ROOM,MUSIC);
+    for(const visibility of ['locked','hidden','open'] as const){
+      await s.api.setVisibility(ROOM,OWNER,visibility);
+      expect(musicOverwrite(s)).toEqual({id:MUSIC,type:1,allow:MUSIC_ALLOW.toString(),deny:'0'});
+      expect(await s.api.inspectRoom(ROOM,OWNER)).toEqual({name:'游戏房',userLimit:0,visibility,allowedMemberIds:[],blockedMemberIds:[]});
+    }
+    expect(await s.api.canConnect(MUSIC,ROOM)).toBe(true);
+  });
+  it('lets the Music account enter a hidden room through its own overwrite only',async()=>{
+    const s=musicSetup('hidden');expect(await s.api.canConnect(MUSIC,ROOM)).toBe(false);
+    await s.api.grantMusic!(ROOM,MUSIC);expect(await s.api.canConnect(MUSIC,ROOM)).toBe(true);expect(await s.api.canView(OTHER,ROOM)).toBe(false);
+  });
+  it('treats other member overwrites exactly as before',async()=>{
+    const s=musicSetup('locked');await s.api.grantMusic!(ROOM,MUSIC);
+    s.channels.get(ROOM)!.permission_overwrites.push({id:OTHER,type:1,allow:P.ViewChannel.toString(),deny:'0'});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+    s.channels.get(ROOM)!.permission_overwrites=s.channels.get(ROOM)!.permission_overwrites.map(o=>o.id===OTHER?{...o,allow:ACCESS.toString()}:o);
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toMatchObject({allowedMemberIds:[OTHER],blockedMemberIds:[]});
+  });
+  it('does not hide a manually altered Music overwrite or one seen without the configured account',async()=>{
+    const s=musicSetup('locked');s.channels.get(ROOM)!.permission_overwrites.push({id:MUSIC,type:1,allow:P.ViewChannel.toString(),deny:'0'});
+    expect(await s.api.inspectRoom(ROOM,OWNER)).toBeNull();
+    const t=musicSetup('locked',null);t.channels.get(ROOM)!.permission_overwrites.push({id:MUSIC,type:1,allow:MUSIC_ALLOW.toString(),deny:'0'});
+    expect(await t.api.inspectRoom(ROOM,OWNER)).toMatchObject({allowedMemberIds:[MUSIC]});
+    const u=musicSetup('locked');u.channels.get(ROOM)!.permission_overwrites.push({id:MUSIC,type:1,allow:'0',deny:ACCESS.toString()});
+    expect(await u.api.inspectRoom(ROOM,OWNER)).toMatchObject({blockedMemberIds:[MUSIC]});
+  });
+});
+
+describe('room control card music link',()=>{
+  const MID='900000000000000001', URL_=`https://score.example.com/community/music/${OP}`;
+  const card=(musicUrl:string|null)=>renderRoomPanel({roomRef:OP,name:'游戏房',ownerName:'Nanako',occupantCount:2,userLimit:6,visibility:'open',cleanupAt:null,emptyGraceSeconds:120,claimable:false,transferPending:false,musicUrl});
+  function panelSetup(){
+    const s=setup();s.setBotPermissions(BOT|P.ReadMessageHistory);const messages=new Map<string,unknown>();const original=s.get.getMockImplementation()!;
+    s.get.mockImplementation(async(route,options)=>{
+      if(route===Routes.channelMessages(ROOM))return [];
+      if(route.startsWith(`${Routes.channelMessages(ROOM)}/`)){const value=messages.get(route.split('/').at(-1)!);if(!value)throw{status:404};return value}
+      return original(route,options);
+    });
+    return{...s,messages};
+  }
+  it('accepts the link row and edits an existing card that only lacks it',async()=>{
+    const s=panelSetup();s.messages.set(MID,{id:MID,author:{id:SELF},...card(null)});
+    expect(await s.api.syncRoomPanel!(ROOM,OP,MID,card(URL_),PARENT)).toBe(MID);
+    expect(s.patch).toHaveBeenCalledWith(Routes.channelMessage(ROOM,MID),{body:card(URL_)});
+  });
+  it('does not re-edit a card whose link row Discord echoes back with ids',async()=>{
+    const s=panelSetup(),body=card(URL_);
+    s.messages.set(MID,{id:MID,author:{id:SELF},...body,components:body.components.map((row,index)=>({...row,id:index+1,components:row.components.map(item=>({...item,id:index+10}))}))});
+    await s.api.syncRoomPanel!(ROOM,OP,MID,body,PARENT);expect(s.patch).not.toHaveBeenCalled();
+  });
+  it('rejects any other second row before network access',async()=>{
+    const bodies=[card(URL_),card(URL_),card(URL_),card(URL_)];
+    (bodies[0].components[1].components[0] as {url:string}).url=`https://score.example.com/community/music/${OP}?id=${ROOM}`;
+    (bodies[1].components[1].components[0] as {style:number}).style=2;
+    bodies[2].components[1].components.push({type:2,style:5,label:'x',url:URL_});
+    bodies[3].components.push(bodies[3].components[1]);
+    for(const body of bodies){const s=panelSetup();await expect(s.api.syncRoomPanel!(ROOM,OP,null,body,PARENT)).rejects.toMatchObject({status:400});expect(s.get).not.toHaveBeenCalled()}
   });
 });

@@ -57,6 +57,18 @@ describe('independent room control card synchronization', () => {
     await s.panels.sync(); const body = JSON.stringify(vi.mocked(s.discord.syncRoomPanel!).mock.calls.at(-1));
     expect(body).toContain('新名字'); expect(body).toContain('新房主'); expect(s.discord.syncRoomPanel).toHaveBeenCalledTimes(2);
   });
+  it('adds the music player link when configured and re-syncs existing cards because the body changed', async () => {
+    const s = setup(); await s.panels.sync();
+    const plain = vi.mocked(s.discord.syncRoomPanel!).mock.calls[0][3];
+    expect(plain.components).toHaveLength(1);
+    const url = (ref: string) => `https://score.example.com/community/music/${ref}`;
+    const music = new CommunityRoomPanels(s.store, s.discord, { now: s.now, musicUrl: url });
+    await music.sync(); await music.sync();
+    expect(s.discord.syncRoomPanel).toHaveBeenCalledTimes(2);
+    const body = vi.mocked(s.discord.syncRoomPanel!).mock.calls[1][3];
+    expect(body.components[1]).toEqual({ type: 1, components: [{ type: 2, style: 5, label: '音乐播放器', url: url(s.room.ref) }] });
+    expect(body.components[0]).toEqual(plain.components[0]);
+  });
   it('contains panel failures, backs off and keeps room state untouched', async () => {
     const s = setup(); vi.mocked(s.discord.syncRoomPanel!).mockRejectedValueOnce(new Error('no permissions'));
     await expect(s.panels.sync()).resolves.toBeUndefined(); await s.panels.sync(); expect(s.discord.syncRoomPanel).toHaveBeenCalledTimes(1);

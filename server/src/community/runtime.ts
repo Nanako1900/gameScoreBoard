@@ -6,23 +6,31 @@ import {CommunityMembershipService} from './membership';
 import {createCommunityDiscord} from './discord';
 import {CommunityEngine} from './engine';
 import {CommunityRoomPanels} from './room-panels';
+import {roomMusicUrl} from './room-panel';
 import {executeCommunityExtra} from './extra';
 import {wireCommunity} from './lifecycle';
+import {MusicStore} from '../music/store';
 import {COMMUNITY_COMMANDS,RETIRED_COMMUNITY_COMMAND_NAMES} from './commands';
 import {handleCommunityInteraction} from './interactions';
 import type {CreationObserver} from './creation-timing';
-export function createCommunityRuntime(options:{pool:pg.Pool;db:D1Database;client:Client;guildId:string;frontendUrl:string;isReadOnly:()=>boolean;onError:(error:unknown)=>void;onCreationTiming?:CreationObserver}) {
+export function createCommunityRuntime(options:{pool:pg.Pool;db:D1Database;client:Client;guildId:string;frontendUrl:string;isReadOnly:()=>boolean;onError:(error:unknown)=>void;onCreationTiming?:CreationObserver;
+ musicEnabled?:boolean;/** Kept even when music is off, so an earlier Music overwrite stays recognised. */musicUserId?:string|null}) {
  const {pool,db,client,guildId}=options;
- const store=new CommunityStore(pool,guildId);const service=new CommunityService(store,db);const discord=createCommunityDiscord(client,guildId);
+ const store=new CommunityStore(pool,guildId);const service=new CommunityService(store,db);const musicUserId=options.musicUserId??null;const discord=createCommunityDiscord(client,guildId,{musicUserId});
  const membership=new CommunityMembershipService(store,discord);
- const panels=new CommunityRoomPanels(store,discord,{isReadOnly:options.isReadOnly,onError:options.onError});
+ const musicEnabled=options.musicEnabled===true&&musicUserId!==null;
+ const panels=new CommunityRoomPanels(store,discord,{isReadOnly:options.isReadOnly,onError:options.onError,
+  musicUrl:musicEnabled?roomRef=>roomMusicUrl(options.frontendUrl,roomRef):undefined});
  const engine=new CommunityEngine(store,discord,{authorize:actor=>service.actorForExecution(actor),isReadOnly:options.isReadOnly,onError:options.onError,
-  onCreationTiming:options.onCreationTiming,
+  onCreationTiming:options.onCreationTiming,musicUserId:musicEnabled?musicUserId:null,
+  musicSessionRoom:musicEnabled?async()=>(await new MusicStore(pool,guildId).activeSession())?.roomRef??null:undefined,
   syncPanels:()=>panels.sync(),
   executeExtra:(op,actor,guard)=>executeCommunityExtra({membership},op,actor,guard)});
  const unwire=wireCommunity(client,{guildId,engine,membership,isReadOnly:options.isReadOnly,onError:options.onError,
   onUnavailable:()=>store.setRuntime({ready:false,problem:'bot_offline'}),
-  onMemberRemoved:async memberId=>{const resource=await store.resourceByExternal('member',memberId);if(resource)await store.upsertResource('member',memberId,resource.name,{available:false,metadata:resource.metadata});}});
+  onMemberRemoved:async memberId=>{const resource=await store.resourceByExternal('member',memberId);if(resource){await store.upsertResource('member',memberId,resource.name,{available:false,metadata:resource.metadata});
+   // A member who left can no longer log out on the web: drop their saved music login now.
+   await new MusicStore(pool,guildId).deleteAccount(resource.ref);}}});
  return {
   accepts(interaction:Interaction):boolean {
    return interaction.isChatInputCommand()?COMMUNITY_COMMANDS.some(command=>command.name===interaction.commandName)||RETIRED_COMMUNITY_COMMAND_NAMES.includes(interaction.commandName)

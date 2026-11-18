@@ -15,6 +15,10 @@ export interface CommunityEngineOptions {
   executeExtra?: (operation: StoredOperation, actor: CommunityExecutionActor, beforeEffect: () => Promise<void>) => Promise<CommunityJson>;
   welcome?: (memberId: string) => Promise<void>;
   syncPanels?: () => Promise<void>;
+  /** The separate Music bot account; room.music_access fails cleanly when unset. */
+  musicUserId?: string | null;
+  /** Room of the live (not ended) music session, if any; room.music_access requires it. */
+  musicSessionRoom?: () => Promise<string | null>;
   onCreationTiming?: CreationObserver;
   timingNow?: () => number;
   now?: () => number; onError?: (error: unknown) => void; intervalMs?: number;
@@ -235,7 +239,7 @@ export class CommunityEngine {
     if (op.expiresAt && Date.parse(op.expiresAt) <= this.now()) return fail('operation_expired', '操作已过期');
     if (!op.claimToken || !await this.store.renew(op.ref, op.claimToken, 300)) return fail('version_conflict', '执行租约已失效');
     if (op.actor.source === 'system') {
-      if (!['room.cleanup', 'welcome.send'].includes(op.kind)) return fail('not_owner', '不允许此系统操作', 403);
+      if (!['room.cleanup', 'welcome.send', 'room.music_access'].includes(op.kind)) return fail('not_owner', '不允许此系统操作', 403);
       return { memberRef: null, isAdmin: false };
     }
     const actor = await this.options.authorize(op.actor);
@@ -276,7 +280,7 @@ export class CommunityEngine {
         const latest = await this.store.getRoom(executionRoom.ref);
         if (!latest || latest.status !== 'active' || latest.version !== executionRoom.version) fail('version_conflict', '房间已变化');
         const action = op.kind.slice(5);
-        if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !canControlRoom(current, latest)) fail('not_owner', '房间管理权限已变化', 403);
+        if (!['cleanup', 'accept', 'claim', 'join', 'music_access'].includes(action) && !canControlRoom(current, latest)) fail('not_owner', '房间管理权限已变化', 403);
         if (!checks.nativeChecks && op.actor.source !== 'system' && !current.isAdmin) {
           const member = await this.resource(current.memberRef, 'member'), channel = latest.channelRef ? await this.store.resource(latest.channelRef, 'voice') : null;
           if (member.metadata.bot === true || !channel || !await this.discord.canView(member.externalId, channel.externalId)) fail('resource_missing', '房间已不可见', 404);
@@ -366,7 +370,8 @@ export class CommunityEngine {
           const current = actor.memberRef ? await this.member(actor.memberRef) : null;
           if (isFixedRoom(room) && ['cleanup', 'dissolve', 'admin_delete', 'transfer', 'accept', 'claim'].includes(action)) fail('invalid_input', '固定房不提供回收、解散或房主转让', 400);
           if (action === 'managers' && (!actor.isAdmin || !isFixedRoom(room))) fail('not_owner', '只有网页管理员可分配固定房管理员', 403);
-          if (!['cleanup', 'accept', 'claim', 'join'].includes(action) && !canControlRoom(actor, room)) fail('not_owner', '当前账号没有房间管理权限', 403);
+          if (action === 'music_access') await this.requireMusicSession(op, room);
+          if (!['cleanup', 'accept', 'claim', 'join', 'music_access'].includes(action) && !canControlRoom(actor, room)) fail('not_owner', '当前账号没有房间管理权限', 403);
           if (op.actor.source !== 'system' && !actor.isAdmin && (!current || !await this.discord.canView(current.id, channel.externalId))) fail('resource_missing', '房间已不可见', 404);
           let patch: RoomPatch = {};
           if (action === 'managers') {
@@ -427,6 +432,9 @@ export class CommunityEngine {
               if (this.discord.channelOf(target.id) !== channel.externalId) fail('resource_missing', '成员已不在房间', 404);
               await effect(() => this.discord.move(target.id, null));
             }
+          } else if (action === 'music_access') {
+            // Fixed-room permissions are never modified; Music joins only if it already can.
+            if (!isFixedRoom(room)) await this.grantMusic(channel, effect);
           } else if (action === 'accept' || action === 'claim') {
             if (!current) fail('membership_required', '需要当前服务器成员身份', 403);
             if ((await this.store.listRooms()).some(other => other.ref !== room.ref && other.ownerRef === actor.memberRef)) fail('version_conflict', '你已经有房间');
@@ -461,10 +469,11 @@ export class CommunityEngine {
               await this.discord.delete(channel.externalId);
             }); patch.status = 'closed';
           } else fail('invalid_input', '不支持此房间操作', 400);
-          await guard(); await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version);
+          // Music access is outside the room model, so it does not bump the room version.
+          await guard(); if (action !== 'music_access') await this.store.patchRoom(room.ref, Object.keys(patch).length ? patch : { name: room.name }, room.version);
           if (action === 'managers') changed = true;
           executionRoom = null;
-          result = { roomRef: room.ref };
+          result = action === 'music_access' ? { roomRef: room.ref, musicAccess: isFixedRoom(room) ? 'unchanged' : 'granted' } : { roomRef: room.ref };
         } else if (this.options.executeExtra) { result = await effect(() => this.options.executeExtra!(op, checkedActor ?? actor, guard)); }
         else fail('invalid_input', '不支持此操作', 400);
       }
@@ -509,6 +518,19 @@ export class CommunityEngine {
     }
     this.refreshPanels();
     return true;
+  }
+  /** Music access is only ever requested by the music invite path, as a system
+   * operation, while that room's music session is still live. */
+  private async requireMusicSession(op: StoredOperation, room: StoredRoom): Promise<void> {
+    if (op.actor.source !== 'system') fail('not_owner', '音乐机器人只能通过网页邀请进房', 403);
+    if (!this.options.musicSessionRoom || await this.options.musicSessionRoom() !== room.ref) fail('resource_missing', '音乐会话已结束');
+  }
+  private async grantMusic(channel: StoredResource, effect: <T>(work: () => Promise<T>) => Promise<T>): Promise<void> {
+    const musicUserId = this.options.musicUserId ?? null;
+    if (!musicUserId || !this.discord.grantMusic) fail('feature_disabled', '音乐机器人尚未配置，暂时不能邀请进房');
+    const music = await this.discord.member(musicUserId);
+    if (!music?.bot) fail('resource_missing', '音乐机器人不在服务器内，请联系管理员邀请 Music 账号');
+    await effect(() => this.discord.grantMusic!(channel.externalId, musicUserId));
   }
   private async validateSettings(config: CommunitySettings): Promise<void> {
     if (config.enabled && config.rooms.enabled) {

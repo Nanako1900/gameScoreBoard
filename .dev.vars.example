@@ -60,3 +60,12 @@ AI_API_KEY=""
 # FRONTEND_URL="https://your-app.edgeone.app"      # where /auth/callback returns the browser
 # COOKIE_SAMESITE="Lax"                            # 'None' for cross-site (Option C)
 # COOKIE_DOMAIN=".example.com"                     # share cookie across subdomains (Option B)
+
+# Music bot (Node deployments only; see docs/community-bot/music.md).
+# MUSIC_ENABLED turns on the web player API and the room-card link.
+# MUSIC_DISCORD_TOKEN belongs to a SEPARATE Discord application and is given
+# only to the music service; MUSIC_DISCORD_APP_ID (that application's ID) is
+# given to the main bot so it can let the Music account into temporary rooms.
+# MUSIC_ENABLED=false
+# MUSIC_DISCORD_TOKEN=
+# MUSIC_DISCORD_APP_ID=

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultCommunitySettings, type CommunityJson } from '../../shared/community';
 import { CommunityDiscordError, type CommunityDiscord, type CommunityDiscordChannel, type CommunityDiscordMember, type CommunityDiscordResource } from '../../server/src/community/discord';
 import { CommunityEngine, type CommunityEngineOptions } from '../../server/src/community/engine';
@@ -227,4 +227,106 @@ it('serializes the same room across two engine instances using PostgreSQL claims
 it('does not count an extra executor result as safe success when binding changes after its effects', async () => {
   const extra = buildEngine({ executeExtra: async () => { await pool.query("DELETE FROM discord_links WHERE user_id='owner'"); return { saved: true }; } });
   const op = await queue('roles.set', null, { roleRefs: [] }); await extra.runOne(); expect((await latest(op.ref))!.status).toBe('needs_review');
+});
+
+describe('room.music_access', () => {
+  const MUSIC = '131313131313131313';
+  const SYSTEM: CommunityActor = { source: 'system' };
+  let sessionRoom: string | null;
+  const musicEngine = (extra: Partial<CommunityEngineOptions> = {}) =>
+    buildEngine({ musicUserId: MUSIC, musicSessionRoom: async () => sessionRoom, ...extra });
+  const grant = (value: { ref: string; version: number }, actor: CommunityActor = SYSTEM) =>
+    queue('room.music_access', value.ref, { action: 'music_access' }, value.version, actor);
+  beforeEach(() => {
+    members.set(MUSIC, { id: MUSIC, name: 'Music', bot: true, protected: true, roleIds: [], joinedAt: '2026-10-28T08:00:00.000Z' });
+    discord.grantMusic = vi.fn(async () => {});
+    sessionRoom = null;
+  });
+  async function fixedRoom() {
+    let fixed = await room(); const categoryRef = (await store.resourceByExternal('category', CATEGORY))!.ref;
+    fixed = await store.patchRoom(fixed.ref, { ownerRef: null, metadata: { kind: 'fixed', categoryRef, managerRefs: [] } }, fixed.version);
+    const settings = (await store.settings()).settings; settings.rooms.fixedCategoryRefs = [categoryRef];
+    await store.saveSettings(settings, 1); await store.setRuntime({ ready: true, appliedVersion: 2 });
+    return fixed;
+  }
+  it('adds the managed Music overwrite to a temporary room without changing the room model', async () => {
+    const value = await room(); sessionRoom = value.ref; const op = await grant(value);
+    await musicEngine().runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'succeeded', result: { roomRef: value.ref, musicAccess: 'granted' } });
+    expect(discord.grantMusic).toHaveBeenCalledExactlyOnceWith(CHANNEL, MUSIC);
+    const after = (await store.getRoom(value.ref))!; expect(after).toMatchObject({ status: 'active', version: value.version, visibility: value.visibility });
+    expect(await store.roomAccess(value.ref)).toEqual([]);
+  });
+  it('grants Music for an invite from a member who neither owns nor manages a hidden room', async () => {
+    const { musicRoomAccess } = await import('../../server/src/backend');
+    const created = await room(); const value = await store.patchRoom(created.ref, { visibility: 'hidden' }, created.version);
+    await store.setRoomAccess(value.ref, otherRef, { allowed: true }); sessionRoom = value.ref;
+    await musicRoomAccess(store)(otherRef, value.ref, 'invite-1');
+    const [op] = await store.listOperations({ roomRef: value.ref });
+    expect(op).toMatchObject({ kind: 'room.music_access', status: 'queued' });
+    await musicEngine().runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'succeeded', result: { musicAccess: 'granted' } });
+    expect(discord.grantMusic).toHaveBeenCalledExactlyOnceWith(CHANNEL, MUSIC);
+  });
+  it('is idempotent per request key and harmless when repeated', async () => {
+    const value = await room(); sessionRoom = value.ref; const key = randomUUID();
+    const one = await store.enqueue('room.music_access', value.ref, SYSTEM, { action: 'music_access' }, key, value.version);
+    const two = await store.enqueue('room.music_access', value.ref, SYSTEM, { action: 'music_access' }, key, value.version);
+    expect(two.ref).toBe(one.ref); const engine = musicEngine(); await engine.runOne(); expect(await engine.runOne()).toBe(false);
+    const again = await grant(value); await engine.runOne();
+    expect((await latest(again.ref))!.status).toBe('succeeded'); expect(discord.grantMusic).toHaveBeenCalledTimes(2);
+  });
+  it('never changes fixed-room permissions and reports no change', async () => {
+    const fixed = await fixedRoom(); sessionRoom = fixed.ref; const op = await grant(fixed);
+    await musicEngine().runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'succeeded', result: { roomRef: fixed.ref, musicAccess: 'unchanged' } });
+    expect(discord.grantMusic).not.toHaveBeenCalled(); expect((await store.getRoom(fixed.ref))!.version).toBe(fixed.version);
+  });
+  it.each(['unset', 'absent', 'human'])('fails cleanly without any Discord write when the Music account is %s', async problem => {
+    const value = await room(); sessionRoom = value.ref; if (problem === 'absent') members.delete(MUSIC);
+    if (problem === 'human') members.set(MUSIC, { ...members.get(MUSIC)!, bot: false });
+    const op = await grant(value);
+    await (problem === 'unset' ? buildEngine({ musicSessionRoom: async () => sessionRoom }) : musicEngine()).runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'failed', errorCode: problem === 'unset' ? 'feature_disabled' : 'resource_missing' });
+    expect(discord.grantMusic).not.toHaveBeenCalled(); expect((await store.getRoom(value.ref))!).toMatchObject({ status: 'active', version: value.version });
+  });
+  it('refuses in read-only mode', async () => {
+    const value = await room(); sessionRoom = value.ref; const op = await grant(value);
+    await musicEngine({ isReadOnly: () => true }).runOne(); expect(await latest(op.ref)).toMatchObject({ status: 'failed', errorCode: 'read_only' });
+    expect(discord.grantMusic).not.toHaveBeenCalled();
+  });
+  it.each(['none', 'elsewhere', 'unwired'])('refuses a system operation without a live session for that room (%s)', async problem => {
+    const value = await room(); sessionRoom = problem === 'elsewhere' ? randomUUID() : null; const op = await grant(value);
+    await (problem === 'unwired' ? buildEngine({ musicUserId: MUSIC }) : musicEngine()).runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'failed', errorCode: 'resource_missing' });
+    expect(discord.grantMusic).not.toHaveBeenCalled(); expect((await store.getRoom(value.ref))!).toMatchObject({ status: 'active', version: value.version });
+  });
+  it('refuses a member-sourced operation even with a live session', async () => {
+    const value = await room(); sessionRoom = value.ref;
+    const op = await grant(value, { source: 'web', userId: 'owner', memberRef: ownerRef });
+    await musicEngine().runOne();
+    expect(await latest(op.ref)).toMatchObject({ status: 'failed', errorCode: 'not_owner' });
+    expect(discord.grantMusic).not.toHaveBeenCalled();
+  });
+  it('stays active through later visibility changes and a fresh synchronization', async () => {
+    const value = await room(); sessionRoom = value.ref; await grant(value);
+    const engine = musicEngine(); await engine.runOne(); let current = (await store.getRoom(value.ref))!;
+    for (const visibility of ['locked', 'hidden', 'open']) {
+      const op = await queue('room.visibility', value.ref, { action: 'visibility', visibility }, current.version); await engine.runOne();
+      expect((await latest(op.ref))!.status).toBe('succeeded'); current = (await store.getRoom(value.ref))!;
+    }
+    await engine.sync(); expect((await store.getRoom(value.ref))!).toMatchObject({ status: 'active', visibility: 'open' });
+  });
+  it('is not a member-callable room action', async () => {
+    const value = await room();
+    await expect(service.enqueue('other', 'room.music_access', value.ref, {}, 'music-access:k1', value.version)).rejects.toMatchObject({ status: 400 });
+    await expect(service.enqueue('owner', 'room.music_access', value.ref, { action: 'music_access' }, 'music-access:k2', value.version)).rejects.toMatchObject({ status: 400 });
+    await expect(service.enqueue('admin', 'room.music_access', value.ref, {}, 'music-access:k3', value.version)).rejects.toMatchObject({ status: 400 });
+    expect(await store.listOperations({ roomRef: value.ref })).toEqual([]);
+  });
+  it('queues nothing for a fixed room', async () => {
+    const { musicRoomAccess } = await import('../../server/src/backend');
+    const fixed = await fixedRoom(); await musicRoomAccess(store)(otherRef, fixed.ref, 'invite-2');
+    expect(await store.listOperations({ roomRef: fixed.ref })).toEqual([]);
+  });
 });

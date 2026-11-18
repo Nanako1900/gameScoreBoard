@@ -24,6 +24,9 @@ function apiOrigin(apiBase) {
   return url.origin;
 }
 
+/** Album covers on the music page come straight from NetEase's CDN. */
+const COVER_ORIGIN = 'https://*.music.126.net';
+
 /** @param {string | null} api */
 function contentSecurityPolicy(api) {
   const withApi = (/** @type {string} */ base) => (api ? `${base} ${api}` : base);
@@ -32,7 +35,7 @@ function contentSecurityPolicy(api) {
     "script-src 'self'",
     "style-src 'self' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    withApi("img-src 'self' data:"),
+    withApi(`img-src 'self' data: ${COVER_ORIGIN}`),
     withApi("connect-src 'self'"),
     "frame-ancestors 'none'",
     "base-uri 'none'",

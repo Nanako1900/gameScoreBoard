@@ -111,6 +111,13 @@ it('keeps web management auxiliary and submits an explicit room change with its 
  const post=vi.mocked(fetch).mock.calls.find(call=>call[1]?.method==='POST');expect(String(post?.[0])).toBe(`/api/community/rooms/${roleRef}/actions`);expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({action:'rename',name:'周末闲聊新名字',expectedVersion:7});
  expect(screen.queryByText('修改成功')).not.toBeInTheDocument();
 });
+it.each([[true,true],[false,false],[undefined,false]])('shows the music player link only when musicEnabled is %s',async(musicEnabled,shown)=>{
+ const original=vi.mocked(fetch).getMockImplementation()!;
+ const room={ref:roleRef,name:'有音乐的房间',owner:{ref:memberRef,name:'小明'},members:[],status:'active',visibility:'open',userLimit:0,version:7,canManage:true,canClaim:false,transferTo:null,cleanupAt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input)==='/api/community'?Promise.resolve(Response.json({...overview,musicEnabled})):String(input).endsWith('/rooms')&&init?.method!=='POST'?Promise.resolve(Response.json({rooms:[room]})):original(input,init));
+ render(<CommunityPage tab="rooms" accountKey="member"/>);await screen.findByText('有音乐的房间');
+ expect(!!screen.queryByRole('link',{name:'音乐播放器'})).toBe(shown);
+});
 it('keeps existing rooms and role exits available while the whole community is paused',async()=>{
  const original=vi.mocked(fetch).getMockImplementation()!;
  const paused={...overview,settings:{...overview.settings,enabled:false}};

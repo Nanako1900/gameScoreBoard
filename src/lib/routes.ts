@@ -19,6 +19,7 @@ export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'community'; readonly tab: 'rooms' | 'roles' | 'play' }
   | { readonly name: 'communityAdmin' }
+  | { readonly name: 'communityMusic'; readonly roomRef: string }
   | { readonly name: 'welcome' }
   | { readonly name: 'guide' }
   | { readonly name: 'cases' }
@@ -108,6 +109,12 @@ function idRoute(raw: string): Route {
   return { name: 'case', caseId: id };
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function musicRoute(roomRef: string): Route {
+  return UUID_PATTERN.test(roomRef) ? { name: 'communityMusic', roomRef: roomRef.toLowerCase() } : NOT_FOUND;
+}
+
 function matchSegments(segments: readonly string[]): Route {
   const [head, first, second, third] = segments;
   if (segments.length === 1 && head === 'welcome') return { name: 'welcome' };
@@ -116,6 +123,7 @@ function matchSegments(segments: readonly string[]): Route {
   if (head === 'community') {
     if (segments.length === 1) return { name: 'community', tab: 'rooms' };
     if (segments.length === 2 && (first === 'roles' || first === 'play')) return { name: 'community', tab: first };
+    if (segments.length === 3 && first === 'music') return musicRoute(second);
   }
   if (segments.length === 2 && (head === 'settings' || head === 'admin') && first === 'community') return { name: 'communityAdmin' };
   if (head === 'settings') {
@@ -190,6 +198,8 @@ export function formatRoute(route: LinkableRoute): string {
       return route.tab === 'rooms' ? '/community' : `/community/${route.tab}`;
     case 'communityAdmin':
       return '/settings/community';
+    case 'communityMusic':
+      return `/community/music/${route.roomRef}`;
     case 'welcome':
       return WELCOME_PATH;
     case 'guide':

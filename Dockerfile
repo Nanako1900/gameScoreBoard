@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # One image for every Node service in compose.yaml: the Discord share page,
-# the API and its migration job, and (P4) the Discord bot. Built and pushed to GHCR by
+# the API and its migration job, (P4) the Discord bot, and the music bot. Built and pushed to GHCR by
 # .github/workflows/image.yml; Coolify only pulls it, so the small VPS never
 # installs the dev toolchain (wrangler, workerd, vitest).
 
@@ -20,6 +20,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY server/package.json server/package.json
+# ffmpeg: the music service transcodes audio to Opus. Unused by app and bot.
+RUN apk add --no-cache ffmpeg
 RUN npm ci --workspace server --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/server/dist server/dist
 COPY server/share-public server/share-public

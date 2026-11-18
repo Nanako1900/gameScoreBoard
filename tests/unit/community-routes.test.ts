@@ -18,3 +18,21 @@ describe('community within the four primary destinations',()=>{
   expect(primaryNavigationKey(parseRoute('/settings/community'))).toBe('settings');
  });
 });
+
+describe('community music route',()=>{
+ const ref='ab4ce2dd-8bc9-4043-845c-d2aec97b4bfb';
+ it('round-trips a room reference',()=>{
+  const route=parseRoute(`/community/music/${ref}`);
+  expect(route).toEqual({name:'communityMusic',roomRef:ref});
+  expect(formatRoute(route as never)).toBe(`/community/music/${ref}`);
+  expect(routeCoversHome(route,'page')).toBe(true);
+  expect(parseRoute(`/community/music/${ref}/`)).toEqual(route);
+ });
+ it.each(['/community/music','/community/music/abc','/community/music/123','/community/music/not-a-uuid-at-all-not-a-uuid-at-all!','/community/music/'+ref+'/x'])('sends %s to not found',path=>{
+  expect(parseRoute(path)).toEqual({name:'notFound'});
+ });
+ it('highlights the same primary item as community',async()=>{
+  const {primaryNavigationKey}=await import('../../src/lib/navigation');
+  expect(primaryNavigationKey(parseRoute(`/community/music/${ref}`))).toBe('home');
+ });
+});

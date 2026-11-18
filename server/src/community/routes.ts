@@ -9,12 +9,15 @@ import type { Env } from '../../../worker/types';
 import type { CommunityResourceKind, CommunityResourceView } from '../../../shared/community';
 import { CommunityService, CommunitySettingsInputError } from './service';
 import { CommunityStoreError, type CommunityStore } from './store';
+import { createMusicRoutes, type MusicRouteDeps } from '../music/routes';
 
 export interface CommunityRoleReadView { choices: CommunityResourceView[]; selectedRefs: string[]; maxChoices: number; enabled: boolean }
 export interface CommunityRouteDeps {
   store: CommunityStore; db: D1Database; env: Env;
   membership?: { readRoles(memberRef: string): Promise<CommunityRoleReadView> };
   onError?: (context: string, error: unknown) => void;
+  /** Absent when MUSIC_ENABLED is off: every music path then answers 404. */
+  music?: Omit<MusicRouteDeps, 'community' | 'onError' | 'isReadOnly'>;
 }
 type RouteEnv = { Variables: { communityUserId: string } };
 function fail(status: number, code: string, message: string): never { throw new CommunityStoreError(status, code, message); }
@@ -43,7 +46,7 @@ function withoutMeta(input: Record<string, unknown>): Record<string, unknown> {
 
 /** Node-only HTTP boundary. The app process has no Discord token and only queues operations. */
 export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> {
-  const { store, db, env } = deps; const service = new CommunityService(store, db); const app = new Hono<RouteEnv>();
+  const { store, db, env } = deps; const service = new CommunityService(store, db, { musicEnabled: !!deps.music }); const app = new Hono<RouteEnv>();
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store'); c.header('X-Content-Type-Options', 'nosniff');
     if (hasNulInUrl(c.req.url)) fail(400, 'invalid_input', '请求包含非法字符');
@@ -123,6 +126,7 @@ export function createCommunityRoutes(deps: CommunityRouteDeps): Hono<RouteEnv> 
     const kind = input.kind ?? 'resources.sync'; if (!['resources.sync', 'panel.refresh'].includes(String(kind))) fail(400, 'invalid_input', '不支持此同步操作');
     return accepted(c, await service.enqueue(user(c), String(kind), null, {}, key(input)));
   });
+  if (deps.music) app.route('/', createMusicRoutes({ ...deps.music, community: service, onError: deps.onError, isReadOnly: () => isReadOnly(env) }));
   app.notFound(c => c.json({ error: '内容不存在' }, 404));
   app.onError((error, c) => {
     if (error instanceof CommunitySettingsInputError) return c.json({ error: '请检查标出的社区设置', fieldErrors: error.fieldErrors }, 400);

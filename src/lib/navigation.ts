@@ -14,6 +14,7 @@ export const PRIMARY_NAVIGATION = [
 export function primaryNavigationKey(route: Route): PrimaryNavigationKey | null {
   switch (route.name) {
     case 'community':
+    case 'communityMusic':
     case 'home':
       return 'home';
     case 'player':

@@ -3,7 +3,7 @@ import { renderRoomPanel } from './room-panel';
 import { fixedManagerRefs, isFixedRoom } from './fixed-rooms';
 import type { CommunityStore } from './store';
 
-interface PanelOptions { now?: () => number; isReadOnly?: () => boolean; onError?: (error: unknown) => void }
+interface PanelOptions { now?: () => number; isReadOnly?: () => boolean; onError?: (error: unknown) => void; musicUrl?: (roomRef: string) => string | null }
 interface LastPanel { fingerprint: string; checkedAt: number; retryAt: number }
 class PanelStateChanged extends Error {}
 
@@ -45,7 +45,8 @@ export class CommunityRoomPanels {
           emptyGraceSeconds: settings.rooms.emptyGraceSeconds, claimable: !!room.ownerLeftAt &&
             now >= Date.parse(room.ownerLeftAt) + settings.rooms.ownerGraceSeconds * 1000 && !!people.length && (!owner || !people.includes(owner.externalId)),
           transferPending: !!room.transferToRef && !!room.transferExpiresAt && Date.parse(room.transferExpiresAt) > now,
-          kind: isFixedRoom(room) ? 'fixed' : 'temporary', managerNames: (await Promise.all(fixedManagerRefs(room).map(ref => this.store.resource(ref, 'member')))).filter(member => member?.available).map(member => member!.name) });
+          kind: isFixedRoom(room) ? 'fixed' : 'temporary', managerNames: (await Promise.all(fixedManagerRefs(room).map(ref => this.store.resource(ref, 'member')))).filter(member => member?.available).map(member => member!.name),
+          musicUrl: this.options.musicUrl?.(room.ref) ?? null });
         const fingerprint = JSON.stringify([channel.externalId, body]);
         if (previous?.fingerprint === fingerprint && now - previous.checkedAt < 60_000) continue;
         // A directory entry is only a read model. Never post into a manually
