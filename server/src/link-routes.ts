@@ -32,6 +32,7 @@ import {
   type DiscordLink,
 } from './discord/links';
 import { authorizeUrl, exchangeCode, fetchMe, type DiscordIdentity } from './discord/oauth';
+import { forgetMusicAccount } from './music/forget';
 
 export interface LinkRouteDeps {
   env: Env;
@@ -303,6 +304,9 @@ export function createLinkRoutes(deps: LinkRouteDeps): Hono {
     const session = await readSession(c.req.raw);
     if (!session) throw new ApiError(401, '未登录');
     const removed = await unlinkAccounts(db, { userId: session.user.id }, 'web');
+    if (removed) {
+      await forgetMusicAccount(db, removed.discord_user_id, (error) => onError('could not remove the saved music login after unlink', error));
+    }
     return c.json({ ok: true, removed: removed !== null });
   });
 

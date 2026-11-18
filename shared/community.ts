@@ -39,7 +39,9 @@ export interface CommunityPublicSettings {
   roles: Pick<CommunitySettings['roles'], 'enabled' | 'maxChoices'>;
   fun: Omit<CommunitySettings['fun'], 'ai' | 'topics'> & { ai: Omit<CommunitySettings['fun']['ai'], 'prompt'>; tags: string[] };
 }
-export interface CommunityOverview { settings: CommunityPublicSettings; version: number; runtime: CommunityRuntimeView; me: CommunityMeView }
+export interface CommunityOverview { settings: CommunityPublicSettings; version: number; runtime: CommunityRuntimeView; me: CommunityMeView;
+  /** True when the web music player is offered. Absent on older backends. */
+  musicEnabled?: boolean }
 
 export function isCommunityRef(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);

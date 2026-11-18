@@ -2,7 +2,7 @@
 // must resolve resources through the opaque references owned by CommunityStore.
 import { ChannelType, PermissionFlagsBits as P, Routes, type Client } from 'discord.js';
 import type { CommunityResourceKind, CommunityVisibility } from '../../../shared/community';
-import { roomPanelMarker, type CommunityRoomPanelMessage } from './room-panel';
+import { isRoomMusicUrl, MUSIC_LINK_LABEL, roomPanelMarker, type CommunityRoomPanelMessage } from './room-panel';
 
 export interface CommunityDiscordResource {
   id: string;
@@ -67,6 +67,8 @@ export interface CommunityDiscord {
   setFixedVisibility?(channelId: string, visibility: CommunityVisibility, managerIds: readonly string[]): Promise<void>;
   grant(channelId: string, memberId: string): Promise<void>;
   deny(channelId: string, memberId: string): Promise<void>;
+  /** Adds the managed Music bot overwrite to a temporary room; no write when already present. */
+  grantMusic?(channelId: string, musicUserId: string): Promise<void>;
   delete(channelId: string): Promise<void>;
   addRole(memberId: string, roleId: string): Promise<void>;
   removeRole(memberId: string, roleId: string): Promise<void>;
@@ -91,6 +93,8 @@ const ACCESS = P.ViewChannel | P.Connect;
 const CHANNEL_MANAGEMENT = P.ViewChannel | P.ManageChannels;
 const ROOM_PANEL_MESSAGE_PERMISSIONS = P.SendMessages | P.ReadMessageHistory | P.EmbedLinks;
 const ROOM_PANEL_PERMISSIONS = P.ViewChannel | ROOM_PANEL_MESSAGE_PERMISSIONS;
+/** The only bits the community bot ever grants the separate Music account. */
+const MUSIC_ACCESS = ACCESS | P.Speak | P.SendMessages | P.EmbedLinks;
 const DANGEROUS = Object.entries(P).filter(([name]) => name.startsWith('Manage') || name.startsWith('Moderate') ||
   ['Administrator', 'KickMembers', 'BanMembers', 'ViewAuditLog', 'MentionEveryone', 'MoveMembers', 'MuteMembers', 'DeafenMembers'].includes(name))
   .reduce((all, [, bit]) => all | bit, 0n);
@@ -186,8 +190,18 @@ function comparablePanel(value: Raw): string {
   return JSON.stringify(ordered({ content: value.content ?? '', embeds, components }));
 }
 
-export function createCommunityDiscord(client: Client, guildId: string): CommunityDiscord {
+export interface CommunityDiscordOptions {
+  /** The Music bot's user id. Its exact managed overwrite is not an ordinary member grant. */
+  musicUserId?: string | null;
+}
+/** True only for the overwrite shape grantMusic writes: full access, nothing denied. */
+function isManagedMusic(overwrite: Overwrite, musicUserId: string | null): boolean {
+  return musicUserId !== null && overwrite.type === 1 && overwrite.id === musicUserId
+    && (BigInt(overwrite.allow) & MUSIC_ACCESS) === MUSIC_ACCESS && (BigInt(overwrite.deny) & MUSIC_ACCESS) === 0n;
+}
+export function createCommunityDiscord(client: Client, guildId: string, options: CommunityDiscordOptions = {}): CommunityDiscord {
   validateId(guildId);
+  const musicUserId = options.musicUserId ?? null; if (musicUserId !== null) validateId(musicUserId);
   const gateway = () => client.user !== null && client.isReady() && client.guilds.cache.get(guildId)?.available === true;
   const assertReady = (): void => { if (!gateway()) throw unavailable(); };
   async function request(method: 'get' | 'post' | 'patch' | 'put' | 'delete', path: `/${string}`, options?: object): Promise<unknown> {
@@ -261,7 +275,7 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
     }
     const allowedMemberIds: string[] = [], blockedMemberIds: string[] = [];
     for (const overwrite of channel.overwrites) {
-      if (overwrite.type !== 1 || overwrite.id === ctx.selfId || overwrite.id === ownerId) continue;
+      if (overwrite.type !== 1 || overwrite.id === ctx.selfId || overwrite.id === ownerId || isManagedMusic(overwrite, musicUserId)) continue;
       const allow = BigInt(overwrite.allow) & ACCESS, deny = BigInt(overwrite.deny) & ACCESS;
       if (allow === 0n && deny === 0n) continue;
       if (allow === ACCESS && deny === 0n) allowedMemberIds.push(overwrite.id);
@@ -521,6 +535,17 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       assertReady(); await request('put', Routes.channelPermission(channelId, memberId), { body: { type: 1,
         allow: ((old ? BigInt(old.allow) : 0n) & ~ACCESS).toString(), deny: ((old ? BigInt(old.deny) : 0n) | ACCESS).toString() }, reason: 'community room access deny' });
     },
+    async grantMusic(channelId, targetId) {
+      validateId(targetId);
+      const { ctx, channel } = await managedChannel(channelId, CHANNEL_MANAGEMENT | P.ManageRoles);
+      // Discord only lets the bot grant bits it holds itself in this channel.
+      if (targetId === ctx.selfId || !has(channelPermissions(ctx.self, channel, ctx, guildId), MUSIC_ACCESS)) throw forbidden();
+      const member = await currentMember(targetId, ctx); if (!member.bot) throw forbidden();
+      const old = channel.overwrites.find(o => o.type === 1 && o.id === targetId);
+      if (old && isManagedMusic(old, targetId)) return;
+      assertReady(); await request('put', Routes.channelPermission(channelId, targetId), { body: { type: 1,
+        allow: ((old ? BigInt(old.allow) : 0n) | MUSIC_ACCESS).toString(), deny: ((old ? BigInt(old.deny) : 0n) & ~MUSIC_ACCESS).toString() }, reason: 'community room music access' });
+    },
     async delete(channelId) {
       await managedChannel(channelId); const members = occupants(channelId); if (members === null) throw unavailable();
       if (members.length > 0) throw new CommunityDiscordError(409, '房间仍有人，不能删除');
@@ -554,11 +579,16 @@ export function createCommunityDiscord(client: Client, guildId: string): Communi
       try { marker = roomPanelMarker(roomRef); }
       catch { throw new CommunityDiscordError(400, '房间引用无效'); }
       const actions = ['rename', 'limit', 'visibility', 'more'];
-      const row = Array.isArray(body.components) && body.components.length === 1 ? body.components[0] : null;
+      const rows = Array.isArray(body.components) ? body.components : [];
+      const row = rows.length === 1 || rows.length === 2 ? rows[0] : null;
+      const link = rows.length === 2 ? rows[1] : null;
+      const linkValid = link === null || link.type === 1 && Array.isArray(link.components) && link.components.length === 1
+        && link.components[0].type === 2 && 'url' in link.components[0] && link.components[0].style === 5
+        && link.components[0].label === MUSIC_LINK_LABEL && isRoomMusicUrl(link.components[0].url, roomRef);
       if (!Array.isArray(body.embeds) || body.embeds.length !== 1
         || row?.type !== 1 || !Array.isArray(row.components) || row.components.length !== actions.length
         || row.components.some((button, index) => button.type !== 2 || !('custom_id' in button)
-          || button.custom_id !== `v1:community:panel:${actions[index]}:${roomRef}` || button.style !== 2)
+          || button.custom_id !== `v1:community:panel:${actions[index]}:${roomRef}` || button.style !== 2) || !linkValid
         || !Array.isArray(body.allowed_mentions?.parse) || body.allowed_mentions.parse.length !== 0) {
         throw new CommunityDiscordError(400, '房间控制卡标记无效');
       }

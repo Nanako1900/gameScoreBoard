@@ -10,6 +10,8 @@
 
 本期 C8 缩短自动建房与移入链路：入口领取自身任务，独立预检并行，严格校验创建回执后直接登记；后台维护分段，房卡同步仍独立。性能证据与线上验收边界见 [C8 计划](docs/community-bot/plan-c8.md)、[C8 验证](docs/community-bot/validation-c8.md)。
 
+房间成员还可以从控制卡跳到网页播放页，邀请独立的 Music 机器人进房播放网易云音乐，见 [Music 机器人说明](docs/community-bot/music.md)。
+
 功能开关、权限、备份迁移与真实验收见 [社区使用与上线说明](docs/community-bot/operations.md)；需求和确认记录见 [community-bot/requirements.md](docs/community-bot/requirements.md)。本模块为 Node/PG 专属，旧 D1 隐藏入口。
 
 ## 玩法

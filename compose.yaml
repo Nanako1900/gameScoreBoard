@@ -120,6 +120,8 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       # Node-only community module. Enable together with the bot after backup/migration.
       COMMUNITY_ENABLED: ${COMMUNITY_ENABLED:-false}
+      # Music player API (needs COMMUNITY_ENABLED). See docs/community-bot/music.md.
+      MUSIC_ENABLED: ${MUSIC_ENABLED:-false}
     volumes:
       - app-data:/data
     depends_on:
@@ -155,6 +157,10 @@ services:
       # The Application ID — the same number as DISCORD_CLIENT_ID.
       DISCORD_APP_ID: ${DISCORD_APP_ID:-}
       COMMUNITY_ENABLED: ${COMMUNITY_ENABLED:-false}
+      # Room cards link to the web player, and the bot lets the Music account
+      # into temporary rooms. The Music application's ID, not its token.
+      MUSIC_ENABLED: ${MUSIC_ENABLED:-false}
+      MUSIC_DISCORD_APP_ID: ${MUSIC_DISCORD_APP_ID:-}
       GUILD_ID: ${GUILD_ID:-1114391825336250432}
       DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
       APP_URL: ${APP_URL:-https://capi.nanako.org}
@@ -180,6 +186,42 @@ services:
         condition: service_completed_successfully
     healthcheck:
       # Liveness only (:8788/healthz); :8788/status says whether the Gateway is up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8788/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    mem_limit: 256m
+    stop_grace_period: 15s
+    logging: *logging
+
+  # Music bot: a second Discord application that joins one voice room at a time
+  # and plays audio (ffmpeg). No ports, nothing routed to it. If it is down the
+  # web player says "offline"; the main bot and the website are unaffected.
+  # See docs/community-bot/music.md.
+  music:
+    image: ghcr.io/nanako1900/gamescoreboard:${APP_TAG:-latest}
+    command: ["node", "--enable-source-maps", "server/dist/music-main.js"]
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      MUSIC_ENABLED: ${MUSIC_ENABLED:-false}
+      # Empty: the process idles (healthy) instead of crash-looping.
+      MUSIC_DISCORD_TOKEN: ${MUSIC_DISCORD_TOKEN:-}
+      GUILD_ID: ${GUILD_ID:-1114391825336250432}
+      DATABASE_URL: postgres://edg:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/edg
+      FRONTEND_URL: ${FRONTEND_URL:-https://community.nanako.org}
+      # Same key as app: member logins and the proxy address are encrypted with it.
+      AI_CONFIG_MASTER_KEY: ${AI_CONFIG_MASTER_KEY:-}
+      READ_ONLY: ${READ_ONLY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8788/healthz >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s

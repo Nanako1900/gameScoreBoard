@@ -23,6 +23,7 @@ import { getLatestReport } from '../../../worker/report';
 import type { RecordItem, User } from '../../../worker/types';
 import { boundUser, setNotifyDm, unlinkAccounts } from './links';
 import { reportEmbed } from './report';
+import { forgetMusicAccount } from '../music/forget';
 import { renderGuideEmbed } from './guide';
 
 export { boundUser };
@@ -191,6 +192,9 @@ const READ_ONLY_TEXT = '系统维护中（只读），请稍后再试。';
 async function handleUnlink(input: CommandInput, ctx: BotContext): Promise<BotReply> {
   if (ctx.readOnly) return ephemeralReply(READ_ONLY_TEXT);
   const removed = await unlinkAccounts(ctx.db, { discordUserId: input.caller.id }, 'discord');
+  if (removed) {
+    await forgetMusicAccount(ctx.db, removed.discord_user_id, () => console.error('could not remove the saved music login after unlink'));
+  }
   return ephemeralReply(removed ? '已解绑。想重新绑定随时用 /link。' : '你还没有绑定 Nanako 账号。');
 }
 

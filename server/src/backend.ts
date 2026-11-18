@@ -20,8 +20,11 @@ import { envFlag, envInt, MAX_TIMER_MS } from './env';
 import { hostSet } from './hosts';
 import { createLinkRoutes } from './link-routes';
 import { CommunityStore } from './community/store';
+import { isFixedRoom } from './community/fixed-rooms';
 import { createCommunityRoutes } from './community/routes';
 import { readCommunityRoles } from './community/membership';
+import { MusicStore } from './music/store';
+import { createProxiedNetease } from './music/outbound';
 
 const DEFAULT_JOBS_INTERVAL_MS = 60_000;
 const MIN_JOBS_INTERVAL_MS = 5_000;
@@ -83,9 +86,13 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
   const communityEnabled = envFlag(processEnv.COMMUNITY_ENABLED, false, 'COMMUNITY_ENABLED', warn);
   const communityStore = communityEnabled && /^\d{17,20}$/.test(guildId) ? new CommunityStore(pool, guildId) : null;
   if (communityEnabled && !communityStore) log.warn('Community disabled: GUILD_ID is missing or invalid');
+  const musicEnabled = envFlag(processEnv.MUSIC_ENABLED, false, 'MUSIC_ENABLED', warn);
+  const masterKey = (processEnv.AI_CONFIG_MASTER_KEY ?? '').trim() || undefined;
+  const music = communityStore && musicEnabled ? { store: new MusicStore(pool, guildId), db: env.DB, masterKey,
+    netease: createProxiedNetease(env.DB, masterKey), requestRoomAccess: musicRoomAccess(communityStore) } : undefined;
   const communityRoutes = communityStore ? createCommunityRoutes({ store: communityStore, db: env.DB, env,
     membership: { readRoles: ref => readCommunityRoles(communityStore, ref) },
-    onError: (context, error) => log.error(context, error) }) : undefined;
+    onError: (context, error) => log.error(context, error), music }) : undefined;
   const fetch = withDiscordBinding(processEnv, env, api.fetch, log, communityRoutes);
 
   const jobsEnabled = envFlag(processEnv.JOBS_ENABLED, false, 'JOBS_ENABLED', warn);
@@ -122,6 +129,19 @@ export function createBackend(processEnv: NodeJS.ProcessEnv, deps: BackendDeps =
       await api.drain(graceMs);
       await pool.end().catch(() => undefined);
     },
+  };
+}
+
+/** Queues the main bot's room.music_access for a member's accepted invite. It
+ * runs as a system operation: the music service has already checked that the
+ * member can read the room, and the engine requires that room's music session
+ * to still be live. Fixed rooms keep their permissions, so nothing is queued. */
+export function musicRoomAccess(store: CommunityStore): (memberRef: string, roomRef: string, requestKey: string) => Promise<void> {
+  return async (memberRef, roomRef, requestKey) => {
+    const room = await store.getRoom(roomRef);
+    if (!room || isFixedRoom(room)) return;
+    await store.enqueue('room.music_access', room.ref, { source: 'system', memberRef }, { action: 'music_access' },
+      `music-access:${requestKey}`, room.version);
   };
 }
 

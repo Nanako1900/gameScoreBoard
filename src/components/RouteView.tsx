@@ -17,6 +17,7 @@ import type { TodoItem } from '../lib/todo';
 import { SettingsPage } from './SettingsPage';
 import { CommunityPage } from './CommunityPage';
 import { CommunityAdminPage } from './CommunityAdminPage';
+import { MusicPage } from './MusicPage';
 import type { DiscordLinkRead, DiscordLinkValue } from '../lib/discordLinkState';
 
 export type { PinnedCase };
@@ -155,6 +156,8 @@ export function RouteView(props: RouteViewProps): JSX.Element | null {
       return <PageShell><GuidePage /></PageShell>;
     case 'community':
       return <PageShell><CommunityPage tab={route.tab} accountKey={`${props.me?.id ?? 'guest'}:${props.me?.is_admin}`} /></PageShell>;
+    case 'communityMusic':
+      return <PageShell><MusicPage key={`${props.me?.id ?? 'guest'}:${route.roomRef}`} roomRef={route.roomRef} /></PageShell>;
     case 'communityAdmin':
       return <PageShell><CommunityAdminPage me={props.me} /></PageShell>;
     case 'admin':

@@ -15,6 +15,7 @@ const actionNames:Record<string,string>={
  'room.create':'创建语音房','room.join':'加入语音房','room.rename':'房间改名','room.limit':'调整房间人数','room.visibility':'调整房间访问',
  'room.grant':'允许成员加入','room.deny':'禁止成员加入','room.kick':'移出房间成员','room.transfer':'邀请接任房主','room.accept':'接受房主转让',
  'room.claim':'认领房间','room.dissolve':'解散空房','room.admin_delete':'关闭有人房间','room.cleanup':'回收空房','room.reconcile':'核对房间状态','room.managers':'更新固定房间管理员',
+ 'room.music_access':'允许 Music 进入房间',
  'roles.set':'更新兴趣身份','welcome.send':'发送入服欢迎',
  'operation.review':'人工核对并取消旧任务','operation.cancel':'取消旧任务','settings.updated':'更新社区设置',
 };
@@ -120,6 +121,7 @@ function RoomCard({room,data,disabled,submit}:{room:CommunityRoomView;data:Data;
  return <article className="community-card"><div className="community-room-title"><h3>{room.name}</h3><span className="community-pill">{{open:'公开',locked:'已锁门',hidden:'已隐藏'}[room.visibility]}</span></div>{fixed?<><p>固定房间 · 不会自动删除</p><p>房间管理员：{room.managers?.length?room.managers.map(manager=>manager.name).join('、'):'尚未分配'}</p><p>{room.members.length} 人{room.userLimit?` / ${room.userLimit} 人上限`:''}</p></>:<p>房主 {room.owner?.name??'等待认领'} · {room.members.length} 人{room.userLimit?` / ${room.userLimit} 人上限`:''}</p>}
   <p className="community-muted">{room.status==='active'?'房间已就绪':room.status==='needs_review'?'房间待管理员对账':room.status==='closed'?'已关闭':'正在处理'}</p>{room.members.length>0&&<p>{room.members.map(member=>member.name).join('、')}</p>}
   {room.panelProblem&&<p className="community-muted" role="status">{room.panelProblem}</p>}
+  {room.status==='active'&&data.overview.musicEnabled===true&&<Link className="community-button community-button--quiet" to={`/community/music/${room.ref}`}>音乐播放器</Link>}
   {!fixed&&room.cleanupAt&&<p>空房待回收：{new Date(room.cleanupAt).toLocaleTimeString('zh-CN')}</p>}
   {!fixed&&personal&&room.canClaim&&<button disabled={disabled} onClick={()=>action('claim')}>认领这个房间</button>}
   {!fixed&&personal&&room.transferTo?.ref===mine&&<div className="community-notice"><p>房主邀请你接管房间。接受后才会转让。</p><button disabled={disabled} onClick={()=>action('accept')}>接受房主转让</button></div>}

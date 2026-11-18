@@ -17,6 +17,8 @@ export interface CommunityRoomPanelState {
   transferPending: boolean;
   kind?: 'temporary' | 'fixed';
   managerNames?: readonly string[];
+  /** Web music player for this room; absent/null renders the card unchanged. */
+  musicUrl?: string | null;
 }
 export interface CommunityRoomPanelMessage {
   content: string;
@@ -30,6 +32,28 @@ export function roomPanelMarker(roomRef: string): string {
   return `v1:community:panel:more:${roomRef}`;
 }
 
+export const MUSIC_LINK_LABEL = '音乐播放器';
+const MUSIC_PATH = '/community/music/';
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+const SNOWFLAKE = /\d{17,20}/;
+
+/** A card link may only carry the room's opaque reference: https (or a local
+ * development http origin), no credentials, query or fragment. */
+export function isRoomMusicUrl(value: unknown, roomRef: string): value is string {
+  if (typeof value !== 'string' || !isCommunityRef(roomRef)) return false;
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  const secure = url.protocol === 'https:' || url.protocol === 'http:' && LOCAL_HOSTS.includes(url.hostname);
+  return secure && !url.username && !url.password && !/[?#]/.test(value) && url.href === value
+    && url.pathname.endsWith(MUSIC_PATH + roomRef) && !SNOWFLAKE.test(url.href);
+}
+/** Builds the player link from the configured frontend origin, or null when it is unusable. */
+export function roomMusicUrl(frontendUrl: string, roomRef: string): string | null {
+  let url: string;
+  try { url = new URL(`${frontendUrl.replace(/\/+$/, '')}${MUSIC_PATH}${roomRef}`).href; } catch { return null; }
+  return isRoomMusicUrl(url, roomRef) ? url : null;
+}
+
 function label(value: string): string {
   return safeCommunityText(value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 100)
     .replace(/[\\`*_~|>]/g, '\\$&');
@@ -40,7 +64,8 @@ export function renderRoomPanel(state: CommunityRoomPanelState): CommunityRoomPa
   if (state.occupantCount !== null && (!Number.isSafeInteger(state.occupantCount) || state.occupantCount < 0)
     || !Number.isInteger(state.userLimit) || state.userLimit < 0 || state.userLimit > 99
     || !Number.isInteger(state.emptyGraceSeconds) || state.emptyGraceSeconds < 15 || state.emptyGraceSeconds > 86_400
-    || !['open', 'locked', 'hidden'].includes(state.visibility)) throw new Error('房间状态无效');
+    || !['open', 'locked', 'hidden'].includes(state.visibility)
+    || state.musicUrl != null && !isRoomMusicUrl(state.musicUrl, state.roomRef)) throw new Error('房间状态无效');
   const grace = state.emptyGraceSeconds % 60 === 0 ? `${state.emptyGraceSeconds / 60} 分钟` : `${state.emptyGraceSeconds} 秒`;
   const fixed = state.kind === 'fixed';
   const lines = [fixed ? '固定语音房，房间状态自动更新。' : `无人后 ${grace}自动删除。`];
@@ -65,6 +90,7 @@ export function renderRoomPanel(state: CommunityRoomPanelState): CommunityRoomPa
     components: [{ type: 1, components: [
       ['rename', '修改名称'], ['limit', '人数上限'], ['visibility', '访问方式'], ['more', '更多操作'],
     ].map(([action, name]) => ({ type: 2, style: 2, label: name,
-      custom_id: action === 'more' ? marker : `v1:community:panel:${action}:${state.roomRef}` })) }],
+      custom_id: action === 'more' ? marker : `v1:community:panel:${action}:${state.roomRef}` })) },
+    ...(state.musicUrl ? [{ type: 1 as const, components: [{ type: 2 as const, style: 5 as const, label: MUSIC_LINK_LABEL, url: state.musicUrl }] }] : [])],
   };
 }

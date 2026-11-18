@@ -33,7 +33,7 @@ describe('scripts/pages-headers.mjs', () => {
   it('lets the SPA reach the API origin — and nothing else — for fetches and avatars', () => {
     const policy = csp(run('https://api.nanako.org/'));
     expect(policy['connect-src']).toBe("'self' https://api.nanako.org");
-    expect(policy['img-src']).toBe("'self' data: https://api.nanako.org");
+    expect(policy['img-src']).toBe("'self' data: https://*.music.126.net https://api.nanako.org");
     expect(policy['script-src']).toBe("'self'");
     expect(policy['frame-ancestors']).toBe("'none'");
   });
